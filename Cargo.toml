@@ -1,0 +1,28 @@
+[package]
+name = "folio"
+version = "0.1.0"
+edition = "2021"
+description = "Folio: spatial sticky notes, one canvas per category."
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+# GPUI Kit (Apache-2.0): GPUI's pinned snapshot plus gpui-component (inputs,
+# Markdown with tables). Aliased as `gpui` so `use gpui::...` resolves.
+gpui = { package = "gpui-kit", version = "=0.7.1" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
+[build-dependencies]
+# The Windows .exe icon (build.rs). MIT.
+embed-resource = "=3.0.12"
+
+[profile.dev]
+# GPUI is heavy in debug: optimise dependencies, keep our crate quick to build.
+opt-level = 0
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
