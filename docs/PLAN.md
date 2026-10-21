@@ -13,23 +13,23 @@ and what is still to come.
 
 ### What it has to do
 
-| Capability | v0.1 | Planned |
+| Capability | Built (v0.2) | Planned |
 |---|---|---|
-| Categories as separate sheets, each with its own content and camera | ✅ sidebar, add, rename (double-click), delete (undoable), Ctrl+Tab between them | reorder by drag, sheet colours/icons, archive |
-| Freeform canvas: pan, zoom, drag stickers | ✅ drag to pan, wheel to scroll, Ctrl+wheel zooms at the cursor, zoom to fit; drag and resize stickers; the sticker you drag comes to the front | snapping and alignment guides, multi-select with a marquee, group move |
-| Sticker styling | ✅ 6 papers (light and dark), 3 text sizes, resizable | per-sticker font (sans, serif, mono, hand), border and shadow styles, slight tilt, pin/lock |
-| Plain and rich text | ✅ Markdown: bold, italic, lists, task lists, code, headings | WYSIWYG inline editing on the sticker itself |
-| Coloured text | ✅ coloured **highlights** (`<mark color="green">…</mark>`; 7 named colours, retuned for dark mode) | coloured **foreground** text via a Markdown extension (see §4.1) |
-| Markdown tables | ✅ rendered on the sticker | table editing grid |
-| Images | ✅ PNG, JPEG, WebP, GIF (**animated GIFs play**), SVG (static); drop files on the sheet, paste from the clipboard, or *Add picture…* in the editor | crop, caption, image-only stickers that keep the image's aspect ratio |
-| Animated SVG | ⚠️ shown as a still image (first frame) | an SMIL animator: see §4.2 |
-| Text written directly on the sheet | ✅ Text tool (T): italic labels in 5 inks, movable, editable | font size, rotation |
-| Freehand drawing on the sheet | ✅ Pen (P), Marker (M, translucent), Eraser (E); strokes are smoothed and simplified | pressure, shapes (rect, ellipse, arrow, line), lasso select of ink |
-| Lines linking stickers | ✅ Connect (C): drag from one sticker to another; curved, dashed, follow the stickers when they move; drag again to remove | arrowheads, labels on links, straight/elbow styles, links to labels and ink |
-| Search | ✅ dims notes on this sheet that don't match | search across all sheets, with jump-to |
-| Undo / redo | ✅ every content change, 100 steps; camera moves don't count | command-based history (§5.5) |
-| Dark mode | ✅ Ctrl+Shift+L, remembered | follow the system setting |
-| Persistence | ✅ autosaves 350 ms after each change, atomic writes, pictures copied into the workspace folder | SQLite store, backups, export (§6) |
+| Categories as sheets, each with its own content and camera | ✅ home screen of sheet cards with live miniatures (real note titles), Recent/A–Z, pinned first; icon, colour, rename, duplicate, archive, trash; templates (Kanban, weekly planner, brainstorm, meeting notes, reading list); the drawer (hidden sidebar, Ctrl+B); Ctrl+Tab | reorder by drag |
+| Getting a thought down fast | ✅ Ctrl+Alt+N from any app opens a quick-note box → Inbox sheet; tray icon (Windows); start with Windows | a phone companion |
+| Notes visible outside the app | ✅ pin a note to the desktop: its own always-on-top window, ticks sync both ways, remembers where it was | see-through mode |
+| Freeform canvas | ✅ pan (wheel, Space+drag, middle-drag, Hand), zoom at the cursor, zoom to fit; box select, Shift-click, group move; alignment guides; areas that carry their notes; tidy up; arrow keys between notes; a map in the corner | grid snapping |
+| Sticker styling | ✅ 6 papers, 3 sizes, 3 fonts (sans, handwritten, mono), grow-with-text or fixed height (with a "more" fade), lock | slight tilt (needs a custom element) |
+| Editing | ✅ type straight on the note with a format bar (paper, font, size, task, picture, reminder, more); Esc/Done keeps it | WYSIWYG rendering while typing |
+| Tasks | ✅ `- [ ]` lines are real checkboxes you tick with a click, with a done/total chip | |
+| Coloured text | ✅ highlights (`<mark color="green">`), in tasks too | foreground colour (§4.1) |
+| Tables, images, GIFs, SVG | ✅ as before; link cards from a pasted address (page title fetched) | crop, captions; animated SVG (§4.2) |
+| Reminders | ✅ presets (in an hour, this evening, tomorrow morning, Monday); Windows notification + in-app toast; Today strip on the home screen; overdue in red | custom date and time; repeat |
+| Search | ✅ every note on every sheet, by text or `#tag`; jumps to the note; tag chips on the home screen; Ctrl+K palette for commands, sheets and notes | |
+| Right-click menus | ✅ note, empty sheet, area, label, sheet card; Move to sheet | |
+| Safety | ✅ undo (100 steps), Trash (30 days), Archive, a daily backup (14 kept) with restore; "untouched for weeks" hint with keep-fresh | sync |
+| Settings | ✅ theme (light/dark/follow Windows), interface size, high contrast, reduce motion, default paper and font, guides, map, opening animation, open on home/last sheet, start with Windows, quick-note shortcut, data folder, backups | |
+| Opening | ✅ animated logo intro: full the first time, short after, skippable, off in Settings | |
 
 ### Experience principles
 
@@ -334,25 +334,27 @@ any board size. It is also the foundation for sync (§6).
 
 ## 8. Roadmap
 
-**v0.1, this repository.** Sheets, canvas, stickers with Markdown, tables,
-highlights, pictures and GIFs, pen, marker, eraser, labels, links, search,
-undo, dark mode, autosave, the logo.
+**v0.1.** Sheets, canvas, stickers with Markdown, tables, highlights,
+pictures and GIFs, pen, marker, eraser, labels, links, undo, dark mode,
+autosave, the logo.
 
-**v0.2: everyday polish.** Multi-select with a marquee and group move;
-snapping and guides; arrowheads and link labels; sheet reordering; a
-command palette (Ctrl+K) that reaches every action; motion; follow the
-system theme; a sticker context menu (paper, duplicate, front/back, lock).
+**v0.2, this repository.** The home screen and hidden drawer, the opening
+animation, typing on notes, real checkboxes, notes that grow, right-click
+menus, multi-select and guides, areas and templates, reminders and Today,
+search across sheets and tags, Ctrl+K, quick notes from anywhere, notes on
+the desktop, tray and start-up, Trash/Archive/backups, Settings, link
+cards, the handwritten font, high contrast and interface size.
 
-**v0.3: data and scale.** SQLite store and FTS search across sheets;
-R-tree; cached ink tessellation; picture mipmaps; command-based undo;
-backups.
+**v0.3: data and scale.** SQLite store with full-text search; R-tree;
+cached ink tessellation; picture mipmaps; command-based undo; reorder
+sheets by drag.
 
-**v0.4: richer content.** Coloured text; in-place WYSIWYG editing; shape
-tools; animated SVG player; image crop; code blocks with highlighting.
+**v0.4: richer content.** Coloured text; WYSIWYG while typing; shape
+tools; animated SVG player; image crop; custom reminder times and repeats.
 
-**v1.0: ship.** Windows installer and signed build, export
-(PNG/PDF/Markdown), settings, accessibility pass (keyboard navigation
-between stickers, screen-reader labels), crash log.
+**v1.0: ship.** Windows installer and signed build (with its own
+notification identity), export (PNG/PDF/Markdown), screen-reader labels,
+crash log.
 
 ---
 
@@ -373,5 +375,10 @@ between stickers, screen-reader labels), crash log.
   works today.
 - **Ink is drawn beneath stickers** (it annotates the sheet, as asked). A
   per-stroke "on top" layer can come with shape tools.
+- **Windows-only parts were built, not run.** The tray icon, Windows
+  notifications (sent as PowerShell until an installer gives Folio its own
+  identity) and the start-up registry entry compile into the `.exe` but
+  haven't been seen on a real Windows; Wine has no tray to look at. The
+  Ctrl+Alt+N shortcut and desktop notes were tested on Linux (X11).
 - **Drop position:** GPUI's drop event carries no position, so dropped files
   land at the last pointer position over the sheet.

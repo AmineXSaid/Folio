@@ -3,13 +3,27 @@
 # Folio
 
 Sticky notes on endless sheets: one sheet per category, like worksheets in a
-workbook. Drag notes around, write Markdown (tables, task lists, coloured
-highlights), pin pictures and animated GIFs, draw on the sheet, write on it,
-and link notes with curved connectors. Written in Rust on
-[GPUI](https://www.gpui.rs/) (through `gpui-kit`) for a GPU-drawn,
-low-latency canvas.
+workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
+`gpui-kit`) for a GPU-drawn, low-latency canvas.
 
-![Folio, light](docs/screenshots/sheet-light.png)
+![Folio home screen](docs/screenshots/home-light.png)
+
+- **Home:** every sheet as a card with a live miniature, today's reminders,
+  your #tags, and search across every note. The sheets drawer stays hidden
+  until you want it (top-left button or Ctrl+B).
+- **Notes:** type straight onto them; Markdown with tables, task lists you
+  tick with a click, coloured highlights, pictures and animated GIFs, link
+  cards; notes grow with their text; reminders; lock; a handwritten font.
+- **The sheet:** pan and zoom, box-select and move groups with alignment
+  guides, areas (Kanban columns, days of the week…), pen, marker, eraser,
+  text on the sheet, curved links between notes, tidy up, a map.
+- **Everywhere:** Ctrl+K for commands, sheets and notes; Ctrl+Alt+N from
+  any app for a quick note into your Inbox; notes pinned to the desktop
+  above other windows; a tray icon and starting with Windows.
+- **Safe:** undo, a Trash that keeps things 30 days, an Archive, and a
+  backup every day (the last 14 kept) you can restore from.
+
+![Folio, a sheet in dark mode](docs/screenshots/sheet-dark.png)
 
 ## Run it
 
@@ -27,14 +41,24 @@ and a `media/` folder for pictures.
 
 ## Use it
 
-- **Double-click** the sheet for a new note; double-click a note to edit it.
-- **Drag** a note to move it, drag its corner to resize, drag the empty
-  sheet to pan, **Ctrl+wheel** to zoom.
-- **Tools** (dock at the bottom): `V` select, `H` pan, `P` pen, `M` marker,
-  `T` text on the sheet, `C` connect two notes, `E` eraser.
-- **Drop** pictures or `.md`/`.txt` files on a sheet, or **paste** them.
-- `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo, `Ctrl+F` search, `Ctrl+0` zoom to
-  fit, `Ctrl+Shift+L` dark mode, `Ctrl+Tab` next sheet.
+| | |
+|---|---|
+| Double-click the sheet | A new note, ready to type into |
+| Double-click a note, or Enter | Type into it; Esc or Done to finish |
+| Right-click | A note's, the sheet's, an area's or a card's menu |
+| Drag the empty sheet | Select a group; Space+drag, middle-drag or the wheel pans |
+| Ctrl+wheel | Zoom |
+| `V H P M T C F E` | Select, pan, pen, marker, text, connect, area, eraser |
+| Arrows | Move between notes |
+| Ctrl+K | Commands, sheets and notes |
+| Ctrl+Alt+N | Quick note from any app |
+| Ctrl+N / Ctrl+Shift+N | New note / new sheet |
+| Ctrl+B | The sheets drawer |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
+| Ctrl+, | Settings |
+
+Drop pictures or `.md`/`.txt` files on a sheet, or paste them; paste a web
+address for a link card.
 
 See [docs/PLAN.md](docs/PLAN.md) for the product and architecture plan and
 the roadmap.
@@ -64,4 +88,4 @@ scripts/icons.sh            # logo SVGs → PNGs and the Windows .ico
 ```
 
 Dependencies are pinned to exact versions. Icons are Lucide (ISC); the fonts
-are Hanken Grotesk and JetBrains Mono (OFL).
+are Hanken Grotesk, JetBrains Mono and Comic Neue (OFL).

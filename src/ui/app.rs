@@ -787,7 +787,12 @@ impl Folio {
             self.before = Some(self.board.clone());
         }
         self.title_input.update(cx, |i, cx| i.set_value(title.clone(), window, cx));
-        self.body_input.update(cx, |i, cx| i.set_value(body, window, cx));
+        // The cursor goes to the end of the text, ready to add to it.
+        let end = body.len();
+        self.body_input.update(cx, |i, cx| {
+            i.set_value(body, window, cx);
+            i.set_selected_range(end..end, cx);
+        });
         self.editing = Some(Edit { id, is_new });
         self.menu = None;
         self.select(Selection::Sticker(id));

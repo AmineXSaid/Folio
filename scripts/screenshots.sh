@@ -6,10 +6,12 @@
 #   cargo build && scripts/screenshots.sh [out-dir]
 #
 # Runs the debug build on a virtual display with a throwaway data folder
-# (FOLIO_DATA_DIR), so it opens on the demo board, and saves:
-#   sheet-{light,dark}.png    the demo sheet
-#   editor-{light,dark}.png   a note open in the editor
-#   ink-{light,dark}.png      a pen stroke and the pen's ink swatches
+# (FOLIO_DATA_DIR), so it opens on the demo board, and saves, as
+# <name>-light.png and <name>-dark.png:
+#   intro   the opening, mid-way      home    the home screen
+#   drawer  the sheets drawer         sheet   a sheet
+#   edit    typing into a note        menu    a note's right-click menu
+#   palette Ctrl+K                    settings
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -33,35 +35,34 @@ sleep 1
 if [ -z "${VK_ICD_FILENAMES:-}" ] && [ -f /usr/share/vulkan/icd.d/lvp_icd.json ] && [ ! -e /dev/dri ]; then
   export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
 fi
-export XDG_RUNTIME_DIR="$TMP/run"; mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+export XDG_RUNTIME_DIR="$TMP/run" WAYLAND_DISPLAY=; mkdir -p -m 700 "$XDG_RUNTIME_DIR"
 
-shoot() { sleep 0.8; import -window root "$OUT/$1.png"; }
+shot() { sleep 0.7; import -window root "$OUT/$1-$mode.png"; }
 key() { xdotool key --clearmodifiers "$@"; sleep 0.4; }
 
 for mode in light dark; do
   rm -rf "$TMP/data"
   mkdir -p "$TMP/data"
-  FOLIO_DATA_DIR="$TMP/data" WAYLAND_DISPLAY= "$BIN" >"$TMP/app-$mode.log" 2>&1 &
+  FOLIO_DATA_DIR="$TMP/data" "$BIN" >"$TMP/app-$mode.log" 2>&1 &
   APP_PID=$!
-  sleep 5
-  WID="$(xdotool search --pid "$APP_PID" | tail -1)"
+  WID=""
+  for _ in $(seq 1 40); do WID="$(xdotool search --pid "$APP_PID" 2>/dev/null | tail -1 || true)"; [ -n "$WID" ] && break; sleep 0.25; done
   xdotool windowmove "$WID" 0 0 windowsize "$WID" 1280 800
-  sleep 1
+  xdotool windowfocus --sync "$WID" 2>/dev/null || true
+  sleep 1.6; import -window root "$OUT/intro-$mode.png"
+  sleep 3
   [ "$mode" = dark ] && key ctrl+shift+l
-  shoot "sheet-$mode"
-  # Double-click the "Website refresh" note to open its editor.
-  xdotool mousemove 400 200 click --repeat 2 --delay 80 1; shoot "editor-$mode"
-  key Escape
-  # The pen: draw a loop on the sheet.
-  key p
-  xdotool mousemove 1000 640 mousedown 1
-  for i in $(seq 0 24); do
-    x=$(awk -v i="$i" 'BEGIN{printf "%d", 1000+60*cos(i/24*6.283)}')
-    y=$(awk -v i="$i" 'BEGIN{printf "%d", 600+40*sin(i/24*6.283)}')
-    xdotool mousemove "$x" "$y"; sleep 0.02
-  done
-  xdotool mouseup 1
-  shoot "ink-$mode"
+  shot home
+  key ctrl+b; shot drawer; key Escape
+  # The first sheet, from the palette.
+  key ctrl+k; xdotool type --delay 20 "studio"; key Down Return
+  shot sheet
+  # A note's menu, then typing into it.
+  xdotool mousemove 150 260 click 3; shot menu; key Escape
+  xdotool mousemove 580 600 click --repeat 2 --delay 80 1; sleep 1.2
+  xdotool type --delay 25 " Edited in place."; shot edit; key Escape
+  key ctrl+k; xdotool type --delay 20 "seed"; shot palette; key Escape
+  key ctrl+comma; shot settings
   kill "$APP_PID"; APP_PID=""
   sleep 0.5
 done
