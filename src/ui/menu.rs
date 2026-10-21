@@ -239,7 +239,7 @@ impl Folio {
                 items.push(sep(&t).into_any_element());
                 for (i, (label, when)) in time::presets(now()).into_iter().enumerate() {
                     items.push(
-                        row(format!("m-at-{i}"), "icons/clock.svg", label, Some(time::due_label(when, now())), &t)
+                        row(format!("m-at-{i}"), "icons/clock.svg", label, None, &t)
                             .on_click(cx.listener(move |this, _, _, cx| this.set_reminder(id, Some(when), cx)))
                             .into_any_element(),
                     );

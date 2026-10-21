@@ -1000,7 +1000,7 @@ impl Board {
         let at = sheet.free_spot(240.);
         sheet.stickers.push(Sticker {
             id,
-            rect: Rect { x: at.x, y: at.y, w: 240., h: 120. },
+            rect: Rect { x: at.x, y: at.y, w: 240., h: 100. },
             paper,
             title,
             body,

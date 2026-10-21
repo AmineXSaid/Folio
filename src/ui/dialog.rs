@@ -92,7 +92,7 @@ impl Folio {
                                 let on = tp == template;
                                 div()
                                     .id(("d-template", tp as usize))
-                                    .w(px(132.))
+                                    .w(px(128.))
                                     .p(t.space.sm)
                                     .flex()
                                     .flex_col()

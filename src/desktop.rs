@@ -98,7 +98,6 @@ pub fn open_quick_note(folio: Entity<Folio>, cx: &mut App) {
         focus: true,
         show: true,
         app_id: Some("folio".into()),
-        window_background: gpui::WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
     let f = folio.clone();
@@ -168,7 +167,6 @@ impl Folio {
                 focus: false,
                 show: true,
                 app_id: Some("folio".into()),
-                window_background: gpui::WindowBackgroundAppearance::Transparent,
                 ..Default::default()
             };
             // Opened after this update, so the window can read the board.

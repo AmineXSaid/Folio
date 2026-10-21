@@ -23,7 +23,8 @@ impl QuickNoteWindow {
                 .placeholder("Jot it down… the first line becomes the title")
         });
         let subs = vec![cx.subscribe_in(&input, window, |this, _, ev, window, cx| {
-            if let InputEvent::PressEnter { .. } = ev {
+            // Shift+Enter is a new line; plain Enter saves.
+            if let InputEvent::PressEnter { shift: false, .. } = ev {
                 this.save(window, cx);
             }
         })];
@@ -53,7 +54,6 @@ impl Render for QuickNoteWindow {
         div()
             .key_context("QuickNote")
             .size_full()
-            .p(px(8.))
             .font_family(t.font)
             .text_color(t.colors.text)
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| this.close(window, cx)))
@@ -64,11 +64,9 @@ impl Render for QuickNoteWindow {
                     .flex_col()
                     .gap(px(10.))
                     .p(px(16.))
-                    .rounded(px(16.))
                     .bg(t.colors.surface)
                     .border_1()
                     .border_color(t.colors.border)
-                    .shadow(t.shadow_float())
                     .child(
                         div()
                             .id("quick-grip")

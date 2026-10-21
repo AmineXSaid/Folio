@@ -59,17 +59,14 @@ impl Render for NoteWindow {
         let (f_open, f_dock) = (self.folio.clone(), self.folio.clone());
         div()
             .size_full()
-            .p(px(6.))
             .child(
                 div()
                     .size_full()
                     .flex()
                     .flex_col()
-                    .rounded(px(12.))
                     .bg(t.paper(s.paper))
                     .border_1()
                     .border_color(t.colors.border)
-                    .shadow(t.shadow_card(0.6))
                     .overflow_hidden()
                     .font_family(t.note_font(s.font))
                     .text_color(t.colors.text)

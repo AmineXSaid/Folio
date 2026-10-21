@@ -172,7 +172,10 @@ pub enum BinTab {
 pub struct Folio {
     pub board: Board,
     pub dir: PathBuf,
+    /// The sheet's focus (its shortcuts work while it has it).
     pub focus: FocusHandle,
+    /// The window's own focus, off the sheet: the app-wide shortcuts.
+    pub root_focus: FocusHandle,
     pub screen: Screen,
     pub drawer: bool,
     pub tool: Tool,
@@ -265,7 +268,8 @@ impl Folio {
             }),
         ];
         let focus = cx.focus_handle();
-        window.focus(&focus, cx);
+        let root_focus = cx.focus_handle();
+        window.focus(&root_focus, cx);
 
         let s = board.settings.clone();
         let reduce = s.reduce_motion;
@@ -291,6 +295,7 @@ impl Folio {
             board,
             dir,
             focus,
+            root_focus,
             screen,
             drawer: false,
             tool: Tool::Select,
@@ -1346,6 +1351,13 @@ impl Folio {
 impl Render for Folio {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
+        // Off the sheet, the sheet's focus is stale: keys go to the window.
+        if self.screen != Screen::Sheet && self.focus.is_focused(window) {
+            window.focus(&self.root_focus, cx);
+        }
+        if self.screen == Screen::Sheet && self.root_focus.is_focused(window) {
+            window.focus(&self.focus, cx);
+        }
         let main = match self.screen {
             Screen::Home => self.render_home(window, cx).into_any_element(),
             Screen::Sheet => self.render_board(window, cx).into_any_element(),
@@ -1355,6 +1367,7 @@ impl Render for Folio {
         div()
             .id("folio")
             .key_context("Folio")
+            .track_focus(&self.root_focus)
             .size_full()
             .relative()
             .flex()
