@@ -313,10 +313,15 @@ any board size. It is also the foundation for sync (§6).
   butter, sage, sky, blush, lilac, plain. Each has a dark twin with the
   same hue at about 20 % lightness.
 - **Type:** Hanken Grotesk (OFL) for UI and notes; JetBrains Mono for code.
-- **Logo** (`assets/brand/`): a forest-green rounded tile with two tilted
-  sticky notes in a bold ink outline and a coral pin. It follows the flat,
-  thick-outline style of your reference icons. Shipped as SVG, PNGs (32–512)
-  and a Windows `.ico` embedded in the `.exe`.
+- **Logo** (`assets/brand/`, option E "Sticky"): a pinned cream sticky
+  note with a peeled corner and one highlighted line, in a heavy black
+  outline on a flat pink (`#E5487A`) tile with a light shadow behind it. It
+  follows the style of the reference office icons. `folio-logo.svg` is the
+  padded logo (README, sidebar). `folio-icon.svg` fills its square edge to
+  edge, as Chrome's and Teams' icons do, and `folio-icon-small.svg` redraws
+  it with heavier, fewer lines for 16–32 px. `scripts/icons.sh` renders the
+  PNGs and `assets/folio.ico` (10 sizes, 16–256), which the build embeds
+  in the `.exe`.
 - **Motion (planned):** stickers ease to their lifted shadow in 120 ms;
   new stickers scale from 96 % with a 160 ms ease-out; sheet switches
   cross-fade in 120 ms. Respect "reduce motion".
@@ -355,9 +360,12 @@ between stickers, screen-reader labels), crash log.
 
 - **Desktop only, single user, local files.** No accounts or cloud in v1.
 - **Windows is the main target, but nothing is Windows-only.** v0.1 has been
-  run only on Linux (Xvfb with Mesa lavapipe). Windows and macOS builds are
-  expected to work, since GPUI supports them, but nobody has looked at them
-  yet.
+  run on Linux (Xvfb with Mesa lavapipe), and its Windows `.exe`
+  (cross-compiled with MinGW) under Wine 9, where it draws the whole app.
+  Under Wine it needed Microsoft's `d3dcompiler_47.dll`, a stand-in
+  `icuuc.dll` and `GPUI_DISABLE_DIRECT_COMPOSITION=1`. Real Windows 10
+  (1703+) and 11 ship the first two and support the third, but the `.exe`
+  has not yet been run on a real Windows. macOS hasn't been built.
 - **Markdown is the storage format for note text.** Rich text, when it
   arrives, still saves as Markdown so files stay readable.
 - **Coloured text** means highlight now and foreground later (§4.1).

@@ -39,11 +39,28 @@ and a `media/` folder for pictures.
 See [docs/PLAN.md](docs/PLAN.md) for the product and architecture plan and
 the roadmap.
 
+## Windows build
+
+Cross-compiled from Linux with MinGW, as forge-gpui's installer does:
+
+```sh
+rustup target add x86_64-pc-windows-gnu   # plus gcc-mingw-w64-x86-64
+cargo build --release --target x86_64-pc-windows-gnu
+# → target/x86_64-pc-windows-gnu/release/folio.exe
+```
+
+The patched GPUI Windows renderer in `vendor/gpui-pre-windows` compiles its
+shaders when the app starts, so an .exe built without the Windows SDK still
+draws. The icon (`assets/folio.ico`) is embedded by `build.rs`. A native
+build (`cargo build --release` on Windows with MSVC) should work too; it
+hasn't been tried yet.
+
 ## Develop
 
 ```sh
 cargo test                  # model, storage and Markdown-tint tests
 scripts/screenshots.sh out  # light/dark screenshots on a virtual display (Linux)
+scripts/icons.sh            # logo SVGs → PNGs and the Windows .ico
 ```
 
 Dependencies are pinned to exact versions. Icons are Lucide (ISC); the fonts

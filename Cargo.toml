@@ -26,3 +26,9 @@ opt-level = 2
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# GPUI's Windows renderer with its shaders compiled at runtime when the build
+# had no fxc.exe (a cross-compiled .exe), from forge-gpui:
+# vendor/gpui-pre-windows/FORGE-CHANGES.md. Apache-2.0.
+[patch.crates-io]
+gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
