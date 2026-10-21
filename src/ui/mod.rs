@@ -2,8 +2,17 @@
 
 pub mod app;
 mod board;
-mod editor;
-mod sidebar;
+mod bin;
+mod dialog;
+mod drawer;
+mod home;
+mod intro;
+mod menu;
+mod mini;
+mod palette;
+pub mod popout;
+pub mod quick;
+mod settings;
 mod sticker;
 mod toolbar;
 mod topbar;
@@ -21,25 +30,41 @@ gpui::actions!(
         ToggleTheme,
         NewSheet,
         NewNote,
+        QuickNote,
         NextSheet,
         PrevSheet,
+        GoHome,
+        ToggleDrawer,
+        OpenPalette,
+        OpenSettings,
         FocusSearch,
+        Dismiss,
         DeleteSelection,
         DuplicateSelection,
         EditSelection,
+        SelectAll,
         Paste,
         Escape,
         ZoomIn,
         ZoomOut,
         ZoomToFit,
+        Tidy,
+        ToggleMinimap,
+        StepLeft,
+        StepRight,
+        StepUp,
+        StepDown,
+        PaletteUp,
+        PaletteDown,
         ToolSelect,
         ToolHand,
         ToolPen,
         ToolMarker,
         ToolText,
         ToolConnect,
+        ToolFrame,
         ToolEraser,
-        SaveEditor,
+        SaveNote,
     ]
 );
 

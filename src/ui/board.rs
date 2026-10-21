@@ -1,23 +1,30 @@
-//! The sheet: an endless dotted canvas you pan and zoom, with ink and links
-//! painted beneath the stickers and labels laid on top.
+//! The sheet: an endless dotted canvas you pan and zoom. Areas, ink and
+//! links are painted beneath the notes; labels and notes lie on top.
 //!
 //! One handler set on the sheet does all hit testing against the model
 //! (front-most first), so a press means the same thing whatever element the
-//! pointer happens to be over. Only what's in view is laid out.
+//! pointer happens to be over. Only what's in view is laid out. The note
+//! being typed into is drawn over the sheet as a sibling of it, so its text
+//! fields aren't inside the sheet's single-letter shortcuts.
 
+use gpui::component::input::{Input, Textarea};
 use gpui::{
-    canvas, div, point, prelude::*, px, Context, Hsla, MouseButton, MouseDownEvent,
+    canvas, div, point, prelude::*, px, Context, Hsla, KeyDownEvent, KeyUpEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, PathBuilder, Pixels, ScrollWheelEvent, Window,
 };
 
-use super::app::{Folio, Gesture, Selection, Tool};
+use super::app::{Folio, Gesture, MenuKind, MenuPage, Selection, Tool};
+use super::sticker::size_factor;
 use super::*;
 use crate::model::*;
-use crate::theme::theme;
+use crate::theme::{theme, Theme};
 
-/// How close, in screen pixels, a press must be to a sticker's corner to
-/// resize it.
+/// How close, in screen pixels, a press must be to a corner to resize.
 const GRIP_REACH: f32 = 16.;
+/// How close, in screen pixels, edges must come to snap together.
+const SNAP: f32 = 6.;
+/// An area's title bar, in world units: press there to move the area.
+const FRAME_BAR: f32 = 40.;
 
 /// A stroke ready to paint: screen points, colour, width.
 struct InkPath {
@@ -36,13 +43,13 @@ impl Folio {
         let mut view = cam.visible(vw, vh);
         let m = 200. / cam.zoom;
         view = Rect { x: view.x - m, y: view.y - m, w: view.w + 2. * m, h: view.h + 2. * m };
-
-        // Ink beneath the stickers: links, then strokes.
-        let mut paths: Vec<InkPath> = Vec::new();
         let screen = |p: Vec2| {
             let s = cam.to_screen(p);
             point(px(s.x), px(s.y))
         };
+
+        // Ink beneath the notes: links, then strokes.
+        let mut paths: Vec<InkPath> = Vec::new();
         for s in sheet.strokes.iter().filter(|s| s.bounds().intersects(&view)) {
             let mut color = t.ink(s.ink);
             if s.marker {
@@ -60,19 +67,33 @@ impl Folio {
         let mut curves: Vec<([gpui::Point<Pixels>; 4], Hsla)> = Vec::new();
         for l in &sheet.links {
             if let (Some(a), Some(b)) = (sheet.sticker(l.from), sheet.sticker(l.to)) {
-                if a.rect.union(&b.rect).intersects(&view) {
-                    let c = link_curve(&a.rect, &b.rect);
-                    curves.push((c.map(screen), t.ink(l.ink).opacity(0.75)));
+                let (ra, rb) = (self.note_rect(a), self.note_rect(b));
+                if ra.union(&rb).intersects(&view) {
+                    curves.push((link_curve(&ra, &rb).map(screen), t.ink(l.ink).opacity(0.75)));
                 }
             }
         }
         if let Gesture::Connect { from, to } = &self.gesture {
             if let Some(a) = sheet.sticker(*from) {
                 let target = Rect { x: to.x - 1., y: to.y - 1., w: 2., h: 2. };
-                let c = link_curve(&a.rect, &target);
-                curves.push((c.map(screen), t.ink(self.ink)));
+                curves.push((link_curve(&self.note_rect(a), &target).map(screen), t.ink(self.ink)));
             }
         }
+        // Rubber bands: the selection box or the area being drawn.
+        let band = match &self.gesture {
+            Gesture::Marquee { start, now, .. } | Gesture::MakeFrame { start, now } => {
+                let (a, b) = (cam.to_screen(*start), cam.to_screen(*now));
+                Some((a.x.min(b.x), a.y.min(b.y), (a.x - b.x).abs(), (a.y - b.y).abs()))
+            }
+            _ => None,
+        };
+        let guides: Vec<(bool, f32)> = self
+            .guides
+            .iter()
+            .map(|(v, w)| (*v, if *v { cam.to_screen(v2(*w, 0.)).x } else { cam.to_screen(v2(0., *w)).y }))
+            .collect();
+        let guide_color = t.colors.brand;
+
         let link_width = (2. * cam.zoom).max(1.25);
         let dash = 6. * cam.zoom.max(0.6);
         let dot = t.colors.canvas_dot;
@@ -90,10 +111,11 @@ impl Folio {
                     if let Ok(p) = b.build() {
                         window.paint_path(p, *color);
                     }
-                    // A small dot where the link lands.
                     let r = px(3. * cam.zoom.max(0.7));
                     let end = c[3] + o;
-                    window.paint_quad(gpui::fill(gpui::Bounds::new(point(end.x - r, end.y - r), gpui::size(r * 2., r * 2.)), *color).corner_radii(r));
+                    window.paint_quad(
+                        gpui::fill(gpui::Bounds::new(point(end.x - r, end.y - r), gpui::size(r * 2., r * 2.)), *color).corner_radii(r),
+                    );
                 }
                 for ink in &paths {
                     paint_stroke(ink, o, window);
@@ -103,14 +125,65 @@ impl Folio {
         .absolute()
         .inset_0();
 
-        let search = self.search(cx);
+        let frames: Vec<_> = sheet
+            .frames
+            .iter()
+            .filter(|f| f.rect.intersects(&view))
+            .map(|f| {
+                let a = cam.to_screen(v2(f.rect.x, f.rect.y));
+                let z = cam.zoom;
+                let c = t.accent(f.accent);
+                let selected = self.is_selected(Selection::Frame(f.id));
+                div()
+                    .absolute()
+                    .left(px(a.x))
+                    .top(px(a.y))
+                    .w(px(f.rect.w * z))
+                    .h(px(f.rect.h * z))
+                    .rounded(px(16. * z))
+                    .bg(c.opacity(if t.is_dark { 0.10 } else { 0.08 }))
+                    .border_1()
+                    .border_color(c.opacity(if selected { 0.9 } else { 0.35 }))
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(14. * z))
+                            .top(px(10. * z))
+                            .flex()
+                            .items_center()
+                            .gap(px(6. * z))
+                            .child(div().size(px(8. * z)).rounded(px(4. * z)).bg(c))
+                            .child(
+                                div()
+                                    .text_size(px(14. * z))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(t.colors.text_muted)
+                                    .child(if f.title.is_empty() { "Untitled area".to_string() } else { f.title.clone() }),
+                            ),
+                    )
+                    .when(selected, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .right(px(4.))
+                                .bottom(px(4.))
+                                .size(t.size.grip)
+                                .rounded(px(3.))
+                                .border_r_2()
+                                .border_b_2()
+                                .border_color(c),
+                        )
+                    })
+            })
+            .collect();
+
         let labels: Vec<_> = sheet
             .labels
             .iter()
             .filter(|l| label_rect(l).intersects(&view))
             .map(|l| {
                 let at = cam.to_screen(l.at);
-                let selected = self.selected == Some(Selection::Label(l.id));
+                let selected = self.is_selected(Selection::Label(l.id));
                 div()
                     .absolute()
                     .left(px(at.x))
@@ -126,66 +199,92 @@ impl Folio {
             })
             .collect();
 
+        let editing = self.editing.map(|e| e.id);
         let stickers: Vec<_> = sheet
             .stickers
             .iter()
-            .filter(|s| s.rect.intersects(&view))
-            .map(|s| {
-                let dim = !search.is_empty()
-                    && !s.title.to_lowercase().contains(&search)
-                    && !s.body.to_lowercase().contains(&search);
-                self.render_sticker(s, cam, dim, &t, cx)
-            })
+            .filter(|s| Some(s.id) != editing && self.note_rect(s).intersects(&view))
+            .map(|s| self.render_sticker(s, cam, &t, cx))
             .collect();
 
-        let empty = sheet.stickers.is_empty() && sheet.strokes.is_empty() && sheet.labels.is_empty();
+        let empty = sheet.stickers.is_empty() && sheet.strokes.is_empty() && sheet.labels.is_empty() && sheet.frames.is_empty();
         let cursor = match self.tool {
+            _ if self.space => gpui::CursorStyle::OpenHand,
             Tool::Hand => gpui::CursorStyle::OpenHand,
-            Tool::Pen | Tool::Marker | Tool::Eraser | Tool::Connect => gpui::CursorStyle::Crosshair,
+            Tool::Pen | Tool::Marker | Tool::Eraser | Tool::Connect | Tool::Frame => gpui::CursorStyle::Crosshair,
             Tool::Text => gpui::CursorStyle::IBeam,
             Tool::Select => match (&self.gesture, self.hovered) {
                 (Gesture::Pan { .. }, _) => gpui::CursorStyle::ClosedHand,
-                (Gesture::Resize { .. }, _) => gpui::CursorStyle::ResizeUpLeftDownRight,
+                (Gesture::Resize { .. } | Gesture::ResizeFrame { .. }, _) => gpui::CursorStyle::ResizeUpLeftDownRight,
                 (_, Some(_)) => gpui::CursorStyle::PointingHand,
                 _ => gpui::CursorStyle::Arrow,
             },
         };
 
-        div()
+        let board = div()
             .id("sheet")
             .key_context("Board")
             .track_focus(&self.focus)
-            .relative()
-            .flex_1()
-            .min_h_0()
+            .absolute()
+            .inset_0()
             .overflow_hidden()
             .bg(t.colors.canvas)
             .cursor(cursor)
             .on_action(cx.listener(|this, _: &DeleteSelection, _, cx| this.delete_selection(cx)))
             .on_action(cx.listener(|this, _: &DuplicateSelection, _, cx| this.duplicate_selection(cx)))
-            .on_action(cx.listener(|this, _: &EditSelection, window, cx| {
-                if let Some(sel) = this.selected {
-                    this.before = Some(this.board.clone());
-                    this.open_editor(sel, false, window, cx);
-                }
+            .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
+                let c = this.sheet();
+                this.selection = c
+                    .stickers
+                    .iter()
+                    .map(|s| Selection::Sticker(s.id))
+                    .chain(c.labels.iter().map(|l| Selection::Label(l.id)))
+                    .collect();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &EditSelection, window, cx| match this.selection.first().copied() {
+                Some(Selection::Sticker(id)) => this.begin_edit(id, false, window, cx),
+                Some(Selection::Label(id)) => this.edit_label(id, false, window, cx),
+                Some(Selection::Frame(id)) => this.rename_frame(id, window, cx),
+                None => {}
             }))
             .on_action(cx.listener(|this, _: &Paste, _, cx| this.paste(cx)))
             .on_action(cx.listener(|this, _: &Escape, _, cx| {
-                this.selected = None;
+                this.selection.clear();
                 this.gesture = Gesture::None;
                 this.set_tool(Tool::Select, cx);
             }))
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom_by(1.2, cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom_by(1. / 1.2, cx)))
             .on_action(cx.listener(|this, _: &ZoomToFit, _, cx| this.zoom_to_fit(cx)))
+            .on_action(cx.listener(|this, _: &Tidy, _, cx| this.tidy(cx)))
+            .on_action(cx.listener(|this, _: &ToggleMinimap, _, cx| this.set_setting(cx, |s| s.minimap = !s.minimap)))
+            .on_action(cx.listener(|this, _: &StepLeft, _, cx| this.step_selection(-1., 0., cx)))
+            .on_action(cx.listener(|this, _: &StepRight, _, cx| this.step_selection(1., 0., cx)))
+            .on_action(cx.listener(|this, _: &StepUp, _, cx| this.step_selection(0., -1., cx)))
+            .on_action(cx.listener(|this, _: &StepDown, _, cx| this.step_selection(0., 1., cx)))
             .on_action(cx.listener(|this, _: &ToolSelect, _, cx| this.set_tool(Tool::Select, cx)))
             .on_action(cx.listener(|this, _: &ToolHand, _, cx| this.set_tool(Tool::Hand, cx)))
             .on_action(cx.listener(|this, _: &ToolPen, _, cx| this.set_tool(Tool::Pen, cx)))
             .on_action(cx.listener(|this, _: &ToolMarker, _, cx| this.set_tool(Tool::Marker, cx)))
             .on_action(cx.listener(|this, _: &ToolText, _, cx| this.set_tool(Tool::Text, cx)))
             .on_action(cx.listener(|this, _: &ToolConnect, _, cx| this.set_tool(Tool::Connect, cx)))
+            .on_action(cx.listener(|this, _: &ToolFrame, _, cx| this.set_tool(Tool::Frame, cx)))
             .on_action(cx.listener(|this, _: &ToolEraser, _, cx| this.set_tool(Tool::Eraser, cx)))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                if ev.keystroke.key == "space" && !this.space {
+                    this.space = true;
+                    cx.notify();
+                }
+            }))
+            .on_key_up(cx.listener(|this, ev: &KeyUpEvent, _, cx| {
+                if ev.keystroke.key == "space" {
+                    this.space = false;
+                    cx.notify();
+                }
+            }))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::press))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::press_right))
             .on_mouse_down(
                 MouseButton::Middle,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
@@ -208,15 +307,46 @@ impl Folio {
                 this.drop_paths(paths.paths().to_vec(), cx);
             }))
             .child(underlay)
-            .child(self.render_sheet_head(&t, cx))
+            .child(self.render_sheet_head(&t))
+            .children(frames)
             .children(labels)
             .children(stickers)
-            .when(empty, |d| d.child(empty_state(&t)))
+            .children(band.map(|(x, y, w, h)| {
+                let making = matches!(self.gesture, Gesture::MakeFrame { .. });
+                div()
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .w(px(w))
+                    .h(px(h))
+                    .rounded(px(if making { 14. } else { 4. }))
+                    .border_1()
+                    .border_color(t.colors.brand)
+                    .bg(t.colors.brand.opacity(0.06))
+            }))
+            .children(guides.into_iter().map(move |(v, at)| {
+                let d = div().absolute().bg(guide_color.opacity(0.8));
+                if v {
+                    d.left(px(at)).top_0().bottom_0().w(px(1.))
+                } else {
+                    d.top(px(at)).left_0().right_0().h(px(1.))
+                }
+            }))
+            .when(empty, |d| d.child(empty_state(&t)));
+
+        let edit_layer = self.render_edit_layer(&t, window, cx);
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .child(board)
+            .children(edit_layer)
             .child(self.render_toolbar(window, cx))
             .child(self.render_zoom(cx))
+            .when(self.board.settings.minimap && !empty, |d| d.child(self.render_minimap(&t, cx)))
     }
 
-    fn render_sheet_head(&self, t: &crate::theme::Theme, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sheet_head(&self, t: &Theme) -> impl IntoElement {
         let sheet = self.sheet();
         let n = sheet.stickers.len();
         let meta = format!(
@@ -226,6 +356,7 @@ impl Folio {
             if n == 1 { "" } else { "s" },
             if self.saved { "Saved" } else { "Saving…" }
         );
+        let name = if sheet.icon.is_empty() { sheet.name.clone() } else { format!("{} {}", sheet.icon, sheet.name) };
         div()
             .absolute()
             .top(t.space.xl)
@@ -233,89 +364,443 @@ impl Folio {
             .flex()
             .flex_col()
             .gap(t.space.xxs)
+            .child(div().text_size(t.text.heading).font_weight(gpui::FontWeight::SEMIBOLD).text_color(t.colors.text).child(name))
+            .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(meta))
+    }
+
+    /// The note being typed into, drawn over the sheet, with its format
+    /// bar above it.
+    fn render_edit_layer(&self, t: &Theme, _: &mut Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let ed = self.editing?;
+        let s = self.sheet().sticker(ed.id)?;
+        let cam = self.sheet().camera;
+        let r = self.note_rect(s);
+        let z = cam.zoom.max(0.8);
+        let at = cam.to_screen(v2(r.x, r.y));
+        let id = s.id;
+        let k = size_factor(s.text_size);
+        let bar_btn = |name: &'static str, path: &'static str| {
+            div()
+                .id(name)
+                .size(px(30.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(t.radius.small)
+                .cursor_pointer()
+                .hover(|d| d.bg(t.colors.hover))
+                .child(icon(path, t.size.icon_sm, t.colors.text_muted))
+        };
+        let papers = Paper::ALL.iter().map(|&p| {
+            div()
+                .id(("e-paper", p as usize))
+                .size(px(20.))
+                .rounded(px(5.))
+                .bg(t.paper(p))
+                .border_1()
+                .border_color(t.colors.border)
+                .cursor_pointer()
+                .when(s.paper == p, |d| d.border_2().border_color(t.colors.brand))
+                .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.paper = p)))
+        });
+        let fonts = NoteFont::ALL.iter().map(|&f| {
+            let on = s.font == f;
+            div()
+                .id(("e-font", f as usize))
+                .h(px(26.))
+                .px(px(7.))
+                .flex()
+                .items_center()
+                .rounded(t.radius.small)
+                .font_family(t.note_font(f))
+                .text_size(t.text.caption)
+                .cursor_pointer()
+                .when(on, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint))
+                .when(!on, |d| d.text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
+                .child("Aa")
+                .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.font = f)))
+        });
+        let sizes = TextSize::ALL.iter().map(|&zs| {
+            let on = s.text_size == zs;
+            div()
+                .id(("e-size", zs as usize))
+                .size(px(26.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(t.radius.small)
+                .text_size(t.text.caption)
+                .cursor_pointer()
+                .when(on, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint))
+                .when(!on, |d| d.text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
+                .child(zs.label())
+                .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.text_size = zs)))
+        });
+        let divider = || div().w(px(1.)).h(px(20.)).mx(px(4.)).bg(t.colors.border);
+        let bar = div()
+            .absolute()
+            .left(px(at.x))
+            .top(px((at.y - 50.).max(4.)))
+            .flex()
+            .items_center()
+            .gap(px(3.))
+            .p(px(5.))
+            .rounded(t.radius.card)
+            .bg(t.colors.surface)
+            .border_1()
+            .border_color(t.colors.border)
+            .shadow(t.shadow_float())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .children(papers)
+            .child(divider())
+            .children(fonts)
+            .child(divider())
+            .children(sizes)
+            .child(divider())
+            .child(bar_btn("e-task", "icons/list-checks.svg").on_click(cx.listener(move |this, _, window, cx| this.add_task(id, window, cx))))
+            .child(bar_btn("e-pic", "icons/image.svg").on_click(cx.listener(move |this, _, _, cx| this.pick_image(id, cx))))
+            .child(bar_btn("e-bell", "icons/bell.svg").on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.menu = Some(super::app::Menu { at: ev.position, kind: MenuKind::Note(id), page: MenuPage::Remind });
+                    cx.notify();
+                }),
+            ))
+            .child(bar_btn("e-more", "icons/ellipsis.svg").on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_menu(ev.position, MenuKind::Note(id), cx);
+                }),
+            ))
+            .child(divider())
             .child(
                 div()
-                    .text_size(t.text.heading)
+                    .id("e-done")
+                    .h(px(28.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .rounded(t.radius.small)
+                    .bg(t.colors.brand)
+                    .text_color(t.colors.primary_fg)
+                    .text_size(t.text.caption)
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(t.colors.text)
-                    .child(sheet.name.clone()),
+                    .cursor_pointer()
+                    .child(icon("icons/check.svg", px(13.), t.colors.primary_fg))
+                    .child("Done")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.finish_edit(cx);
+                        window.focus(&this.focus, cx);
+                    })),
+            );
+        let picture = s.image.as_ref().map(|name| {
+            gpui::img(self.image_path(name))
+                .id(("edit-picture", s.id))
+                .w_full()
+                .h(px((s.rect.w * 0.62).min(s.rect.h) * z))
+                .object_fit(gpui::ObjectFit::Cover)
+                .rounded_t(px(12. * z))
+        });
+        use gpui::StyledImage;
+        let note = div()
+            .id("editing")
+            .key_context("NoteEdit")
+            .absolute()
+            .left(px(at.x))
+            .top(px(at.y))
+            .w(px(r.w * z))
+            .min_h(px(r.h * z))
+            .rounded(px(12. * z))
+            .bg(t.paper(s.paper))
+            .border_2()
+            .border_color(t.colors.brand)
+            .shadow(t.shadow_lifted(z))
+            .font_family(t.note_font(s.font))
+            .text_size(px(13. * k * z))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_action(cx.listener(|this, _: &SaveNote, window, cx| {
+                this.finish_edit(cx);
+                window.focus(&this.focus, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
+                this.finish_edit(cx);
+                window.focus(&this.focus, cx);
+            }))
+            .children(picture)
+            .child(
+                div()
+                    .px(px(10. * z))
+                    .py(px(8. * z))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_size(px(15. * k * z))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(Input::new(&self.title_input).appearance(false)),
+                    )
+                    .child(Textarea::new(&self.body_input).appearance(false)),
+            );
+        Some(div().absolute().inset_0().child(note).child(bar).into_any_element())
+    }
+
+    fn render_minimap(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let (w, h) = (200., 130.);
+        let sheet = self.sheet();
+        let (vw, vh) = self.viewport_size();
+        let view = sheet.camera.visible(vw, vh);
+        let rects: Vec<(Rect, Hsla)> = sheet.stickers.iter().map(|s| (self.note_rect(s), t.paper(s.paper))).collect();
+        let frames: Vec<(Rect, Hsla)> = sheet.frames.iter().map(|f| (f.rect, t.accent(f.accent))).collect();
+        let world = rects.iter().map(|r| r.0).chain(frames.iter().map(|f| f.0)).fold(view, |a, b| a.union(&b));
+        let pad = 8.;
+        let k = ((w - 2. * pad) / world.w).min((h - 2. * pad) / world.h);
+        let ox = (w - world.w * k) / 2. - world.x * k;
+        let oy = (h - world.h * k) / 2. - world.y * k;
+        let edge = t.colors.border;
+        let brand = t.colors.brand;
+        let to_world = move |x: f32, y: f32| v2((x - ox) / k, (y - oy) / k);
+        div()
+            .id("minimap")
+            .absolute()
+            .left(t.space.xl)
+            .bottom(t.space.xl)
+            .w(px(w))
+            .h(px(h))
+            .rounded(t.radius.card)
+            .bg(t.colors.surface)
+            .border_1()
+            .border_color(t.colors.border)
+            .shadow(t.shadow_float())
+            .overflow_hidden()
+            .cursor_pointer()
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |b, _, window, _| {
+                        let o = b.origin;
+                        let quad = |r: &Rect| {
+                            gpui::Bounds::new(
+                                point(o.x + px(ox + r.x * k), o.y + px(oy + r.y * k)),
+                                gpui::size(px((r.w * k).max(2.)), px((r.h * k).max(2.))),
+                            )
+                        };
+                        for (r, c) in &frames {
+                            window.paint_quad(gpui::fill(quad(r), c.opacity(0.12)).corner_radii(px(3.)));
+                        }
+                        for (r, c) in &rects {
+                            window.paint_quad(gpui::fill(quad(r), *c).corner_radii(px(2.)).border_widths(px(0.5)).border_color(edge));
+                        }
+                        window.paint_quad(gpui::outline(quad(&view), brand, gpui::BorderStyle::Solid).corner_radii(px(3.)));
+                    },
+                )
+                .absolute()
+                .inset_0(),
             )
-            .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(meta))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.minimap_jump(ev.position, to_world, cx);
+                }),
+            )
+            .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _, cx| {
+                if ev.pressed_button == Some(MouseButton::Left) {
+                    this.minimap_jump(ev.position, to_world, cx);
+                }
+            }))
+    }
+
+    /// Centres the view on the world point under the map position.
+    fn minimap_jump(&mut self, p: gpui::Point<Pixels>, to_world: impl Fn(f32, f32) -> Vec2, cx: &mut Context<Self>) {
+        let vb = self.viewport.get();
+        let t = theme(cx);
+        let left = f32::from(vb.origin.x + t.space.xl);
+        let top = f32::from(vb.origin.y + vb.size.height - t.space.xl) - 130.;
+        let w = to_world(f32::from(p.x) - left, f32::from(p.y) - top);
+        let (vw, vh) = self.viewport_size();
+        let cam = &mut self.board.sheet_mut().camera;
+        cam.pan = v2(vw / 2. - w.x * cam.zoom, vh / 2. - w.y * cam.zoom);
+        self.schedule_save(cx);
+        cx.notify();
     }
 
     // ---------- Pointer ----------
 
+    fn press_right(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
+        self.finish_edit(cx);
+        let world = self.sheet().camera.to_world(self.local(ev.position));
+        let kind = if let Some(id) = self.note_at(world) {
+            if !self.is_selected(Selection::Sticker(id)) {
+                self.select(Selection::Sticker(id));
+            }
+            MenuKind::Note(id)
+        } else if let Some(id) = self.sheet().label_at(world) {
+            self.select(Selection::Label(id));
+            MenuKind::Label(id)
+        } else if let Some(id) = self.frame_bar_at(world).or_else(|| self.sheet().frame_at(world)) {
+            self.select(Selection::Frame(id));
+            MenuKind::Frame(id)
+        } else {
+            MenuKind::Canvas(world)
+        };
+        self.open_menu(ev.position, kind, cx);
+    }
+
+    /// The area whose title bar is under `p`.
+    fn frame_bar_at(&self, p: Vec2) -> Option<Id> {
+        self.sheet()
+            .frames
+            .iter()
+            .rev()
+            .find(|f| p.x >= f.rect.x && p.x <= f.rect.x + f.rect.w && p.y >= f.rect.y && p.y <= f.rect.y + FRAME_BAR)
+            .map(|f| f.id)
+    }
+
+    /// Everything a move of the selection carries, with where it started:
+    /// the selected notes and labels, the selected areas and the notes in them.
+    fn move_set(&self) -> Vec<(Selection, Vec2)> {
+        let c = self.sheet();
+        let mut out: Vec<(Selection, Vec2)> = Vec::new();
+        let add = |s: Selection, at: Vec2, out: &mut Vec<(Selection, Vec2)>| {
+            if !out.iter().any(|x| x.0 == s) {
+                out.push((s, at));
+            }
+        };
+        for sel in &self.selection {
+            match *sel {
+                Selection::Sticker(id) => {
+                    if let Some(s) = c.sticker(id).filter(|s| !s.locked) {
+                        add(*sel, v2(s.rect.x, s.rect.y), &mut out);
+                    }
+                }
+                Selection::Label(id) => {
+                    if let Some(l) = c.labels.iter().find(|l| l.id == id) {
+                        add(*sel, l.at, &mut out);
+                    }
+                }
+                Selection::Frame(id) => {
+                    if let Some(f) = c.frames.iter().find(|f| f.id == id) {
+                        add(*sel, v2(f.rect.x, f.rect.y), &mut out);
+                        for m in c.frame_members(id) {
+                            if let Some(s) = c.sticker(m).filter(|s| !s.locked) {
+                                add(Selection::Sticker(m), v2(s.rect.x, s.rect.y), &mut out);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn press(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+        self.menu = None;
+        self.finish_edit(cx);
         let at = self.local(ev.position);
         self.cursor = at;
         let cam = self.sheet().camera;
         let world = cam.to_world(at);
         let double = ev.click_count >= 2;
+        let shift = ev.modifiers.shift;
         let pan = Gesture::Pan { start: at, pan: cam.pan };
         self.before = Some(self.board.clone());
+        if self.space {
+            self.gesture = pan;
+            cx.notify();
+            return;
+        }
         match self.tool {
             Tool::Hand => self.gesture = pan,
             Tool::Select => {
                 if let Some(id) = self.grip_at(at) {
-                    let r = self.sheet().sticker(id).map(|s| s.rect).unwrap();
-                    self.selected = Some(Selection::Sticker(id));
+                    let r = self.sheet().sticker(id).map(|s| self.note_rect(s)).unwrap();
+                    self.select(Selection::Sticker(id));
                     self.gesture = Gesture::Resize { id, start: world, size: (r.w, r.h) };
-                } else if let Some(id) = self.sheet().sticker_at(world) {
-                    self.selected = Some(Selection::Sticker(id));
+                } else if let Some(id) = self.frame_grip_at(at) {
+                    let r = self.sheet().frames.iter().find(|f| f.id == id).map(|f| f.rect).unwrap();
+                    self.gesture = Gesture::ResizeFrame { id, start: world, size: (r.w, r.h) };
+                } else if let Some(id) = self.note_at(world) {
+                    let sel = Selection::Sticker(id);
                     if double {
                         self.gesture = Gesture::None;
-                        self.open_editor(Selection::Sticker(id), false, window, cx);
-                    } else {
-                        let r = self.sheet().sticker(id).map(|s| s.rect).unwrap();
-                        self.board.sheet_mut().bring_to_front(id);
-                        self.gesture = Gesture::Move { id, grab: world.sub(v2(r.x, r.y)), moved: false };
+                        self.begin_edit(id, false, window, cx);
+                        return;
                     }
+                    if shift {
+                        if self.is_selected(sel) {
+                            self.selection.retain(|s| *s != sel);
+                        } else {
+                            self.selection.push(sel);
+                        }
+                    } else if !self.is_selected(sel) {
+                        self.select(sel);
+                    }
+                    self.board.sheet_mut().bring_to_front(id);
+                    self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
                 } else if let Some(id) = self.sheet().label_at(world) {
-                    self.selected = Some(Selection::Label(id));
+                    let sel = Selection::Label(id);
                     if double {
                         self.gesture = Gesture::None;
-                        self.open_editor(Selection::Label(id), false, window, cx);
-                    } else {
-                        let l = self.sheet().labels.iter().find(|l| l.id == id).map(|l| l.at).unwrap();
-                        self.gesture = Gesture::MoveLabel { id, grab: world.sub(l), moved: false };
+                        self.edit_label(id, false, window, cx);
+                        return;
                     }
+                    if !self.is_selected(sel) && !shift {
+                        self.select(sel);
+                    } else if shift && !self.is_selected(sel) {
+                        self.selection.push(sel);
+                    }
+                    self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
+                } else if let Some(id) = self.frame_bar_at(world) {
+                    let sel = Selection::Frame(id);
+                    if double {
+                        self.gesture = Gesture::None;
+                        self.rename_frame(id, window, cx);
+                        return;
+                    }
+                    if !self.is_selected(sel) {
+                        if shift {
+                            self.selection.push(sel);
+                        } else {
+                            self.select(sel);
+                        }
+                    }
+                    self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
                 } else if double {
                     self.gesture = Gesture::None;
-                    self.new_sticker_at(world, window, cx);
+                    self.new_note_at(world, window, cx);
+                    return;
                 } else {
-                    self.selected = None;
-                    self.gesture = pan;
+                    if !shift {
+                        self.selection.clear();
+                    }
+                    self.gesture = Gesture::Marquee { start: world, now: world, additive: shift };
                 }
             }
             Tool::Pen | Tool::Marker => {
                 let marker = self.tool == Tool::Marker;
                 let id = self.board.fresh_id();
-                self.gesture = Gesture::Draw(Stroke {
-                    id,
-                    ink: self.ink,
-                    width: if marker { 16. } else { 2.5 },
-                    marker,
-                    points: vec![world],
-                });
+                self.gesture = Gesture::Draw(Stroke { id, ink: self.ink, width: if marker { 16. } else { 2.5 }, marker, points: vec![world] });
             }
             Tool::Text => {
                 self.gesture = Gesture::None;
                 if let Some(id) = self.sheet().label_at(world) {
-                    self.selected = Some(Selection::Label(id));
-                    self.open_editor(Selection::Label(id), false, window, cx);
+                    self.select(Selection::Label(id));
+                    self.edit_label(id, false, window, cx);
                 } else {
-                    let id = self.board.fresh_id();
-                    let ink = self.ink;
-                    self.board.sheet_mut().labels.push(Label { id, at: v2(world.x, world.y - 11.), text: String::new(), ink });
-                    self.selected = Some(Selection::Label(id));
-                    self.open_editor(Selection::Label(id), true, window, cx);
+                    self.new_label_at(world, window, cx);
                 }
+                return;
             }
-            Tool::Connect => match self.sheet().sticker_at(world) {
+            Tool::Connect => match self.note_at(world) {
                 Some(from) => self.gesture = Gesture::Connect { from, to: world },
                 None => self.gesture = pan,
             },
+            Tool::Frame => self.gesture = Gesture::MakeFrame { start: world, now: world },
             Tool::Eraser => {
                 let erased = self.board.sheet_mut().erase_at(world, 6. / cam.zoom);
                 self.gesture = Gesture::Erase { erased };
@@ -334,9 +819,10 @@ impl Folio {
             self.release(cx);
             return;
         }
+        let snap_on = self.board.settings.snap;
         match &mut self.gesture {
             Gesture::None => {
-                let hovered = self.sheet().sticker_at(world);
+                let hovered = self.note_at(world);
                 if hovered != self.hovered {
                     self.hovered = hovered;
                     cx.notify();
@@ -344,34 +830,85 @@ impl Folio {
                 return;
             }
             Gesture::Pan { start, pan } => {
-                let d = at.sub(*start);
-                let p = pan.add(d);
+                let p = pan.add(at.sub(*start));
                 self.board.sheet_mut().camera.pan = p;
             }
-            Gesture::Move { id, grab, moved } => {
-                let (id, grab) = (*id, *grab);
-                *moved = true;
-                if let Some(s) = self.board.sheet_mut().sticker_mut(id) {
-                    s.rect.x = world.x - grab.x;
-                    s.rect.y = world.y - grab.y;
+            Gesture::Move { items, start, moved } => {
+                let mut d = world.sub(*start);
+                if !*moved && d.len() * cam.zoom < 3. {
+                    return;
                 }
-            }
-            Gesture::MoveLabel { id, grab, moved } => {
-                let (id, grab) = (*id, *grab);
                 *moved = true;
-                if let Some(l) = self.board.sheet_mut().labels.iter_mut().find(|l| l.id == id) {
-                    l.at = world.sub(grab);
+                let items = items.clone();
+                // Snap the moving notes' box to other notes' edges.
+                self.guides.clear();
+                if snap_on {
+                    let (dd, guides) = self.snap(&items, d, cam.zoom);
+                    d = dd;
+                    self.guides = guides;
+                }
+                let sheet = self.board.sheet_mut();
+                for (sel, from) in &items {
+                    let p = from.add(d);
+                    match *sel {
+                        Selection::Sticker(id) => {
+                            if let Some(s) = sheet.sticker_mut(id) {
+                                s.rect.x = p.x;
+                                s.rect.y = p.y;
+                            }
+                        }
+                        Selection::Label(id) => {
+                            if let Some(l) = sheet.labels.iter_mut().find(|l| l.id == id) {
+                                l.at = p;
+                            }
+                        }
+                        Selection::Frame(id) => {
+                            if let Some(f) = sheet.frames.iter_mut().find(|f| f.id == id) {
+                                f.rect.x = p.x;
+                                f.rect.y = p.y;
+                            }
+                        }
+                    }
                 }
             }
             Gesture::Resize { id, start, size } => {
                 let (id, start, size) = (*id, *start, *size);
                 if let Some(s) = self.board.sheet_mut().sticker_mut(id) {
                     s.rect.w = (size.0 + world.x - start.x).max(MIN_STICKER.0);
-                    s.rect.h = (size.1 + world.y - start.y).max(MIN_STICKER.1);
+                    s.rect.h = (size.1 + world.y - start.y).max(MIN_STICKER.1 * 0.6);
                 }
             }
+            Gesture::ResizeFrame { id, start, size } => {
+                let (id, start, size) = (*id, *start, *size);
+                if let Some(f) = self.board.sheet_mut().frames.iter_mut().find(|f| f.id == id) {
+                    f.rect.w = (size.0 + world.x - start.x).max(160.);
+                    f.rect.h = (size.1 + world.y - start.y).max(120.);
+                }
+            }
+            Gesture::Marquee { start, now, additive } => {
+                *now = world;
+                let r = Rect { x: start.x.min(world.x), y: start.y.min(world.y), w: (start.x - world.x).abs(), h: (start.y - world.y).abs() };
+                let additive = *additive;
+                let c = self.sheet();
+                let mut sel: Vec<Selection> = c
+                    .stickers
+                    .iter()
+                    .filter(|s| r.intersects(&self.note_rect(s)))
+                    .map(|s| Selection::Sticker(s.id))
+                    .chain(c.labels.iter().filter(|l| r.intersects(&label_rect(l))).map(|l| Selection::Label(l.id)))
+                    .chain(c.frames.iter().filter(|f| contains(&r, &f.rect)).map(|f| Selection::Frame(f.id)))
+                    .collect();
+                if additive {
+                    for s in std::mem::take(&mut self.selection) {
+                        if !sel.contains(&s) {
+                            sel.push(s);
+                        }
+                    }
+                }
+                self.selection = sel;
+            }
+            Gesture::MakeFrame { now, .. } => *now = world,
             Gesture::Draw(stroke) => {
-                // Skip points closer than a pixel on screen to the last one.
                 let last = *stroke.points.last().unwrap();
                 if world.sub(last).len() * cam.zoom >= 1.0 {
                     stroke.points.push(world);
@@ -387,41 +924,107 @@ impl Folio {
         cx.notify();
     }
 
+    /// The move `d` adjusted so the moving box lines up with another note's
+    /// edge or centre when it comes within a few pixels, and the guides.
+    fn snap(&self, items: &[(Selection, Vec2)], d: Vec2, zoom: f32) -> (Vec2, Vec<(bool, f32)>) {
+        let c = self.sheet();
+        let moving: Vec<Id> = items
+            .iter()
+            .filter_map(|(s, _)| match s {
+                Selection::Sticker(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let boxes: Vec<Rect> = items
+            .iter()
+            .filter_map(|(s, from)| match s {
+                Selection::Sticker(id) => c.sticker(*id).map(|n| {
+                    let r = self.note_rect(n);
+                    Rect { x: from.x + d.x, y: from.y + d.y, w: r.w, h: r.h }
+                }),
+                _ => None,
+            })
+            .collect();
+        let Some(b) = boxes.into_iter().reduce(|a, b| a.union(&b)) else { return (d, Vec::new()) };
+        let reach = SNAP / zoom;
+        let xs = [b.x, b.x + b.w / 2., b.x + b.w];
+        let ys = [b.y, b.y + b.h / 2., b.y + b.h];
+        let (mut best_x, mut best_y): (Option<(f32, f32)>, Option<(f32, f32)>) = (None, None);
+        for o in c.stickers.iter().filter(|s| !moving.contains(&s.id)) {
+            let r = self.note_rect(o);
+            for tx in [r.x, r.x + r.w / 2., r.x + r.w] {
+                for x in xs {
+                    let off = tx - x;
+                    if off.abs() <= reach && best_x.is_none_or(|(b, _)| off.abs() < b.abs()) {
+                        best_x = Some((off, tx));
+                    }
+                }
+            }
+            for ty in [r.y, r.y + r.h / 2., r.y + r.h] {
+                for y in ys {
+                    let off = ty - y;
+                    if off.abs() <= reach && best_y.is_none_or(|(b, _)| off.abs() < b.abs()) {
+                        best_y = Some((off, ty));
+                    }
+                }
+            }
+        }
+        let mut guides = Vec::new();
+        let mut d = d;
+        if let Some((off, at)) = best_x {
+            d.x += off;
+            guides.push((true, at));
+        }
+        if let Some((off, at)) = best_y {
+            d.y += off;
+            guides.push((false, at));
+        }
+        (d, guides)
+    }
+
     fn release(&mut self, cx: &mut Context<Self>) {
         let gesture = std::mem::replace(&mut self.gesture, Gesture::None);
+        self.guides.clear();
         let before = self.before.take();
         match gesture {
             Gesture::None => {
-                // The editor took over this press; keep its snapshot.
-                if self.editing.is_some() {
+                // The editor or a dialog took over this press; keep its snapshot.
+                if self.editing.is_some() || self.dialog.is_some() {
                     self.before = before;
                 }
                 return;
             }
             Gesture::Pan { .. } => self.schedule_save(cx),
-            Gesture::Move { moved: false, .. } | Gesture::MoveLabel { moved: false, .. } => {}
+            Gesture::Marquee { start, now, .. } => {
+                if start.sub(now).len() * self.sheet().camera.zoom < 3. {
+                    // A click on the empty sheet.
+                }
+            }
+            Gesture::MakeFrame { start, now } => {
+                let r = Rect { x: start.x.min(now.x), y: start.y.min(now.y), w: (start.x - now.x).abs(), h: (start.y - now.y).abs() };
+                if r.w > 60. && r.h > 60. {
+                    self.before = before;
+                    self.new_frame(r, cx);
+                    self.tool = Tool::Select;
+                    return;
+                }
+            }
             Gesture::Draw(mut stroke) => {
                 stroke.points = simplify(&stroke.points, 0.35 / self.sheet().camera.zoom);
                 if stroke.points.len() == 1 {
-                    // A tap leaves a dot.
                     let p = stroke.points[0];
                     stroke.points.push(v2(p.x + 0.1, p.y));
                 }
                 self.board.sheet_mut().strokes.push(stroke);
             }
             Gesture::Connect { from, to } => {
-                let target = self.sheet().sticker_at(to);
-                match target {
-                    Some(to_id) if to_id != from => {
-                        let id = self.board.fresh_id();
-                        let ink = self.ink;
-                        let linked = self.board.sheet_mut().toggle_link(id, from, to_id, ink);
-                        self.notify(if linked { "Linked" } else { "Link removed" }, cx);
-                    }
-                    _ => {}
+                if let Some(to_id) = self.note_at(to).filter(|t| *t != from) {
+                    let id = self.board.fresh_id();
+                    let ink = self.ink;
+                    let linked = self.board.sheet_mut().toggle_link(id, from, to_id, ink);
+                    self.notify(if linked { "Linked" } else { "Link removed" }, cx);
                 }
             }
-            Gesture::Erase { erased: false } => {}
             _ => {}
         }
         if let Some(before) = before {
@@ -431,10 +1034,27 @@ impl Folio {
             for (c, now) in b.categories.iter_mut().zip(&self.board.categories) {
                 if c.id == now.id {
                     c.camera = now.camera;
+                    // Bringing to front on a click isn't a change.
+                    if c.stickers.len() == now.stickers.len() && c.stickers.iter().all(|s| now.stickers.contains(s)) {
+                        c.stickers = now.stickers.clone();
+                    }
                 }
             }
             self.commit(b, cx);
         }
+        cx.notify();
+    }
+
+    /// A new area over `r`, named next.
+    pub fn new_frame(&mut self, r: Rect, cx: &mut Context<Self>) {
+        let before = self.before.take().unwrap_or_else(|| self.board.clone());
+        let id = self.board.fresh_id();
+        let n = self.sheet().frames.len();
+        let accent = Accent::ALL[(n + 1) % Accent::ALL.len()];
+        self.board.sheet_mut().frames.insert(0, Frame { id, rect: r, title: String::new(), accent });
+        self.commit(before, cx);
+        self.select(Selection::Frame(id));
+        self.dialog = Some(super::app::Dialog::RenameFrame(id));
         cx.notify();
     }
 
@@ -455,24 +1075,32 @@ impl Folio {
         cx.notify();
     }
 
-    /// The sticker whose resize corner is under `at` (screen): the selected
-    /// or hovered one, so corners don't catch presses on stickers at rest.
+    /// The note whose resize corner is under `at` (screen): the selected or
+    /// hovered one, so corners don't catch presses on notes at rest.
     fn grip_at(&self, at: Vec2) -> Option<Id> {
         let cam = self.sheet().camera;
-        let candidates = [
-            match self.selected {
-                Some(Selection::Sticker(id)) => Some(id),
-                _ => None,
-            },
-            self.hovered,
-        ];
-        candidates.into_iter().flatten().find(|id| {
+        let mut candidates: Vec<Id> = self.selected_notes();
+        candidates.extend(self.hovered);
+        candidates.into_iter().find(|id| {
             self.sheet().sticker(*id).is_some_and(|s| {
-                let corner = cam.to_screen(v2(s.rect.x + s.rect.w, s.rect.y + s.rect.h));
-                (corner.x - at.x).abs() <= GRIP_REACH && (corner.y - at.y).abs() <= GRIP_REACH
+                let r = self.note_rect(s);
+                let corner = cam.to_screen(v2(r.x + r.w, r.y + r.h));
+                !s.locked && (corner.x - at.x).abs() <= GRIP_REACH && (corner.y - at.y).abs() <= GRIP_REACH
             })
         })
     }
+
+    fn frame_grip_at(&self, at: Vec2) -> Option<Id> {
+        let cam = self.sheet().camera;
+        self.sheet().frames.iter().filter(|f| self.is_selected(Selection::Frame(f.id))).find_map(|f| {
+            let corner = cam.to_screen(v2(f.rect.x + f.rect.w, f.rect.y + f.rect.h));
+            ((corner.x - at.x).abs() <= GRIP_REACH && (corner.y - at.y).abs() <= GRIP_REACH).then_some(f.id)
+        })
+    }
+}
+
+fn contains(outer: &Rect, inner: &Rect) -> bool {
+    inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h
 }
 
 fn paint_dots(bounds: gpui::Bounds<Pixels>, cam: Camera, grid: f32, color: Hsla, window: &mut Window) {
@@ -519,7 +1147,7 @@ fn paint_stroke(ink: &InkPath, origin: gpui::Point<Pixels>, window: &mut Window)
     }
 }
 
-fn empty_state(t: &crate::theme::Theme) -> impl IntoElement {
+fn empty_state(t: &Theme) -> impl IntoElement {
     div()
         .absolute()
         .inset_0()
@@ -529,11 +1157,11 @@ fn empty_state(t: &crate::theme::Theme) -> impl IntoElement {
         .justify_center()
         .gap(t.space.sm)
         .child(icon("icons/sticky-note.svg", t.size.icon_lg, t.colors.text_subtle))
-        .child(div().text_size(t.text.title).text_color(t.colors.text_muted).child("This sheet is empty"))
+        .child(div().text_size(t.text.title).text_color(t.colors.text_muted).child("A fresh sheet"))
         .child(
             div()
                 .text_size(t.text.caption)
                 .text_color(t.colors.text_subtle)
-                .child("Double-click anywhere for a note, drop a picture, or pick up the pen"),
+                .child("Double-click anywhere for a note, drop a picture, or right-click for more"),
         )
 }

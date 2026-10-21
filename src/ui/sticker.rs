@@ -1,31 +1,182 @@
-//! One sticker: its paper, an optional picture, a title, and Markdown.
-//! Laid out at the camera's zoom; when zoomed far out only the title shows,
+//! One note: its paper, an optional picture or link card, a title, and
+//! its text, with task lines drawn as real checkboxes you can tick. Laid
+//! out at the camera's zoom; when zoomed far out only the title shows,
 //! which keeps a crowded sheet legible and cheap to draw.
 
 use gpui::component::text::{TextView, TextViewStyle};
-use gpui::{div, img, prelude::*, px, AnyElement, Context, ObjectFit, StyledImage};
+use gpui::{canvas, div, img, prelude::*, px, AnyElement, App, Context, MouseButton, ObjectFit, StyledImage, Window};
 
 use super::app::{Folio, Gesture, Selection};
+use super::home::first_line;
+use super::*;
 use crate::model::*;
 use crate::theme::Theme;
+use crate::time::{self, now};
 
-/// Below this zoom, a sticker shows its title only.
+/// Below this zoom, a note shows its title only.
 const DETAIL_ZOOM: f32 = 0.45;
 
+pub fn size_factor(z: TextSize) -> f32 {
+    match z {
+        TextSize::Small => 0.9,
+        TextSize::Medium => 1.0,
+        TextSize::Large => 1.2,
+    }
+}
+
+/// A note's content: link card, title, then its text, task lines as
+/// checkboxes (`on_toggle` gets the task's number). `k` scales sizes.
+pub fn note_body(
+    s: &Sticker,
+    k: f32,
+    t: &Theme,
+    md_ids: Option<u64>,
+    on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+) -> Vec<AnyElement> {
+    let mut out: Vec<AnyElement> = Vec::new();
+    let base = md_ids.unwrap_or(s.id) * 64;
+    if let Some(l) = &s.link {
+        let title = if l.title.is_empty() { l.url.clone() } else { l.title.clone() };
+        out.push(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4. * k))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6. * k))
+                        .text_size(px(11. * k))
+                        .text_color(t.colors.text_subtle)
+                        .child(icon("icons/globe.svg", px(12. * k), t.colors.text_subtle))
+                        .child(l.site.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(px(15. * k))
+                        .line_height(px(20. * k))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(t.colors.text)
+                        .child(title),
+                )
+                .into_any_element(),
+        );
+    }
+    if !s.title.is_empty() {
+        out.push(
+            div()
+                .text_size(px(15. * k))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(t.colors.text)
+                .line_height(px(20. * k))
+                .child(s.title.clone())
+                .into_any_element(),
+        );
+    }
+    // Plain stretches as Markdown, task lines as checkboxes.
+    let mut plain: Vec<&str> = Vec::new();
+    let mut seg = 0u64;
+    let mut task = 0usize;
+    let flush = |plain: &mut Vec<&str>, seg: &mut u64, out: &mut Vec<AnyElement>| {
+        let text = plain.join("\n");
+        plain.clear();
+        if text.trim().is_empty() {
+            return;
+        }
+        out.push(
+            div()
+                .text_size(px(13. * k))
+                .line_height(px(20. * k))
+                .text_color(t.colors.text_body)
+                .child(TextView::markdown(("md", base + *seg), tint_marks(&text, t.is_dark)).selectable(false).style(markdown_style(t)))
+                .into_any_element(),
+        );
+        *seg += 1;
+    };
+    let mut tasks: Vec<AnyElement> = Vec::new();
+    for line in s.body.lines() {
+        match task_line(line) {
+            Some((done, text)) => {
+                if !plain.is_empty() {
+                    if !tasks.is_empty() {
+                        out.push(div().flex().flex_col().gap(px(5. * k)).children(std::mem::take(&mut tasks)).into_any_element());
+                    }
+                    flush(&mut plain, &mut seg, &mut out);
+                }
+                let n = task;
+                task += 1;
+                let toggle = on_toggle.clone();
+                let b = px(15. * k);
+                tasks.push(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap(px(8. * k))
+                        .child(
+                            div()
+                                .id(("task", base + n as u64))
+                                .mt(px(2.5 * k))
+                                .size(b)
+                                .flex_none()
+                                .rounded(px(4. * k))
+                                .border_1()
+                                .border_color(if done { t.colors.brand } else { t.colors.text_subtle })
+                                .when(done, |d| d.bg(t.colors.brand))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .when(done, |d| d.child(icon("icons/check.svg", px(11. * k), gpui::white())))
+                                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    toggle(n, window, cx);
+                                }),
+                        )
+                        .child({
+                            // Markdown too, so **bold** and highlights work in tasks.
+                            let md = if done && !text.trim().is_empty() { format!("~~{}~~", text.trim()) } else { text.to_string() };
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(13. * k))
+                                .line_height(px(20. * k))
+                                .text_color(if done { t.colors.text_subtle } else { t.colors.text_body })
+                                .child(
+                                    TextView::markdown(("task-text", base + n as u64), tint_marks(&md, t.is_dark))
+                                        .selectable(false)
+                                        .style(markdown_style(t)),
+                                )
+                        })
+                        .into_any_element(),
+                );
+            }
+            None => {
+                if !tasks.is_empty() {
+                    out.push(div().flex().flex_col().gap(px(5. * k)).children(std::mem::take(&mut tasks)).into_any_element());
+                }
+                plain.push(line);
+            }
+        }
+    }
+    if !tasks.is_empty() {
+        out.push(div().flex().flex_col().gap(px(5. * k)).children(tasks).into_any_element());
+    }
+    flush(&mut plain, &mut seg, &mut out);
+    out
+}
+
 impl Folio {
-    pub(super) fn render_sticker(&self, s: &Sticker, cam: Camera, dim: bool, t: &Theme, _cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_sticker(&self, s: &Sticker, cam: Camera, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let z = cam.zoom;
-        let at = cam.to_screen(v2(s.rect.x, s.rect.y));
-        let selected = self.selected == Some(Selection::Sticker(s.id));
-        let lifted = matches!(self.gesture, Gesture::Move { id, moved: true, .. } if id == s.id);
+        let r = self.note_rect(s);
+        let at = cam.to_screen(v2(r.x, r.y));
+        let selected = self.is_selected(Selection::Sticker(s.id));
+        let lifted = selected && matches!(self.gesture, Gesture::Move { moved: true, .. });
         let hovered = self.hovered == Some(s.id);
-        let scale = match s.text_size {
-            TextSize::Small => 0.9,
-            TextSize::Medium => 1.0,
-            TextSize::Large => 1.2,
-        };
-        let pad = px(16. * z);
+        let k = size_factor(s.text_size) * z;
         let detail = z >= DETAIL_ZOOM;
+        let n = now();
 
         let picture = s.image.as_ref().map(|name| {
             let has_text = !s.title.is_empty() || !s.body.is_empty();
@@ -33,99 +184,150 @@ impl Folio {
             img(self.image_path(name))
                 .id(("picture", s.id))
                 .w_full()
-                .when(has_text, |i| i.h(px(s.rect.h * 0.55 * z)))
-                .when(!has_text, |i| i.h_full())
+                .when(has_text || !s.fixed, |i| i.h(px((s.rect.w * 0.62).min(s.rect.h) * z)))
+                .when(!has_text && s.fixed, |i| i.h(px(s.rect.h * z)))
                 .object_fit(ObjectFit::Cover)
                 .flex_none()
         });
 
-        let title = (!s.title.is_empty()).then(|| {
-            div()
-                .text_size(px(15. * scale * z))
+        let id = s.id;
+        let me = cx.entity();
+        let toggle = move |n: usize, _: &mut Window, cx: &mut App| me.update(cx, |f, cx| f.toggle_task(id, n, cx));
+        let content: Vec<AnyElement> = if detail {
+            note_body(s, k, t, None, toggle)
+        } else {
+            vec![div()
+                .text_size(px(15. / DETAIL_ZOOM * z))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(t.colors.text)
-                .line_height(px(20. * scale * z))
-                .child(s.title.clone())
-        });
+                .child(first_line(s))
+                .into_any_element()]
+        };
 
-        let body = (detail && !s.body.is_empty()).then(|| {
-            div()
-                .text_size(px(13. * scale * z))
-                .line_height(px(20. * scale * z))
-                .text_color(t.colors.text_body)
-                .child(
-                    TextView::markdown(("md", s.id), tint_marks(&s.body, t.is_dark))
-                        .selectable(false)
-                        .style(markdown_style(t)),
-                )
-        });
+        // Chips: tasks done, reminder, tags, stale, locked, on the desktop.
+        let mut chips: Vec<AnyElement> = Vec::new();
+        if detail {
+            let chip = |text: String, color: gpui::Hsla, path: Option<&'static str>| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(3. * z))
+                    .px(px(6. * z))
+                    .h(px(18. * z))
+                    .rounded(px(9. * z))
+                    .bg(gpui::hsla(0., 0., if t.is_dark { 1. } else { 0. }, 0.06))
+                    .text_size(px(10.5 * z))
+                    .text_color(color)
+                    .children(path.map(|p| icon(p, px(10. * z), color)))
+                    .child(text)
+                    .into_any_element()
+            };
+            let (done, total) = task_progress(&s.body);
+            if total > 0 {
+                let c = if done == total { t.colors.brand_on_tint } else { t.colors.text_muted };
+                chips.push(chip(format!("{done}/{total}"), c, Some("icons/list-checks.svg")));
+            }
+            if let Some(d) = s.due {
+                let c = if d <= n { t.colors.alert } else { t.colors.brand_on_tint };
+                chips.push(chip(time::due_label(d, n), c, Some("icons/bell.svg")));
+            }
+            for tag in s.tags().into_iter().take(3) {
+                chips.push(chip(format!("#{tag}"), t.colors.text_muted, None));
+            }
+            if s.is_stale(n) {
+                chips.push(chip("untouched for weeks".into(), t.colors.text_subtle, Some("icons/clock.svg")));
+            }
+            if s.popped.is_some() {
+                chips.push(chip("on desktop".into(), t.colors.text_subtle, Some("icons/picture-in-picture-2.svg")));
+            }
+        }
+        let measured = self.heights.clone();
+        let natural = self.heights.borrow().get(&s.id).copied().unwrap_or(0.);
+        let cut = s.fixed && natural > s.rect.h + 1.;
+        let measure = canvas(
+            move |b, window, _| {
+                let h = f32::from(b.size.height) / z;
+                let old = measured.borrow_mut().insert(id, h);
+                if old.is_none_or(|o| (o - h).abs() > 0.5) {
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0();
 
-        let grip = (selected || hovered).then(|| {
+        let inner = div()
+            .relative()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .children(picture)
+            .child(
+                div()
+                    .px(px(16. * z))
+                    .py(px(14. * z))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8. * z))
+                    .children(content)
+                    .when(!chips.is_empty(), |d| d.child(div().flex().flex_wrap().gap(px(4. * z)).pt(px(2. * z)).children(chips))),
+            )
+            .child(measure);
+
+        let grip = ((selected || hovered) && !s.locked).then(|| {
             let g = t.size.grip;
             div()
                 .absolute()
                 .right(px(4.))
                 .bottom(px(4.))
                 .size(g)
-                .child(
-                    div()
-                        .absolute()
-                        .right_0()
-                        .bottom_0()
-                        .w(g)
-                        .h(px(2.))
-                        .rounded(px(1.))
-                        .bg(t.colors.text_subtle),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .right_0()
-                        .bottom_0()
-                        .w(px(2.))
-                        .h(g)
-                        .rounded(px(1.))
-                        .bg(t.colors.text_subtle),
-                )
+                .child(div().absolute().right_0().bottom_0().w(g).h(px(2.)).rounded(px(1.)).bg(t.colors.text_subtle))
+                .child(div().absolute().right_0().bottom_0().w(px(2.)).h(g).rounded(px(1.)).bg(t.colors.text_subtle))
         });
 
         let shadow = if lifted { t.shadow_lifted(z) } else { t.shadow_card(z) };
         let edge = if t.is_dark { t.colors.border } else { gpui::hsla(0., 0., 0., 0.04) };
+        let paper = t.paper(s.paper);
 
         div()
             .absolute()
             .left(px(at.x))
             .top(px(at.y))
-            .w(px(s.rect.w * z))
-            .h(px(s.rect.h * z))
+            .w(px(r.w * z))
+            .when(s.fixed, |d| d.h(px(s.rect.h * z)))
+            .when(!s.fixed, |d| d.min_h(px(s.rect.h * z)))
             .rounded(px(12. * z))
-            .bg(t.paper(s.paper))
+            .bg(paper)
             .border_1()
             .border_color(edge)
             .shadow(shadow)
-            .when(dim, |d| d.opacity(0.3))
-            .child(
-                div()
-                    .size_full()
-                    .rounded(px(12. * z))
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .children(picture)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .px(pad)
-                            .py(px(14. * z))
-                            .flex()
-                            .flex_col()
-                            .gap(px(8. * z))
-                            .children(title)
-                            .children(body),
-                    ),
-            )
+            .font_family(t.note_font(s.font))
+            .child(div().size_full().rounded(px(12. * z)).overflow_hidden().child(inner))
+            .when(cut, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .h(px(34. * z))
+                        .rounded_b(px(12. * z))
+                        .bg(gpui::linear_gradient(
+                            180.,
+                            gpui::linear_color_stop(paper.opacity(0.), 0.),
+                            gpui::linear_color_stop(paper, 0.7),
+                        ))
+                        .flex()
+                        .items_end()
+                        .justify_center()
+                        .pb(px(4. * z))
+                        .text_size(px(10.5 * z))
+                        .text_color(t.colors.text_subtle)
+                        .child("more ↓"),
+                )
+            })
+            .when(s.locked, |d| d.child(div().absolute().top(px(6. * z)).right(px(6. * z)).child(icon("icons/lock.svg", px(12. * z.max(0.8)), t.colors.text_subtle))))
             .when(selected, |d| {
                 d.child(
                     div()

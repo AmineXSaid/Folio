@@ -13,11 +13,16 @@ fn note(b: &mut Board, rect: (f32, f32, f32, f32), paper: Paper, title: &str, bo
         image: None,
         text_size: TextSize::Medium,
         edited: 0,
+        ..Default::default()
     }
 }
 
 pub fn board() -> Board {
-    let mut b = Board { version: FORMAT_VERSION, categories: Vec::new(), active: 0, dark: false, next_id: 0 };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut b = Board::blank();
 
     b.add_sheet("Studio projects");
     let refresh = note(
@@ -25,7 +30,7 @@ pub fn board() -> Board {
         (0., 0., 230., 170.),
         Paper::Butter,
         "Website refresh",
-        "Keep it simple. Let the work speak first. Explore a **warmer, more human** direction for the landing page.",
+        "Keep it simple. Let the work speak first. Explore a **warmer, more human** direction for the landing page. #design",
     );
     let explore = note(
         &mut b,
@@ -92,6 +97,8 @@ pub fn board() -> Board {
 
     b.add_sheet("Personal");
     let a = note(&mut b, (0., 0., 240., 160.), Paper::Sage, "This week", "- [ ] Call the bank\n- [ ] Book dentist\n- [x] Water the plants");
+    let mut a = a;
+    a.due = Some(now + 2 * 3600);
     let c = note(&mut b, (300., 30., 230., 140.), Paper::Butter, "Groceries", "Oat milk, lemons, basil, sourdough, <mark color=\"orange\">coffee!</mark>");
     let sheet = b.sheet_mut();
     sheet.blurb = "Life admin and small joys".into();
@@ -109,6 +116,39 @@ pub fn board() -> Board {
     sheet.blurb = "Books and long reads".into();
     sheet.stickers = vec![a];
 
+    b.add_sheet("Garden");
+    let a = note(&mut b, (0., 120., 210., 130.), Paper::Sage, "Bed A", "- [ ] Tomatoes\n- [x] Basil");
+    let c = note(&mut b, (250., 0., 210., 130.), Paper::Sage, "Bed B", "- [ ] Lettuce\n- [ ] Radish");
+    let d = note(&mut b, (500., 140., 220., 130.), Paper::Butter, "Seeds to order", "Sweet peas, cosmos, dill. #shopping");
+    let (ai, ci) = (a.id, c.id);
+    let l = b.fresh_id();
+    let sheet = b.sheet_mut();
+    sheet.blurb = "Beds, seeds and seasons".into();
+    sheet.accent = Accent::Moss;
+    sheet.icon = "🌱".into();
+    sheet.stickers = vec![a, c, d];
+    sheet.links = vec![Link { id: l, from: ai, to: ci, ink: Ink::Forest }];
+
+    b.add_sheet("Japan trip");
+    let a = note(&mut b, (0., 0., 240., 150.), Paper::Blush, "Kyoto", "- [ ] Fushimi Inari at dawn\n- [ ] Philosopher's Path\n- [ ] Nishiki market");
+    let c = note(&mut b, (280., 60., 220., 120.), Paper::Sky, "Osaka", "Dotonbori at night, okonomiyaki. #food");
+    let d = note(&mut b, (540., 0., 230., 150.), Paper::Lilac, "Tokyo", "- [ ] Yanaka\n- [ ] teamLab\n- [ ] Shimokitazawa");
+    let sheet = b.sheet_mut();
+    sheet.blurb = "Kyoto · Osaka · Tokyo".into();
+    sheet.accent = Accent::Plum;
+    sheet.icon = "✈️".into();
+    sheet.stickers = vec![a, c, d];
+
+    b.categories[0].pinned = true;
+    b.categories[0].icon = "🎨".into();
+    b.categories[1].icon = "🏠".into();
+    b.categories[2].icon = "📚".into();
+    for c in &mut b.categories {
+        c.edited = now;
+        for s in &mut c.stickers {
+            s.edited = now;
+        }
+    }
     b.active = 0;
     b
 }

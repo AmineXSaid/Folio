@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub type Id = u64;
 
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 pub const MIN_ZOOM: f32 = 0.25;
 pub const MAX_ZOOM: f32 = 3.0;
 pub const MIN_STICKER: (f32, f32) = (140., 90.);
@@ -36,7 +36,7 @@ impl Vec2 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,
@@ -67,8 +67,9 @@ impl Rect {
 }
 
 /// A sticker's paper. Each has a light and a dark rendering in the theme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Paper {
+    #[default]
     Butter,
     Sage,
     Sky,
@@ -122,7 +123,49 @@ impl TextSize {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The typeface a note is written in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum NoteFont {
+    #[default]
+    Sans,
+    /// A casual handwritten face (Comic Neue).
+    Hand,
+    Mono,
+}
+
+impl NoteFont {
+    pub const ALL: [NoteFont; 3] = [NoteFont::Sans, NoteFont::Hand, NoteFont::Mono];
+    pub fn label(self) -> &'static str {
+        match self {
+            NoteFont::Sans => "Sans",
+            NoteFont::Hand => "Hand",
+            NoteFont::Mono => "Mono",
+        }
+    }
+}
+
+/// A web page pinned as a note.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct LinkCard {
+    pub url: String,
+    /// The page's title, once fetched.
+    #[serde(default)]
+    pub title: String,
+    /// The host, shown under the title.
+    #[serde(default)]
+    pub site: String,
+}
+
+/// Where a note popped out onto the desktop sits, in screen pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Popped {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct Sticker {
     pub id: Id,
     pub rect: Rect,
@@ -139,6 +182,152 @@ pub struct Sticker {
     /// Unix seconds of the last edit.
     #[serde(default)]
     pub edited: u64,
+    /// A reminder: Unix seconds.
+    #[serde(default)]
+    pub due: Option<u64>,
+    /// The reminder has been shown.
+    #[serde(default)]
+    pub reminded: bool,
+    /// Locked notes don't move, resize or change on a click.
+    #[serde(default)]
+    pub locked: bool,
+    /// The height stays as set (the text may be cut off). Otherwise the
+    /// note grows with its text and `rect.h` is its least height.
+    #[serde(default)]
+    pub fixed: bool,
+    #[serde(default)]
+    pub font: NoteFont,
+    #[serde(default)]
+    pub link: Option<LinkCard>,
+    /// Out on the desktop as its own always-on-top window.
+    #[serde(default)]
+    pub popped: Option<Popped>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Sticker {
+    /// `#tags` in the title and body, lower-cased, without the `#`.
+    pub fn tags(&self) -> Vec<String> {
+        let mut t = tags(&self.title);
+        for x in tags(&self.body) {
+            if !t.contains(&x) {
+                t.push(x);
+            }
+        }
+        t
+    }
+    pub fn text(&self) -> String {
+        let mut s = self.title.clone();
+        if !self.body.is_empty() {
+            if !s.is_empty() {
+                s.push_str("\n\n");
+            }
+            s.push_str(&self.body);
+        }
+        if let Some(l) = &self.link {
+            if !s.is_empty() {
+                s.push_str("\n");
+            }
+            s.push_str(&l.url);
+        }
+        s
+    }
+    pub fn matches(&self, q: &str) -> bool {
+        let q = q.trim().to_lowercase();
+        if q.is_empty() {
+            return true;
+        }
+        if let Some(tag) = q.strip_prefix('#') {
+            return self.tags().iter().any(|t| t.starts_with(tag));
+        }
+        self.text().to_lowercase().contains(&q)
+    }
+    /// Untouched for three weeks.
+    pub fn is_stale(&self, now: u64) -> bool {
+        self.edited > 0 && now.saturating_sub(self.edited) > STALE_AFTER
+    }
+}
+
+pub const STALE_AFTER: u64 = 21 * 86_400;
+pub const TRASH_KEEPS: u64 = 30 * 86_400;
+
+/// `#word` tokens: letters, digits, `-` and `_`, after a space or the start.
+pub fn tags(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '#' && (i == 0 || chars[i - 1].is_whitespace() || chars[i - 1] == '(') {
+            let mut j = i + 1;
+            while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '-' || chars[j] == '_') {
+                j += 1;
+            }
+            if j > i + 1 && !chars[i + 1..j].iter().all(|c| c.is_ascii_digit()) {
+                let t: String = chars[i + 1..j].iter().collect::<String>().to_lowercase();
+                if !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// A Markdown task line: `- [ ] text` or `- [x] text` (also `*`, `+`).
+pub fn task_line(line: &str) -> Option<(bool, &str)> {
+    let t = line.trim_start();
+    let rest = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).or_else(|| t.strip_prefix("+ "))?;
+    if let Some(r) = rest.strip_prefix("[ ] ") {
+        Some((false, r))
+    } else if let Some(r) = rest.strip_prefix("[x] ").or_else(|| rest.strip_prefix("[X] ")) {
+        Some((true, r))
+    } else if rest == "[ ]" {
+        Some((false, ""))
+    } else if rest == "[x]" || rest == "[X]" {
+        Some((true, ""))
+    } else {
+        None
+    }
+}
+
+/// Done and total tasks in a note.
+pub fn task_progress(body: &str) -> (usize, usize) {
+    body.lines().filter_map(task_line).fold((0, 0), |(d, n), (done, _)| (d + done as usize, n + 1))
+}
+
+/// Ticks or unticks the `n`th task line.
+pub fn toggle_task(body: &str, n: usize) -> String {
+    let mut seen = 0;
+    let mut out: Vec<String> = Vec::new();
+    for line in body.split('\n') {
+        if let Some((done, _)) = task_line(line) {
+            if seen == n {
+                let (from, to) = if done { ("[x]", "[ ]") } else { ("[ ]", "[x]") };
+                let from = if done && !line.contains("[x]") { "[X]" } else { from };
+                out.push(line.replacen(from, to, 1));
+                seen += 1;
+                continue;
+            }
+            seen += 1;
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
+}
+
+/// A titled area on a sheet; notes inside it move with it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Frame {
+    pub id: Id,
+    pub rect: Rect,
+    pub title: String,
+    pub accent: Accent,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -263,6 +452,22 @@ pub struct Category {
     pub strokes: Vec<Stroke>,
     pub labels: Vec<Label>,
     pub links: Vec<Link>,
+    #[serde(default)]
+    pub frames: Vec<Frame>,
+    /// The Inbox: where quick notes land.
+    #[serde(default)]
+    pub inbox: bool,
+    /// Pinned sheets come first.
+    #[serde(default)]
+    pub pinned: bool,
+    /// An emoji shown beside the name.
+    #[serde(default)]
+    pub icon: String,
+    /// Unix seconds of the last visit and the last change.
+    #[serde(default)]
+    pub opened: u64,
+    #[serde(default)]
+    pub edited: u64,
 }
 
 impl Category {
@@ -277,6 +482,12 @@ impl Category {
             strokes: Vec::new(),
             labels: Vec::new(),
             links: Vec::new(),
+            frames: Vec::new(),
+            inbox: false,
+            pinned: false,
+            icon: String::new(),
+            opened: 0,
+            edited: 0,
         }
     }
 
@@ -287,7 +498,9 @@ impl Category {
         self.stickers.iter_mut().find(|s| s.id == id)
     }
 
-    /// The front-most sticker under `p`.
+    /// The front-most sticker under `p` (by stored size; the views use the
+    /// size as drawn).
+    #[cfg(test)]
     pub fn sticker_at(&self, p: Vec2) -> Option<Id> {
         self.stickers.iter().rev().find(|s| s.rect.contains(p)).map(|s| s.id)
     }
@@ -343,13 +556,91 @@ impl Category {
             .iter()
             .map(|s| s.rect)
             .chain(self.strokes.iter().map(Stroke::bounds))
-            .chain(self.labels.iter().map(label_rect));
+            .chain(self.labels.iter().map(label_rect))
+            .chain(self.frames.iter().map(|f| f.rect));
         rects.reduce(|a, b| a.union(&b))
     }
 
-    pub fn item_count(&self) -> usize {
-        self.stickers.len()
+    /// The front-most frame whose title bar or empty area holds `p`.
+    pub fn frame_at(&self, p: Vec2) -> Option<Id> {
+        self.frames.iter().rev().find(|f| f.rect.contains(p)).map(|f| f.id)
     }
+
+    /// The stickers whose centre lies inside frame `id`.
+    pub fn frame_members(&self, id: Id) -> Vec<Id> {
+        let Some(f) = self.frames.iter().find(|f| f.id == id) else { return Vec::new() };
+        self.stickers.iter().filter(|s| f.rect.contains(s.rect.center())).map(|s| s.id).collect()
+    }
+
+    /// Lays `ids` out in tidy rows, in reading order of where they are now,
+    /// from the top-left of where they were.
+    pub fn tidy(&mut self, ids: &[Id], heights: &dyn Fn(&Sticker) -> f32) {
+        let mut items: Vec<(Id, Rect)> =
+            self.stickers.iter().filter(|s| ids.contains(&s.id) && !s.locked).map(|s| (s.id, s.rect)).collect();
+        if items.is_empty() {
+            return;
+        }
+        items.sort_by(|a, b| {
+            let row = |r: &Rect| (r.y / 120.).round() as i64;
+            row(&a.1).cmp(&row(&b.1)).then(a.1.x.total_cmp(&b.1.x))
+        });
+        let x0 = items.iter().map(|i| i.1.x).fold(f32::MAX, f32::min);
+        let y0 = items.iter().map(|i| i.1.y).fold(f32::MAX, f32::min);
+        let cols = (items.len() as f32).sqrt().ceil().max(1.) as usize;
+        let gap = 28.;
+        let (mut x, mut y, mut row_h) = (x0, y0, 0f32);
+        for (i, (id, _)) in items.iter().enumerate() {
+            if i > 0 && i % cols == 0 {
+                x = x0;
+                y += row_h + gap;
+                row_h = 0.;
+            }
+            if let Some(s) = self.sticker_mut(*id) {
+                s.rect.x = x;
+                s.rect.y = y;
+                x += s.rect.w + gap;
+                let h = heights(s);
+                row_h = row_h.max(h);
+            }
+        }
+    }
+
+    /// A free place for a new note: to the right of everything, top-aligned.
+    pub fn free_spot(&self, w: f32) -> Vec2 {
+        match self.content_bounds() {
+            Some(r) if !self.stickers.is_empty() => {
+                // Fill the first row before starting a new one.
+                let row: Vec<&Sticker> = self.stickers.iter().filter(|s| s.rect.y <= r.y + 40.).collect();
+                let right = row.iter().map(|s| s.rect.x + s.rect.w).fold(r.x, f32::max);
+                if right + w - r.x <= 1200. {
+                    v2(right + 28., r.y)
+                } else {
+                    v2(r.x, r.y + r.h + 28.)
+                }
+            }
+            _ => v2(0., 0.),
+        }
+    }
+
+    /// The nearest sticker from `from` in a direction (dx, dy each -1, 0 or 1).
+    pub fn neighbour(&self, from: Id, dx: f32, dy: f32) -> Option<Id> {
+        let a = self.sticker(from)?.rect.center();
+        self.stickers
+            .iter()
+            .filter(|s| s.id != from)
+            .filter_map(|s| {
+                let d = s.rect.center().sub(a);
+                let along = d.x * dx + d.y * dy;
+                if along <= 1. {
+                    return None;
+                }
+                let across = (d.x * dy).abs() + (d.y * dx).abs();
+                Some((s.id, along + across * 2.))
+            })
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+            .map(|x| x.0)
+    }
+
 }
 
 /// A label's box: 7 units per character at the 14-unit label size.
@@ -425,9 +716,157 @@ pub struct Board {
     pub version: u32,
     pub categories: Vec<Category>,
     pub active: usize,
-    #[serde(default)]
+    /// Old files: the theme before `settings` existed.
+    #[serde(default, skip_serializing)]
     pub dark: bool,
     pub next_id: Id,
+    #[serde(default)]
+    pub settings: Settings,
+    /// Deleted (for 30 days) and archived notes and sheets.
+    #[serde(default)]
+    pub bin: Vec<Binned>,
+    /// The home screen was showing when the app closed.
+    #[serde(default = "yes")]
+    pub at_home: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ThemeMode {
+    #[default]
+    Light,
+    Dark,
+    /// Follow Windows.
+    System,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum IntroMode {
+    /// The full opening the first time, a short one after.
+    #[default]
+    Auto,
+    Full,
+    Short,
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum OpenOn {
+    #[default]
+    Home,
+    LastSheet,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    pub theme: ThemeMode,
+    pub intro: IntroMode,
+    /// The full opening has played once.
+    pub intro_seen: bool,
+    pub open_on: OpenOn,
+    pub start_with_windows: bool,
+    /// Ctrl+Alt+N opens a quick note from anywhere.
+    pub quick_hotkey: bool,
+    pub default_paper: Paper,
+    pub default_font: NoteFont,
+    /// Interface size, 0.9 to 1.3.
+    pub ui_scale: f32,
+    pub high_contrast: bool,
+    pub reduce_motion: bool,
+    pub snap: bool,
+    pub minimap: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            theme: ThemeMode::Light,
+            intro: IntroMode::Auto,
+            intro_seen: false,
+            open_on: OpenOn::Home,
+            start_with_windows: false,
+            quick_hotkey: true,
+            default_paper: Paper::Butter,
+            default_font: NoteFont::Sans,
+            ui_scale: 1.0,
+            high_contrast: false,
+            reduce_motion: false,
+            snap: true,
+            minimap: true,
+        }
+    }
+}
+
+/// Something in the Trash or the Archive.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Binned {
+    pub id: Id,
+    /// Unix seconds it went in.
+    pub at: u64,
+    /// Archived: kept until you delete it. Otherwise trashed for 30 days.
+    pub archived: bool,
+    pub item: BinItem,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum BinItem {
+    Note { sheet: Id, sheet_name: String, sticker: Sticker },
+    Sheet(Category),
+}
+
+impl Binned {
+    pub fn name(&self) -> String {
+        match &self.item {
+            BinItem::Note { sticker, .. } => {
+                let t = sticker.text();
+                let first = t.lines().find(|l| !l.trim().is_empty()).unwrap_or("Untitled note");
+                first.chars().take(60).collect()
+            }
+            BinItem::Sheet(c) => c.name.clone(),
+        }
+    }
+}
+
+/// A search hit: a note on a sheet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hit {
+    pub sheet: usize,
+    pub note: Id,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Template {
+    Blank,
+    Kanban,
+    Week,
+    Brainstorm,
+    Meeting,
+    Reading,
+}
+
+impl Template {
+    pub const ALL: [Template; 6] =
+        [Template::Blank, Template::Kanban, Template::Week, Template::Brainstorm, Template::Meeting, Template::Reading];
+    pub fn name(self) -> &'static str {
+        match self {
+            Template::Blank => "Blank",
+            Template::Kanban => "Kanban",
+            Template::Week => "Weekly planner",
+            Template::Brainstorm => "Brainstorm",
+            Template::Meeting => "Meeting notes",
+            Template::Reading => "Reading list",
+        }
+    }
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Template::Blank => "An empty sheet",
+            Template::Kanban => "To do, Doing, Done",
+            Template::Week => "A column for every day",
+            Template::Brainstorm => "One idea in the middle, thoughts around it",
+            Template::Meeting => "Agenda, notes, decisions, actions",
+            Template::Reading => "Books and articles to get to",
+        }
+    }
 }
 
 impl Board {
@@ -450,15 +889,6 @@ impl Board {
         self.active = self.categories.len() - 1;
         id
     }
-    /// Removes the active sheet; the last one can't go.
-    pub fn remove_active_sheet(&mut self) -> bool {
-        if self.categories.len() <= 1 {
-            return false;
-        }
-        self.categories.remove(self.active);
-        self.active = self.active.min(self.categories.len() - 1);
-        true
-    }
     /// Repairs what a hand-edited or older file might get wrong.
     pub fn normalize(&mut self) {
         if self.categories.is_empty() {
@@ -474,10 +904,21 @@ impl Board {
                     .chain(c.strokes.iter().map(|s| s.id))
                     .chain(c.labels.iter().map(|s| s.id))
                     .chain(c.links.iter().map(|s| s.id))
+                    .chain(c.frames.iter().map(|s| s.id))
             })
+            .chain(self.bin.iter().map(|b| b.id))
             .max()
             .unwrap_or(0);
         self.next_id = self.next_id.max(max);
+        if self.version < 2 {
+            if self.dark {
+                self.settings.theme = ThemeMode::Dark;
+            }
+            // Older boards had no first-run intro.
+            self.settings.intro_seen = true;
+            self.version = FORMAT_VERSION;
+        }
+        self.settings.ui_scale = self.settings.ui_scale.clamp(0.8, 1.4);
         for c in &mut self.categories {
             c.camera.zoom = c.camera.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
             for s in &mut c.stickers {
@@ -489,9 +930,294 @@ impl Board {
         }
     }
     pub fn empty() -> Board {
-        let mut b = Board { version: FORMAT_VERSION, categories: Vec::new(), active: 0, dark: false, next_id: 0 };
+        let mut b = Board::blank();
         b.add_sheet("My first sheet");
         b
+    }
+
+    /// No sheets at all; callers add them.
+    pub fn blank() -> Board {
+        Board {
+            version: FORMAT_VERSION,
+            categories: Vec::new(),
+            active: 0,
+            dark: false,
+            next_id: 0,
+            settings: Settings::default(),
+            bin: Vec::new(),
+            at_home: true,
+        }
+    }
+
+    pub fn sheet_ix(&self, id: Id) -> Option<usize> {
+        self.categories.iter().position(|c| c.id == id)
+    }
+
+    /// The sheet holding note `id`.
+    pub fn sheet_of(&self, id: Id) -> Option<usize> {
+        self.categories.iter().position(|c| c.stickers.iter().any(|s| s.id == id))
+    }
+
+    pub fn find_note(&self, id: Id) -> Option<&Sticker> {
+        self.categories.iter().find_map(|c| c.sticker(id))
+    }
+
+    pub fn find_note_mut(&mut self, id: Id) -> Option<&mut Sticker> {
+        self.categories.iter_mut().find_map(|c| c.sticker_mut(id))
+    }
+
+    /// The Inbox sheet's index, making it (first in the list) if needed.
+    pub fn inbox(&mut self) -> usize {
+        if let Some(i) = self.categories.iter().position(|c| c.inbox) {
+            return i;
+        }
+        let id = self.fresh_id();
+        let mut c = Category::new(id, "Inbox", Accent::Rose);
+        c.inbox = true;
+        c.pinned = true;
+        c.icon = "📥".into();
+        c.blurb = "Quick notes land here; sort them when you have a minute".into();
+        self.categories.insert(0, c);
+        if !self.categories.is_empty() && self.active + 1 < self.categories.len() {
+            self.active += 1;
+        }
+        0
+    }
+
+    /// A quick note into the Inbox: the first line is its title.
+    pub fn quick_note(&mut self, text: &str, now: u64) -> Id {
+        let text = text.trim();
+        let (title, body) = match text.split_once('\n') {
+            Some((t, b)) if t.chars().count() <= 60 => (t.trim().to_string(), b.trim().to_string()),
+            _ if text.chars().count() <= 60 && !text.contains('\n') => (text.to_string(), String::new()),
+            _ => (String::new(), text.to_string()),
+        };
+        let paper = self.settings.default_paper;
+        let font = self.settings.default_font;
+        let id = self.fresh_id();
+        let ix = self.inbox();
+        let sheet = &mut self.categories[ix];
+        let at = sheet.free_spot(240.);
+        sheet.stickers.push(Sticker {
+            id,
+            rect: Rect { x: at.x, y: at.y, w: 240., h: 120. },
+            paper,
+            title,
+            body,
+            font,
+            edited: now,
+            ..Default::default()
+        });
+        sheet.edited = now;
+        id
+    }
+
+    /// Notes matching `q` (text, or `#tag`), every sheet, in sheet order.
+    pub fn search(&self, q: &str) -> Vec<Hit> {
+        if q.trim().is_empty() {
+            return Vec::new();
+        }
+        self.categories
+            .iter()
+            .enumerate()
+            .flat_map(|(i, c)| c.stickers.iter().filter(|s| s.matches(q)).map(move |s| Hit { sheet: i, note: s.id }))
+            .collect()
+    }
+
+    /// Every `#tag` in use, most used first.
+    pub fn all_tags(&self) -> Vec<(String, usize)> {
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        for s in self.categories.iter().flat_map(|c| &c.stickers) {
+            for t in s.tags() {
+                match counts.iter_mut().find(|c| c.0 == t) {
+                    Some(c) => c.1 += 1,
+                    None => counts.push((t, 1)),
+                }
+            }
+        }
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        counts
+    }
+
+    /// Notes with a reminder, soonest first: (sheet index, note id, due).
+    pub fn reminders(&self) -> Vec<(usize, Id, u64)> {
+        let mut v: Vec<(usize, Id, u64)> = self
+            .categories
+            .iter()
+            .enumerate()
+            .flat_map(|(i, c)| c.stickers.iter().filter_map(move |s| s.due.map(|d| (i, s.id, d))))
+            .collect();
+        v.sort_by_key(|x| x.2);
+        v
+    }
+
+    /// Reminders that came due and haven't been shown; marks them shown.
+    pub fn take_due(&mut self, now: u64) -> Vec<Id> {
+        let mut out = Vec::new();
+        for s in self.categories.iter_mut().flat_map(|c| c.stickers.iter_mut()) {
+            if let Some(d) = s.due {
+                if d <= now && !s.reminded {
+                    s.reminded = true;
+                    out.push(s.id);
+                }
+            }
+        }
+        out
+    }
+
+    /// Moves note `id` to sheet `to`, at a free spot there. Links go.
+    pub fn move_note(&mut self, id: Id, to: usize) -> bool {
+        let Some(from) = self.sheet_of(id) else { return false };
+        if from == to || to >= self.categories.len() {
+            return false;
+        }
+        let Some(mut s) = self.categories[from].sticker(id).cloned() else { return false };
+        self.categories[from].remove_sticker(id);
+        let at = self.categories[to].free_spot(s.rect.w);
+        s.rect.x = at.x;
+        s.rect.y = at.y;
+        self.categories[to].stickers.push(s);
+        true
+    }
+
+    /// Puts note `id` in the Trash (or the Archive).
+    pub fn bin_note(&mut self, id: Id, archived: bool, now: u64) -> bool {
+        let Some(ix) = self.sheet_of(id) else { return false };
+        let c = &mut self.categories[ix];
+        let Some(sticker) = c.sticker(id).cloned() else { return false };
+        c.remove_sticker(id);
+        let (sheet, sheet_name) = (c.id, c.name.clone());
+        let bid = self.fresh_id();
+        self.bin.push(Binned { id: bid, at: now, archived, item: BinItem::Note { sheet, sheet_name, sticker } });
+        true
+    }
+
+    /// Puts sheet `ix` in the Trash (or the Archive); the last can't go.
+    pub fn bin_sheet(&mut self, ix: usize, archived: bool, now: u64) -> bool {
+        if self.categories.len() <= 1 || ix >= self.categories.len() {
+            return false;
+        }
+        let c = self.categories.remove(ix);
+        self.active = self.active.min(self.categories.len() - 1);
+        let bid = self.fresh_id();
+        self.bin.push(Binned { id: bid, at: now, archived, item: BinItem::Sheet(c) });
+        true
+    }
+
+    /// Takes `bin_id` out of the bin, back where it came from (a note
+    /// whose sheet is gone goes to the Inbox). Returns the sheet index.
+    pub fn restore(&mut self, bin_id: Id) -> Option<usize> {
+        let i = self.bin.iter().position(|b| b.id == bin_id)?;
+        let b = self.bin.remove(i);
+        match b.item {
+            BinItem::Sheet(c) => {
+                self.categories.push(c);
+                Some(self.categories.len() - 1)
+            }
+            BinItem::Note { sheet, mut sticker, .. } => {
+                let ix = match self.sheet_ix(sheet) {
+                    Some(ix) => ix,
+                    None => self.inbox(),
+                };
+                let c = &mut self.categories[ix];
+                if c.stickers.iter().any(|s| s.rect.intersects(&sticker.rect)) {
+                    let at = c.free_spot(sticker.rect.w);
+                    sticker.rect.x = at.x;
+                    sticker.rect.y = at.y;
+                }
+                c.stickers.push(sticker);
+                Some(ix)
+            }
+        }
+    }
+
+    /// Empties trash older than 30 days.
+    pub fn purge(&mut self, now: u64) {
+        self.bin.retain(|b| b.archived || now.saturating_sub(b.at) < TRASH_KEEPS);
+    }
+
+    /// Sheets for lists: pinned first (Inbox first of those), then the rest
+    /// in their own order.
+    pub fn ordered(&self) -> Vec<usize> {
+        let mut v: Vec<usize> = (0..self.categories.len()).collect();
+        v.sort_by_key(|&i| {
+            let c = &self.categories[i];
+            (!c.inbox, !c.pinned)
+        });
+        v
+    }
+
+    /// A new sheet from a template, made active.
+    pub fn add_from_template(&mut self, name: &str, t: Template, accent: Accent, now: u64) -> Id {
+        let id = self.add_sheet(name);
+        let mut ids = (0..32).map(|_| 0).collect::<Vec<Id>>();
+        for x in ids.iter_mut() {
+            *x = self.fresh_id();
+        }
+        let mut next = ids.into_iter();
+        let mut id_ = || next.next().unwrap();
+        let note = |id: Id, x: f32, y: f32, w: f32, paper: Paper, title: &str, body: &str| Sticker {
+            id,
+            rect: Rect { x, y, w, h: 110. },
+            paper,
+            title: title.into(),
+            body: body.into(),
+            edited: now,
+            ..Default::default()
+        };
+        let frame = |id: Id, x: f32, y: f32, w: f32, h: f32, title: &str, accent: Accent| Frame {
+            id,
+            rect: Rect { x, y, w, h },
+            title: title.into(),
+            accent,
+        };
+        let c = self.sheet_mut();
+        c.accent = accent;
+        c.opened = now;
+        c.edited = now;
+        match t {
+            Template::Blank => {}
+            Template::Kanban => {
+                c.blurb = "To do · Doing · Done".into();
+                for (i, (t, a)) in [("To do", Accent::Slate), ("Doing", Accent::Amber), ("Done", Accent::Moss)].iter().enumerate() {
+                    c.frames.push(frame(id_(), i as f32 * 320., 0., 296., 560., t, *a));
+                }
+                c.stickers.push(note(id_(), 24., 64., 248., Paper::Sky, "First task", "Drag me to Doing when you start."));
+            }
+            Template::Week => {
+                c.blurb = "This week, day by day".into();
+                for (i, d) in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].iter().enumerate() {
+                    let a = if i >= 5 { Accent::Rose } else { Accent::Slate };
+                    c.frames.push(frame(id_(), (i % 4) as f32 * 280., (i / 4) as f32 * 360., 260., 340., d, a));
+                }
+            }
+            Template::Brainstorm => {
+                c.blurb = "One idea, many directions".into();
+                let centre = id_();
+                c.stickers.push(note(centre, 300., 220., 240., Paper::Blush, "The big question", "What are we trying to figure out?"));
+                let spots = [(0., 0.), (600., 0.), (0., 440.), (600., 440.)];
+                for (i, (x, y)) in spots.iter().enumerate() {
+                    let nid = id_();
+                    c.stickers.push(note(nid, *x, *y, 220., [Paper::Butter, Paper::Sage, Paper::Sky, Paper::Lilac][i], "", "An idea…"));
+                    let lid = id_();
+                    c.links.push(Link { id: lid, from: centre, to: nid, ink: Ink::Forest });
+                }
+            }
+            Template::Meeting => {
+                c.blurb = "Agenda, notes, decisions, actions".into();
+                c.stickers.push(note(id_(), 0., 0., 260., Paper::Sky, "Agenda", "1. \n2. \n3. "));
+                c.stickers.push(note(id_(), 290., 0., 300., Paper::Plain, "Notes", ""));
+                c.stickers.push(note(id_(), 0., 200., 260., Paper::Sage, "Decisions", "- "));
+                c.stickers.push(note(id_(), 290., 200., 300., Paper::Butter, "Actions", "- [ ] \n- [ ] "));
+            }
+            Template::Reading => {
+                c.blurb = "Books and long reads".into();
+                c.stickers.push(note(id_(), 0., 0., 320., Paper::Plain, "Up next", "| Title | Author |\n|---|---|\n|  |  |"));
+                c.stickers.push(note(id_(), 350., 0., 240., Paper::Lilac, "Reading now", ""));
+                c.stickers.push(note(id_(), 350., 160., 240., Paper::Sage, "Finished", "- [x] "));
+            }
+        }
+        id
     }
 }
 
@@ -509,6 +1235,7 @@ mod tests {
             image: None,
             text_size: TextSize::Medium,
             edited: 0,
+            ..Default::default()
         }
     }
 
@@ -606,10 +1333,10 @@ mod tests {
     #[test]
     fn last_sheet_cannot_be_removed() {
         let mut b = Board::empty();
-        assert!(!b.remove_active_sheet());
+        assert!(!b.bin_sheet(0, false, 1));
         b.add_sheet("two");
         assert_eq!(b.active, 1);
-        assert!(b.remove_active_sheet());
+        assert!(b.bin_sheet(1, false, 1));
         assert_eq!(b.active, 0);
     }
 
@@ -621,5 +1348,145 @@ mod tests {
         let tl = c.to_screen(v2(r.x, r.y));
         let br = c.to_screen(v2(r.x + r.w, r.y + r.h));
         assert!(tl.x >= 39. && br.x <= 761. && tl.y >= 0. && br.y <= 600.);
+    }
+
+    #[test]
+    fn tags_are_words_after_a_hash() {
+        assert_eq!(tags("Fix #bug and #UI-polish, not # heading or #123 or a#b"), vec!["bug", "ui-polish"]);
+        let mut s = sticker(1, 0., 0.);
+        s.title = "Plan #work".into();
+        s.body = "#idea and #work".into();
+        assert_eq!(s.tags(), vec!["work", "idea"]);
+        assert!(s.matches("#ide"));
+        assert!(!s.matches("#home"));
+        assert!(s.matches("PLAN"));
+    }
+
+    #[test]
+    fn tasks_toggle_in_place() {
+        let body = "Intro\n- [ ] one\n- [x] two\n* [ ] three";
+        assert_eq!(task_progress(body), (1, 3));
+        let t = toggle_task(body, 0);
+        assert_eq!(t, "Intro\n- [x] one\n- [x] two\n* [ ] three");
+        assert_eq!(toggle_task(&t, 1), "Intro\n- [x] one\n- [ ] two\n* [ ] three");
+        assert_eq!(task_line("- [ ]"), Some((false, "")));
+        assert_eq!(task_line("- plain"), None);
+    }
+
+    #[test]
+    fn quick_notes_land_in_a_new_inbox() {
+        let mut b = Board::empty();
+        let first = b.categories[0].id;
+        let id = b.quick_note("Call Sam\nabout the lease", 100);
+        assert!(b.categories[0].inbox);
+        assert_eq!(b.categories[1].id, first);
+        let n = b.find_note(id).unwrap();
+        assert_eq!((n.title.as_str(), n.body.as_str()), ("Call Sam", "about the lease"));
+        let id2 = b.quick_note("milk", 101);
+        assert_eq!(b.categories.iter().filter(|c| c.inbox).count(), 1);
+        let a = b.find_note(id).unwrap().rect;
+        let c = b.find_note(id2).unwrap().rect;
+        assert!(!a.intersects(&c), "quick notes don't pile up");
+    }
+
+    #[test]
+    fn trash_restores_and_purges() {
+        let mut b = Board::empty();
+        b.add_sheet("two");
+        b.sheet_mut().stickers.push(sticker(500, 0., 0.));
+        b.normalize();
+        assert!(b.bin_note(500, false, 1000));
+        assert!(b.find_note(500).is_none());
+        let bin_id = b.bin[0].id;
+        assert_eq!(b.restore(bin_id), Some(1));
+        assert!(b.find_note(500).is_some());
+        assert!(b.bin_sheet(1, false, 1000));
+        assert!(!b.bin_sheet(0, false, 1000), "the last sheet stays");
+        b.bin_note(500, true, 1000);
+        b.purge(1000 + TRASH_KEEPS + 1);
+        assert_eq!(b.bin.len(), 0, "the sheet went with its note; nothing archived left");
+    }
+
+    #[test]
+    fn notes_move_between_sheets_and_lose_links() {
+        let mut b = Board::empty();
+        b.sheet_mut().stickers.push(sticker(10, 0., 0.));
+        b.sheet_mut().stickers.push(sticker(11, 300., 0.));
+        b.sheet_mut().links.push(Link { id: 12, from: 10, to: 11, ink: Ink::Forest });
+        b.add_sheet("other");
+        b.normalize();
+        assert!(b.move_note(10, 1));
+        assert_eq!(b.sheet_of(10), Some(1));
+        assert!(b.categories[0].links.is_empty());
+        assert!(!b.move_note(10, 1));
+    }
+
+    #[test]
+    fn search_finds_notes_on_every_sheet() {
+        let mut b = Board::empty();
+        let mut s = sticker(10, 0., 0.);
+        s.body = "Buy #garden seeds".into();
+        b.sheet_mut().stickers.push(s);
+        b.add_sheet("x");
+        let mut s = sticker(11, 0., 0.);
+        s.title = "Seed catalogue".into();
+        b.sheet_mut().stickers.push(s);
+        let hits = b.search("seed");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(b.search("#garden"), vec![Hit { sheet: 0, note: 10 }]);
+        assert_eq!(b.all_tags(), vec![("garden".to_string(), 1)]);
+    }
+
+    #[test]
+    fn reminders_fire_once() {
+        let mut b = Board::empty();
+        let mut s = sticker(10, 0., 0.);
+        s.due = Some(50);
+        b.sheet_mut().stickers.push(s);
+        assert!(b.take_due(40).is_empty());
+        assert_eq!(b.take_due(60), vec![10]);
+        assert!(b.take_due(70).is_empty());
+        assert_eq!(b.reminders(), vec![(0, 10, 50)]);
+    }
+
+    #[test]
+    fn tidy_lays_out_rows_without_overlap() {
+        let mut c = Category::new(1, "t", Accent::Amber);
+        for i in 0..5 {
+            c.stickers.push(sticker(10 + i, (i * 37 % 5) as f32 * 90., (i * 53 % 7) as f32 * 40.));
+        }
+        let ids: Vec<Id> = c.stickers.iter().map(|s| s.id).collect();
+        c.tidy(&ids, &|s| s.rect.h);
+        for a in &c.stickers {
+            for b in &c.stickers {
+                assert!(a.id == b.id || !a.rect.intersects(&b.rect));
+            }
+        }
+    }
+
+    #[test]
+    fn templates_fill_a_new_sheet() {
+        let mut b = Board::empty();
+        b.add_from_template("Board", Template::Kanban, Accent::Slate, 5);
+        assert_eq!(b.sheet().frames.len(), 3);
+        assert_eq!(b.sheet().name, "Board");
+        b.add_from_template("Ideas", Template::Brainstorm, Accent::Plum, 5);
+        assert_eq!(b.sheet().links.len(), 4);
+        b.normalize();
+        let mut ids: Vec<Id> = b.categories.iter().flat_map(|c| c.stickers.iter().map(|s| s.id)).collect();
+        let n = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), n);
+    }
+
+    #[test]
+    fn frames_carry_the_notes_inside() {
+        let mut c = Category::new(1, "t", Accent::Amber);
+        c.frames.push(Frame { id: 2, rect: Rect { x: 0., y: 0., w: 400., h: 400. }, title: "A".into(), accent: Accent::Amber });
+        c.stickers.push(sticker(3, 10., 10.));
+        c.stickers.push(sticker(4, 500., 10.));
+        assert_eq!(c.frame_members(2), vec![3]);
+        assert_eq!(c.neighbour(3, 1., 0.), Some(4));
+        assert_eq!(c.neighbour(3, -1., 0.), None);
     }
 }

@@ -3,7 +3,7 @@
 
 use gpui::{hsla, point, px, rgb, rgba, App, BoxShadow, Global, Hsla, Pixels};
 
-use crate::model::{Accent, Ink, Paper};
+use crate::model::{Accent, Ink, NoteFont, Paper};
 
 #[derive(Clone, Copy)]
 pub struct Colors {
@@ -30,6 +30,12 @@ pub struct Colors {
     pub toast: Hsla,
     pub toast_fg: Hsla,
     pub danger: Hsla,
+    /// Folio's pink: the main action, the active sheet, focus.
+    pub brand: Hsla,
+    pub brand_tint: Hsla,
+    pub brand_on_tint: Hsla,
+    /// Overdue reminders.
+    pub alert: Hsla,
 }
 
 #[derive(Clone, Copy)]
@@ -74,6 +80,8 @@ pub struct Sizes {
     pub swatch: Pixels,    // 22
     pub logo: Pixels,      // 30
     pub dialog_w: Pixels,  // 460
+    pub drawer: Pixels,    // 304: the sheets drawer
+    pub card_min: Pixels,  // 270: a home card's least width
     pub grip: Pixels,      // 14: the resize corner
     pub dot_grid: f32,     // 22: world units between canvas dots
 }
@@ -87,6 +95,9 @@ pub struct Theme {
     pub radius: Radius,
     pub size: Sizes,
     pub font: &'static str,
+    pub high_contrast: bool,
+    /// The interface size it was made at.
+    pub scale: f32,
 }
 
 fn c(hex: u32) -> Hsla {
@@ -131,6 +142,8 @@ const SIZE: Sizes = Sizes {
     swatch: px(22.),
     logo: px(30.),
     dialog_w: px(460.),
+    drawer: px(304.),
+    card_min: px(270.),
     grip: px(14.),
     dot_grid: 22.,
 };
@@ -150,22 +163,28 @@ impl Theme {
                 text_body: c(0x45524a),
                 text_muted: c(0x6b7871),
                 text_subtle: c(0x939e97),
-                primary: c(0x315c4b),
-                primary_hover: c(0x284d3e),
+                primary: c(0xe5487a),
+                primary_hover: c(0xd23a6b),
                 primary_fg: c(0xffffff),
-                primary_tint: c(0xeaf2ec),
-                primary_on_tint: c(0x264b3b),
-                selection: c(0x4f8a6f),
+                primary_tint: c(0xfdeaf0),
+                primary_on_tint: c(0xb8285a),
+                selection: c(0xe5487a),
                 scrim: ca(0x18211f55),
                 toast: c(0x22392f),
                 toast_fg: c(0xffffff),
                 danger: c(0xb5473a),
+                brand: c(0xe5487a),
+                brand_tint: c(0xfdeaf0),
+                brand_on_tint: c(0xb8285a),
+                alert: c(0xd03b3b),
             },
             text: TEXT,
             space: SPACE,
             radius: RADIUS,
             size: SIZE,
             font: "Hanken Grotesk",
+            high_contrast: false,
+            scale: 1.0,
         }
     }
 
@@ -183,22 +202,28 @@ impl Theme {
                 text_body: c(0xc3ccc6),
                 text_muted: c(0x95a29b),
                 text_subtle: c(0x6f7c75),
-                primary: c(0x3f7a61),
-                primary_hover: c(0x4a8a6e),
+                primary: c(0xe5487a),
+                primary_hover: c(0xf0628f),
                 primary_fg: c(0xffffff),
-                primary_tint: c(0x223229),
-                primary_on_tint: c(0xa9d4bc),
-                selection: c(0x79b596),
+                primary_tint: c(0x3a1a26),
+                primary_on_tint: c(0xff8fb3),
+                selection: c(0xf0628f),
                 scrim: ca(0x00000088),
                 toast: c(0xe6efe9),
                 toast_fg: c(0x16201b),
                 danger: c(0xe07a6c),
+                brand: c(0xe5487a),
+                brand_tint: c(0x3a1a26),
+                brand_on_tint: c(0xff8fb3),
+                alert: c(0xff7b6e),
             },
             text: TEXT,
             space: SPACE,
             radius: RADIUS,
             size: SIZE,
             font: "Hanken Grotesk",
+            high_contrast: false,
+            scale: 1.0,
         }
     }
 
@@ -284,8 +309,78 @@ impl Theme {
 pub struct ActiveTheme(pub Theme);
 impl Global for ActiveTheme {}
 
-pub fn set(dark: bool, cx: &mut App) {
-    cx.set_global(ActiveTheme(if dark { Theme::dark() } else { Theme::light() }));
+/// Installs the theme: light or dark, optionally high contrast, at an
+/// interface size (1.0 = as designed).
+pub fn set(dark: bool, high_contrast: bool, scale: f32, cx: &mut App) {
+    let mut t = if dark { Theme::dark() } else { Theme::light() };
+    if high_contrast {
+        t = t.high_contrast();
+    }
+    cx.set_global(ActiveTheme(t.scaled(scale)));
+}
+
+impl Theme {
+    /// Stronger text and edges, for low vision or bright rooms.
+    pub fn high_contrast(mut self) -> Self {
+        let c = &mut self.colors;
+        if self.is_dark {
+            c.text = rgb(0xffffff).into();
+            c.text_body = rgb(0xf2f4f3).into();
+            c.text_muted = rgb(0xd5dbd8).into();
+            c.text_subtle = rgb(0xb3bcb7).into();
+            c.border = rgb(0x8a9590).into();
+            c.canvas_dot = rgb(0x46504b).into();
+        } else {
+            c.text = rgb(0x000000).into();
+            c.text_body = rgb(0x111815).into();
+            c.text_muted = rgb(0x2f3934).into();
+            c.text_subtle = rgb(0x4d5852).into();
+            c.border = rgb(0x6f7a74).into();
+            c.canvas_dot = rgb(0xa9b3ab).into();
+        }
+        self.high_contrast = true;
+        self
+    }
+
+    /// Every type size, space, radius and size multiplied by `k`.
+    pub fn scaled(mut self, k: f32) -> Self {
+        let k = k.clamp(0.8, 1.4);
+        self.scale = k;
+        if (k - 1.).abs() < 0.001 {
+            return self;
+        }
+        let m = |p: &mut Pixels| *p = px((f32::from(*p) * k).round());
+        let t = &mut self.text;
+        for p in [&mut t.micro, &mut t.caption, &mut t.body, &mut t.title, &mut t.brand, &mut t.heading] {
+            m(p);
+        }
+        let s = &mut self.space;
+        for p in [&mut s.xxs, &mut s.xs, &mut s.sm, &mut s.md, &mut s.lg, &mut s.xl, &mut s.xxl] {
+            m(p);
+        }
+        let r = &mut self.radius;
+        for p in [&mut r.small, &mut r.button, &mut r.card, &mut r.dialog] {
+            m(p);
+        }
+        let z = &mut self.size;
+        for p in [
+            &mut z.sidebar, &mut z.topbar, &mut z.control, &mut z.icon_sm, &mut z.icon, &mut z.icon_lg, &mut z.dot,
+            &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.card_min,
+        ] {
+            m(p);
+        }
+        self
+    }
+
+    /// The font family a note is written in.
+    pub fn note_font(&self, f: NoteFont) -> &'static str {
+        match f {
+            NoteFont::Sans => self.font,
+            NoteFont::Hand => "Comic Neue",
+            NoteFont::Mono => "JetBrains Mono",
+        }
+    }
+
 }
 
 pub fn theme(cx: &App) -> &Theme {

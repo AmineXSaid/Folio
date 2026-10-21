@@ -65,6 +65,54 @@ pub fn save(dir: &Path, board: &Board) -> std::io::Result<()> {
     std::fs::rename(&tmp, board_file(dir))
 }
 
+pub fn backup_dir(dir: &Path) -> PathBuf {
+    dir.join("backups")
+}
+
+/// Days of backups kept.
+pub const BACKUPS_KEPT: usize = 14;
+
+/// Writes today's backup (`backups/YYYY-MM-DD.json`) unless it exists, and
+/// keeps the newest 14.
+pub fn backup_daily(dir: &Path, board: &Board, day: &str) -> std::io::Result<bool> {
+    let b = backup_dir(dir);
+    std::fs::create_dir_all(&b)?;
+    let path = b.join(format!("{day}.json"));
+    if path.exists() {
+        return Ok(false);
+    }
+    let text = serde_json::to_string(board).map_err(std::io::Error::other)?;
+    std::fs::write(b.join("backup.tmp"), text)?;
+    std::fs::rename(b.join("backup.tmp"), &path)?;
+    let mut days = backups(dir);
+    while days.len() > BACKUPS_KEPT {
+        let old = days.pop().unwrap();
+        let _ = std::fs::remove_file(b.join(format!("{old}.json")));
+    }
+    Ok(true)
+}
+
+/// The days there are backups for, newest first.
+pub fn backups(dir: &Path) -> Vec<String> {
+    let mut days: Vec<String> = std::fs::read_dir(backup_dir(dir))
+        .map(|r| {
+            r.flatten()
+                .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".json")).map(String::from))
+                .filter(|n| n.len() == 10)
+                .collect()
+        })
+        .unwrap_or_default();
+    days.sort_by(|a, b| b.cmp(a));
+    days
+}
+
+pub fn load_backup(dir: &Path, day: &str) -> Option<Board> {
+    let text = std::fs::read_to_string(backup_dir(dir).join(format!("{day}.json"))).ok()?;
+    let mut b: Board = serde_json::from_str(&text).ok()?;
+    b.normalize();
+    Some(b)
+}
+
 /// The picture formats a sticker shows.
 pub fn is_image(path: &Path) -> bool {
     matches!(
@@ -119,5 +167,20 @@ mod tests {
         assert!(is_image(Path::new("a/b.PNG")));
         assert!(is_image(Path::new("x.svg")));
         assert!(!is_image(Path::new("notes.txt")));
+    }
+
+    #[test]
+    fn daily_backups_keep_two_weeks() {
+        let dir = temp_dir("backups");
+        let board = demo::board();
+        for d in 1..=16 {
+            assert!(backup_daily(&dir, &board, &format!("2026-10-{d:02}")).unwrap());
+        }
+        assert!(!backup_daily(&dir, &board, "2026-10-16").unwrap());
+        let days = backups(&dir);
+        assert_eq!(days.len(), BACKUPS_KEPT);
+        assert_eq!(days[0], "2026-10-16");
+        assert_eq!(load_backup(&dir, "2026-10-10"), Some(board));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

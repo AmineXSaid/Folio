@@ -1,47 +1,12 @@
 //! What ships inside the binary: Lucide icons (ISC, `assets/icons/LICENSE`),
-//! Hanken Grotesk and JetBrains Mono (OFL), and the Folio logo.
+//! Hanken Grotesk, JetBrains Mono and Comic Neue (OFL), and the Folio logo.
 
 use std::borrow::Cow;
 
 use gpui::{App, AssetSource, Result, SharedString};
 
-macro_rules! embed {
-    ($($path:literal),* $(,)?) => {
-        const FILES: &[(&str, &[u8])] = &[
-            $(($path, include_bytes!(concat!("../assets/", $path))),)*
-        ];
-    };
-}
-
-embed!(
-    "icons/check.svg",
-    "icons/ellipsis.svg",
-    "icons/eraser.svg",
-    "icons/grip-vertical.svg",
-    "icons/hand.svg",
-    "icons/highlighter.svg",
-    "icons/image.svg",
-    "icons/layers.svg",
-    "icons/list-checks.svg",
-    "icons/moon.svg",
-    "icons/mouse-pointer-2.svg",
-    "icons/palette.svg",
-    "icons/pencil.svg",
-    "icons/plus.svg",
-    "icons/redo-2.svg",
-    "icons/scan.svg",
-    "icons/search.svg",
-    "icons/spline.svg",
-    "icons/sticky-note.svg",
-    "icons/sun.svg",
-    "icons/trash.svg",
-    "icons/type.svg",
-    "icons/undo-2.svg",
-    "icons/x.svg",
-    "icons/zoom-in.svg",
-    "icons/zoom-out.svg",
-    "brand/folio-64.png",
-);
+// Every icon and brand picture, listed by build.rs.
+include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 
 pub struct Assets;
 
@@ -70,6 +35,8 @@ pub fn load_fonts(cx: &App) {
         Cow::Borrowed(include_bytes!("../assets/fonts/HankenGrotesk-Bold.ttf")),
         Cow::Borrowed(include_bytes!("../assets/fonts/HankenGrotesk-Italic.ttf")),
         Cow::Borrowed(include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/ComicNeue-Regular.otf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/ComicNeue-Bold.otf")),
     ];
     if let Err(e) = cx.text_system().add_fonts(fonts) {
         eprintln!("could not load the bundled fonts: {e}");

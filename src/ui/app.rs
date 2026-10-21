@@ -1,21 +1,24 @@
-//! The window's one view: the board being edited, the tool in hand, the
-//! gesture under way, undo history, and the debounced save. The other files
-//! in `ui/` each render one part of it.
+//! The main window's view: the board, which screen is showing, the tool in
+//! hand, the gesture under way, the note being typed into, menus, dialogs,
+//! undo history and the debounced save. The other files in `ui/` each
+//! render one part of it.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use gpui::component::input::{InputState, TextareaState};
+use gpui::component::input::{InputEvent, InputState, TextareaState};
 use gpui::{
-    div, prelude::*, Bounds, ClipboardEntry, Context, Entity, FocusHandle, Pixels,
+    div, prelude::*, Bounds, ClipboardEntry, ClipboardItem, Context, Entity, FocusHandle, Pixels, Point,
     SharedString, Task, Window,
 };
 
 use crate::model::*;
 use crate::store;
 use crate::theme::{self, theme};
+use crate::time::{self, now};
 use crate::ui::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,19 +29,13 @@ pub enum Tool {
     Marker,
     Text,
     Connect,
+    Frame,
     Eraser,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 7] = [
-        Tool::Select,
-        Tool::Hand,
-        Tool::Pen,
-        Tool::Marker,
-        Tool::Text,
-        Tool::Connect,
-        Tool::Eraser,
-    ];
+    pub const ALL: [Tool; 8] =
+        [Tool::Select, Tool::Hand, Tool::Pen, Tool::Marker, Tool::Text, Tool::Connect, Tool::Frame, Tool::Eraser];
     pub fn icon(self) -> &'static str {
         match self {
             Tool::Select => "icons/mouse-pointer-2.svg",
@@ -47,6 +44,7 @@ impl Tool {
             Tool::Marker => "icons/highlighter.svg",
             Tool::Text => "icons/type.svg",
             Tool::Connect => "icons/spline.svg",
+            Tool::Frame => "icons/square-dashed.svg",
             Tool::Eraser => "icons/eraser.svg",
         }
     }
@@ -58,6 +56,7 @@ impl Tool {
             Tool::Marker => "Marker",
             Tool::Text => "Text",
             Tool::Connect => "Connect",
+            Tool::Frame => "Area",
             Tool::Eraser => "Eraser",
         }
     }
@@ -69,6 +68,7 @@ impl Tool {
             Tool::Marker => "M",
             Tool::Text => "T",
             Tool::Connect => "C",
+            Tool::Frame => "F",
             Tool::Eraser => "E",
         }
     }
@@ -82,59 +82,141 @@ impl Tool {
 pub enum Selection {
     Sticker(Id),
     Label(Id),
+    Frame(Id),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Screen {
+    Home,
+    Sheet,
+    Settings,
+    Bin,
 }
 
 /// What the pointer is doing between press and release.
 pub enum Gesture {
     None,
     Pan { start: Vec2, pan: Vec2 },
-    Move { id: Id, grab: Vec2, moved: bool },
-    MoveLabel { id: Id, grab: Vec2, moved: bool },
+    /// Moving the selection; each item with where it started.
+    Move { items: Vec<(Selection, Vec2)>, start: Vec2, moved: bool },
     Resize { id: Id, start: Vec2, size: (f32, f32) },
+    ResizeFrame { id: Id, start: Vec2, size: (f32, f32) },
+    Marquee { start: Vec2, now: Vec2, additive: bool },
     Draw(Stroke),
     Erase { erased: bool },
     Connect { from: Id, to: Vec2 },
+    MakeFrame { start: Vec2, now: Vec2 },
 }
 
-/// The open dialog: a sticker's or a label's editor.
-pub struct Editing {
-    pub target: Selection,
-    /// Made by the gesture that opened the editor: Cancel removes it again.
+/// The note being typed into, on the sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Edit {
+    pub id: Id,
+    /// Made for this edit: an empty one goes away again.
     pub is_new: bool,
-    pub paper: Paper,
-    pub text_size: TextSize,
-    pub image: Option<String>,
-    pub ink: Ink,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MenuKind {
+    Note(Id),
+    /// On the empty sheet, at this world point.
+    Canvas(Vec2),
+    /// A sheet's card on the home screen (sheet index).
+    Card(usize),
+    Frame(Id),
+    Label(Id),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuPage {
+    Main,
+    MoveTo,
+    Remind,
+    Icon,
+    Colour,
+}
+
+pub struct Menu {
+    /// Window position.
+    pub at: Point<Pixels>,
+    pub kind: MenuKind,
+    pub page: MenuPage,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dialog {
+    NewSheet { accent: Accent, icon: &'static str, template: Template },
+    RenameSheet(Id),
+    Label { id: Id, is_new: bool, ink: Ink },
+    RenameFrame(Id),
+}
+
+pub struct Intro {
+    pub start: Instant,
+    pub full: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sort {
+    Recent,
+    Name,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinTab {
+    Trash,
+    Archive,
+    Backups,
 }
 
 pub struct Folio {
     pub board: Board,
     pub dir: PathBuf,
     pub focus: FocusHandle,
+    pub screen: Screen,
+    pub drawer: bool,
     pub tool: Tool,
     pub ink: Ink,
     pub gesture: Gesture,
+    /// Alignment guides while moving: (vertical?, world coordinate).
+    pub guides: Vec<(bool, f32)>,
     /// The undo snapshot taken when the current gesture began.
     pub before: Option<Board>,
-    pub selected: Option<Selection>,
+    pub selection: Vec<Selection>,
     pub hovered: Option<Id>,
+    /// Space is held: drag pans.
+    pub space: bool,
     /// The last pointer position over the sheet, in sheet-local pixels.
     pub cursor: Vec2,
     /// Where the sheet was laid out last frame, for turning window
     /// positions into sheet positions.
     pub viewport: Rc<Cell<Bounds<Pixels>>>,
+    /// Each note's natural height (world units), measured as it's drawn.
+    pub heights: Rc<RefCell<HashMap<Id, f32>>>,
     pub undo: Vec<Board>,
     pub redo: Vec<Board>,
-    pub editing: Option<Editing>,
-    pub renaming: Option<Id>,
+    pub editing: Option<Edit>,
+    pub menu: Option<Menu>,
+    pub dialog: Option<Dialog>,
+    pub palette: bool,
+    pub palette_ix: usize,
+    pub intro: Option<Intro>,
+    pub sort: Sort,
+    pub bin_tab: BinTab,
     pub toast: Option<SharedString>,
     pub saved: bool,
+    /// The OS's light/dark, when the theme follows it.
+    pub system_dark: bool,
     pub title_input: Entity<InputState>,
     pub body_input: Entity<TextareaState>,
-    pub rename_input: Entity<InputState>,
     pub search_input: Entity<InputState>,
+    pub palette_input: Entity<InputState>,
+    pub dialog_input: Entity<InputState>,
+    pub dialog_body: Entity<TextareaState>,
+    pub desktop: crate::desktop::Desktop,
     toast_task: Option<Task<()>>,
     save_task: Option<Task<()>>,
+    _ticker: Task<()>,
     _subs: Vec<gpui::Subscription>,
 }
 
@@ -143,55 +225,113 @@ const UNDO_DEPTH: usize = 100;
 impl Folio {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let dir = store::data_dir();
-        let board = store::load(&dir);
-        theme::set(board.dark, cx);
-        sync_component_theme(cx);
-        let title_input = cx.new(|cx| InputState::new(window, cx).placeholder("A thought worth keeping…"));
+        let mut board = store::load(&dir);
+        let t = now();
+        board.purge(t);
+        let _ = store::backup_daily(&dir, &board, &time::today());
+        let title_input = cx.new(|cx| InputState::new(window, cx).placeholder("Title"));
         let body_input = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .auto_grow(6, 14)
-                .placeholder("Write something… **bold**, - [ ] tasks, | tables |")
+            TextareaState::new(window, cx).auto_grow(3, 24).placeholder("Write… - [ ] for a task, #tag, **bold**")
         });
-        let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("Sheet name"));
-        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search this sheet"));
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search sheets and notes"));
+        let palette_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Type a command, a sheet or a note…"));
+        let dialog_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
+        let dialog_body = cx.new(|cx| TextareaState::new(window, cx).auto_grow(3, 10).placeholder("Write on the sheet…"));
         let subs = vec![
-            cx.subscribe_in(&rename_input, window, |this, _, ev, window, cx| {
-                use gpui::component::input::InputEvent;
-                match ev {
-                    InputEvent::PressEnter { .. } | InputEvent::Blur => this.finish_rename(window, cx),
-                    _ => {}
+            cx.observe(&search_input, |this, _, cx| {
+                if this.screen != Screen::Home && !this.search_text(cx).is_empty() {
+                    this.screen = Screen::Home;
+                    this.board.at_home = true;
+                }
+                cx.notify()
+            }),
+            cx.subscribe_in(&palette_input, window, |this, _, ev, window, cx| match ev {
+                InputEvent::Change => {
+                    this.palette_ix = 0;
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } => this.palette_run(this.palette_ix, window, cx),
+                _ => {}
+            }),
+            cx.subscribe_in(&dialog_input, window, |this, _, ev, window, cx| {
+                if let InputEvent::PressEnter { .. } = ev {
+                    this.dialog_ok(window, cx);
                 }
             }),
-            cx.observe(&search_input, |_, _, cx| cx.notify()),
+            cx.observe_window_appearance(window, |this, window, cx| {
+                this.system_dark = is_dark(window.appearance());
+                this.apply_theme(cx);
+            }),
         ];
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        Folio {
+
+        let s = board.settings.clone();
+        let reduce = s.reduce_motion;
+        let intro = match (s.intro, s.intro_seen, reduce) {
+            (IntroMode::Off, _, _) => None,
+            (_, _, true) => None,
+            (IntroMode::Full, _, _) | (IntroMode::Auto, false, _) => Some(Intro { start: Instant::now(), full: true }),
+            _ => Some(Intro { start: Instant::now(), full: false }),
+        };
+        board.settings.intro_seen = true;
+        let screen = if s.open_on == OpenOn::LastSheet && !board.at_home { Screen::Sheet } else { Screen::Home };
+        board.at_home = screen == Screen::Home;
+
+        // Reminders: checked every 15 seconds.
+        let ticker = cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(15)).await;
+            if this.update(cx, |this, cx| this.check_reminders(cx)).is_err() {
+                return;
+            }
+        });
+
+        let mut f = Folio {
             board,
             dir,
             focus,
+            screen,
+            drawer: false,
             tool: Tool::Select,
             ink: Ink::Graphite,
             gesture: Gesture::None,
+            guides: Vec::new(),
             before: None,
-            selected: None,
+            selection: Vec::new(),
             hovered: None,
+            space: false,
             cursor: v2(0., 0.),
             viewport: Rc::new(Cell::new(Bounds::default())),
+            heights: Rc::new(RefCell::new(HashMap::new())),
             undo: Vec::new(),
             redo: Vec::new(),
             editing: None,
-            renaming: None,
+            menu: None,
+            dialog: None,
+            palette: false,
+            palette_ix: 0,
+            intro,
+            sort: Sort::Recent,
+            bin_tab: BinTab::Trash,
             toast: None,
             saved: true,
+            system_dark: is_dark(window.appearance()),
             title_input,
             body_input,
-            rename_input,
             search_input,
+            palette_input,
+            dialog_input,
+            dialog_body,
+            desktop: crate::desktop::Desktop::default(),
             toast_task: None,
             save_task: None,
+            _ticker: ticker,
             _subs: subs,
-        }
+        };
+        f.apply_theme(cx);
+        f.schedule_save(cx);
+        f
     }
 
     pub fn sheet(&self) -> &Category {
@@ -204,13 +344,70 @@ impl Folio {
     }
 
     /// A window position as a sheet-local screen position.
-    pub fn local(&self, p: gpui::Point<Pixels>) -> Vec2 {
+    pub fn local(&self, p: Point<Pixels>) -> Vec2 {
         let o = self.viewport.get().origin;
         v2(f32::from(p.x - o.x), f32::from(p.y - o.y))
     }
 
-    pub fn search(&self, cx: &gpui::App) -> String {
+    pub fn search_text(&self, cx: &gpui::App) -> String {
         self.search_input.read(cx).value().trim().to_lowercase()
+    }
+
+    /// A note's rectangle as drawn: as tall as its text when it grows.
+    pub fn note_rect(&self, s: &Sticker) -> Rect {
+        let mut r = s.rect;
+        if !s.fixed {
+            if let Some(h) = self.heights.borrow().get(&s.id) {
+                r.h = r.h.max(*h);
+            }
+        }
+        r
+    }
+
+    /// The front-most note under `p` (world), as drawn.
+    pub fn note_at(&self, p: Vec2) -> Option<Id> {
+        self.sheet().stickers.iter().rev().find(|s| self.note_rect(s).contains(p)).map(|s| s.id)
+    }
+
+    pub fn is_selected(&self, s: Selection) -> bool {
+        self.selection.contains(&s)
+    }
+
+    pub fn selected_notes(&self) -> Vec<Id> {
+        self.selection
+            .iter()
+            .filter_map(|s| match s {
+                Selection::Sticker(id) => Some(*id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn select(&mut self, s: Selection) {
+        self.selection = vec![s];
+    }
+
+    // ---------- Theme ----------
+
+    pub fn dark(&self) -> bool {
+        match self.board.settings.theme {
+            ThemeMode::Light => false,
+            ThemeMode::Dark => true,
+            ThemeMode::System => self.system_dark,
+        }
+    }
+
+    pub fn apply_theme(&mut self, cx: &mut Context<Self>) {
+        let s = &self.board.settings;
+        theme::set(self.dark(), s.high_contrast, s.ui_scale, cx);
+        sync_component_theme(cx);
+        cx.refresh_windows();
+    }
+
+    pub fn toggle_theme(&mut self, cx: &mut Context<Self>) {
+        self.board.settings.theme = if self.dark() { ThemeMode::Light } else { ThemeMode::Dark };
+        self.apply_theme(cx);
+        self.schedule_save(cx);
     }
 
     // ---------- History and saving ----------
@@ -220,12 +417,19 @@ impl Folio {
         if before == self.board {
             return;
         }
+        // Whatever changed was edited now.
+        let t = now();
+        let active = self.board.active;
+        if let Some(c) = self.board.categories.get_mut(active) {
+            c.edited = t;
+        }
         self.undo.push(before);
         if self.undo.len() > UNDO_DEPTH {
             self.undo.remove(0);
         }
         self.redo.clear();
         self.schedule_save(cx);
+        self.desktop_sync(cx);
     }
 
     /// Runs `f` on the board as one undoable step.
@@ -236,24 +440,29 @@ impl Folio {
         cx.notify();
     }
 
-    /// Puts `snapshot` in place, keeping each sheet's current camera: undo
-    /// is about content, not about where you were looking.
-    fn restore(&mut self, mut snapshot: Board) -> Board {
+    /// Puts `snapshot` in place, keeping each sheet's camera and the
+    /// settings: undo is about content.
+    fn restore_snapshot(&mut self, mut snapshot: Board) -> Board {
         for c in &mut snapshot.categories {
             if let Some(now) = self.board.categories.iter().find(|n| n.id == c.id) {
                 c.camera = now.camera;
             }
         }
-        snapshot.dark = self.board.dark;
-        self.selected = None;
+        snapshot.settings = self.board.settings.clone();
+        snapshot.at_home = self.board.at_home;
+        self.selection.clear();
         std::mem::replace(&mut self.board, snapshot)
     }
 
     pub fn undo(&mut self, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            return;
+        }
         if let Some(prev) = self.undo.pop() {
-            let now = self.restore(prev);
+            let now = self.restore_snapshot(prev);
             self.redo.push(now);
             self.schedule_save(cx);
+            self.desktop_sync(cx);
             cx.notify();
         } else {
             self.notify("Nothing to undo", cx);
@@ -262,9 +471,10 @@ impl Folio {
 
     pub fn redo(&mut self, cx: &mut Context<Self>) {
         if let Some(next) = self.redo.pop() {
-            let now = self.restore(next);
+            let now = self.restore_snapshot(next);
             self.undo.push(now);
             self.schedule_save(cx);
+            self.desktop_sync(cx);
             cx.notify();
         }
     }
@@ -289,7 +499,7 @@ impl Folio {
     pub fn notify(&mut self, msg: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.toast = Some(msg.into());
         self.toast_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(2200)).await;
+            cx.background_executor().timer(Duration::from_millis(2600)).await;
             let _ = this.update(cx, |this, cx| {
                 this.toast = None;
                 cx.notify();
@@ -298,225 +508,522 @@ impl Folio {
         cx.notify();
     }
 
-    // ---------- Sheets ----------
+    // ---------- Screens ----------
 
-    pub fn switch_sheet(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if ix < self.board.categories.len() && ix != self.board.active {
-            self.board.active = ix;
-            self.selected = None;
-            self.gesture = Gesture::None;
-            self.schedule_save(cx);
-            cx.notify();
-        }
+    pub fn go_home(&mut self, cx: &mut Context<Self>) {
+        self.finish_edit(cx);
+        self.screen = Screen::Home;
+        self.board.at_home = true;
+        self.drawer = false;
+        self.selection.clear();
+        self.schedule_save(cx);
+        cx.notify();
     }
 
-    pub fn new_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut id = 0;
-        self.change(cx, |b| id = b.add_sheet("Untitled sheet"));
-        self.start_rename(id, window, cx);
-    }
-
-    pub fn delete_sheet(&mut self, cx: &mut Context<Self>) {
-        if self.board.categories.len() <= 1 {
-            self.notify("A workspace keeps at least one sheet", cx);
+    pub fn open_sheet(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if ix >= self.board.categories.len() {
             return;
         }
-        let name = self.sheet().name.clone();
-        self.change(cx, |b| {
-            b.remove_active_sheet();
-        });
-        self.notify(format!("Deleted “{name}” · {} to undo", shortcut("Z")), cx);
-    }
-
-    pub fn start_rename(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {
-        let name = self.board.categories.iter().find(|c| c.id == id).map(|c| c.name.clone());
-        if let Some(name) = name {
-            self.renaming = Some(id);
-            self.rename_input.update(cx, |i, cx| {
-                i.set_value(name, window, cx);
-                i.focus(window, cx);
-            });
-            cx.notify();
+        self.finish_edit(cx);
+        if ix != self.board.active {
+            self.selection.clear();
+            self.gesture = Gesture::None;
         }
+        self.board.active = ix;
+        self.board.categories[ix].opened = now();
+        self.board.at_home = false;
+        self.screen = Screen::Sheet;
+        self.drawer = false;
+        self.search_input.update(cx, |i, cx| i.set_value("", window, cx));
+        window.focus(&self.focus, cx);
+        self.schedule_save(cx);
+        cx.notify();
     }
 
-    pub fn finish_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.renaming.take() else { return };
-        let name = self.rename_input.read(cx).value().trim().to_string();
-        if !name.is_empty() {
-            self.change(cx, |b| {
-                if let Some(c) = b.categories.iter_mut().find(|c| c.id == id) {
-                    c.name = name;
+    pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.finish_edit(cx);
+        self.screen = Screen::Settings;
+        self.drawer = false;
+        cx.notify();
+    }
+
+    pub fn open_bin(&mut self, tab: BinTab, cx: &mut Context<Self>) {
+        self.finish_edit(cx);
+        self.screen = Screen::Bin;
+        self.bin_tab = tab;
+        self.drawer = false;
+        cx.notify();
+    }
+
+    /// Opens the sheet holding note `id`, frames the note and selects it.
+    pub fn reveal_note(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.board.sheet_of(id) else { return };
+        self.open_sheet(ix, window, cx);
+        let (w, h) = self.viewport_size();
+        let (w, h) = if w < 10. { (1000., 640.) } else { (w, h) };
+        if let Some(s) = self.sheet().sticker(id) {
+            let r = self.note_rect(s);
+            let cam = &mut self.board.sheet_mut().camera;
+            cam.zoom = cam.zoom.max(0.8);
+            let c = r.center();
+            cam.pan = v2(w / 2. - c.x * cam.zoom, h / 2. - c.y * cam.zoom);
+        }
+        self.select(Selection::Sticker(id));
+        cx.notify();
+    }
+
+    pub fn next_sheet(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let order = self.board.ordered();
+        let n = order.len() as isize;
+        let at = order.iter().position(|&i| i == self.board.active).unwrap_or(0) as isize;
+        let next = order[((at + step).rem_euclid(n)) as usize];
+        self.open_sheet(next, window, cx);
+    }
+
+    // ---------- Sheets ----------
+
+    pub fn new_sheet_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let n = self.board.categories.len();
+        self.dialog = Some(Dialog::NewSheet {
+            accent: Accent::ALL[n % Accent::ALL.len()],
+            icon: SHEET_ICONS[n % SHEET_ICONS.len()],
+            template: Template::Blank,
+        });
+        self.menu = None;
+        self.drawer = false;
+        self.dialog_input.update(cx, |i, cx| {
+            i.set_value("", window, cx);
+        });
+        let input = self.dialog_input.clone();
+        window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+        cx.notify();
+    }
+
+    pub fn rename_sheet_dialog(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(c) = self.board.categories.get(ix) else { return };
+        let (id, name) = (c.id, c.name.clone());
+        self.dialog = Some(Dialog::RenameSheet(id));
+        self.menu = None;
+        self.dialog_input.update(cx, |i, cx| i.set_value(name, window, cx));
+        let input = self.dialog_input.clone();
+        window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+        cx.notify();
+    }
+
+    pub fn dialog_ok(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(d) = self.dialog.take() else { return };
+        let name = self.dialog_input.read(cx).value().trim().to_string();
+        match d {
+            Dialog::NewSheet { accent, icon, template } => {
+                let name = if name.is_empty() { template_default_name(template) } else { name };
+                let t = now();
+                self.change(cx, |b| {
+                    b.add_from_template(&name, template, accent, t);
+                    b.sheet_mut().icon = icon.into();
+                });
+                let ix = self.board.active;
+                self.open_sheet(ix, window, cx);
+                if template != Template::Blank {
+                    self.zoom_to_fit(cx);
                 }
-            });
+            }
+            Dialog::RenameSheet(id) => {
+                if !name.is_empty() {
+                    self.change(cx, |b| {
+                        if let Some(c) = b.categories.iter_mut().find(|c| c.id == id) {
+                            c.name = name;
+                        }
+                    });
+                }
+            }
+            Dialog::RenameFrame(id) => {
+                self.change(cx, |b| {
+                    if let Some(f) = b.sheet_mut().frames.iter_mut().find(|f| f.id == id) {
+                        f.title = name;
+                    }
+                });
+            }
+            Dialog::Label { id, ink, .. } => {
+                let text = self.dialog_body.read(cx).value().trim_end().to_string();
+                let before = self.before.take().unwrap_or_else(|| self.board.clone());
+                let sheet = self.board.sheet_mut();
+                if text.trim().is_empty() {
+                    sheet.labels.retain(|l| l.id != id);
+                } else if let Some(l) = sheet.labels.iter_mut().find(|l| l.id == id) {
+                    l.text = text;
+                    l.ink = ink;
+                }
+                self.commit(before, cx);
+            }
         }
         window.focus(&self.focus, cx);
         cx.notify();
     }
 
-    // ---------- Stickers ----------
-
-    /// A new sticker centred on `at` (world), opened in the editor.
-    pub fn new_sticker_at(&mut self, at: Vec2, window: &mut Window, cx: &mut Context<Self>) {
-        let before = self.board.clone();
-        let id = self.board.fresh_id();
-        let paper = next_paper(self.sheet());
-        let (w, h) = (230., 170.);
-        self.board.sheet_mut().stickers.push(Sticker {
-            id,
-            rect: Rect { x: at.x - w / 2., y: at.y - h / 2., w, h },
-            paper,
-            title: String::new(),
-            body: String::new(),
-            image: None,
-            text_size: TextSize::Medium,
-            edited: now(),
-        });
-        self.before = Some(before);
-        self.selected = Some(Selection::Sticker(id));
-        self.open_editor(Selection::Sticker(id), true, window, cx);
-    }
-
-    /// A new sticker in the middle of the view.
-    pub fn new_sticker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (w, h) = self.viewport_size();
-        let cam = self.sheet().camera;
-        let n = self.sheet().stickers.len() as f32 % 6.;
-        let at = cam.to_world(v2(w / 2. + n * 18., h / 2. + n * 18.));
-        self.new_sticker_at(at, window, cx);
-    }
-
-    pub fn delete_selection(&mut self, cx: &mut Context<Self>) {
-        match self.selected.take() {
-            Some(Selection::Sticker(id)) => {
-                self.change(cx, |b| b.sheet_mut().remove_sticker(id));
-                self.notify(format!("Note deleted · {} to undo", shortcut("Z")), cx);
+    pub fn dialog_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Dialog::Label { is_new: true, .. }) = self.dialog {
+            if let Some(before) = self.before.take() {
+                self.board = before;
             }
-            Some(Selection::Label(id)) => {
-                self.change(cx, |b| b.sheet_mut().labels.retain(|l| l.id != id));
-            }
-            None => {}
         }
-    }
-
-    pub fn duplicate_selection(&mut self, cx: &mut Context<Self>) {
-        let Some(Selection::Sticker(id)) = self.selected else { return };
-        let mut new_id = 0;
-        self.change(cx, |b| {
-            new_id = b.fresh_id();
-            let sheet = b.sheet_mut();
-            if let Some(mut s) = sheet.sticker(id).cloned() {
-                s.id = new_id;
-                s.rect.x += 24.;
-                s.rect.y += 24.;
-                s.edited = now();
-                sheet.stickers.push(s);
-            }
-        });
-        self.selected = Some(Selection::Sticker(new_id));
-    }
-
-    // ---------- The editor ----------
-
-    pub fn open_editor(&mut self, target: Selection, is_new: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let sheet = self.sheet();
-        let (title, body, editing) = match target {
-            Selection::Sticker(id) => {
-                let Some(s) = sheet.sticker(id) else { return };
-                (
-                    s.title.clone(),
-                    s.body.clone(),
-                    Editing { target, is_new, paper: s.paper, text_size: s.text_size, image: s.image.clone(), ink: self.ink },
-                )
-            }
-            Selection::Label(id) => {
-                let Some(l) = sheet.labels.iter().find(|l| l.id == id) else { return };
-                (
-                    String::new(),
-                    l.text.clone(),
-                    Editing { target, is_new, paper: Paper::Plain, text_size: TextSize::Medium, image: None, ink: l.ink },
-                )
-            }
-        };
-        self.title_input.update(cx, |i, cx| i.set_value(title, window, cx));
-        self.body_input.update(cx, |i, cx| i.set_value(body, window, cx));
-        // Deferred: the press that opened the editor focuses the sheet
-        // once its handlers have run.
-        let (title_input, body_input) = (self.title_input.clone(), self.body_input.clone());
-        let focus_title = matches!(target, Selection::Sticker(_));
-        window.defer(cx, move |window, cx| {
-            if focus_title {
-                title_input.update(cx, |i, cx| i.focus(window, cx));
-            } else {
-                body_input.update(cx, |i, cx| i.focus(window, cx));
-            }
-        });
-        self.editing = Some(editing);
+        self.before = None;
+        self.dialog = None;
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
-    pub fn save_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_pin_sheet(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.change(cx, |b| {
+            if let Some(c) = b.categories.get_mut(ix) {
+                c.pinned = !c.pinned;
+            }
+        });
+    }
+
+    pub fn duplicate_sheet(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.change(cx, |b| {
+            let Some(mut c) = b.categories.get(ix).cloned() else { return };
+            c.id = b.fresh_id();
+            c.name = format!("{} copy", c.name);
+            c.inbox = false;
+            c.pinned = false;
+            let mut map = HashMap::new();
+            for s in &mut c.stickers {
+                let n = b.fresh_id();
+                map.insert(s.id, n);
+                s.id = n;
+                s.popped = None;
+            }
+            for l in &mut c.links {
+                l.id = b.fresh_id();
+                l.from = map[&l.from];
+                l.to = map[&l.to];
+            }
+            for x in &mut c.strokes {
+                x.id = b.fresh_id();
+            }
+            for x in &mut c.labels {
+                x.id = b.fresh_id();
+            }
+            for x in &mut c.frames {
+                x.id = b.fresh_id();
+            }
+            b.categories.insert(ix + 1, c);
+        });
+    }
+
+    /// Sends sheet `ix` to the Trash (archived: to the Archive).
+    pub fn bin_sheet(&mut self, ix: usize, archived: bool, cx: &mut Context<Self>) {
+        self.menu = None;
+        let Some(name) = self.board.categories.get(ix).map(|c| c.name.clone()) else { return };
+        let t = now();
+        let mut ok = false;
+        self.change(cx, |b| ok = b.bin_sheet(ix, archived, t));
+        if ok {
+            if self.screen == Screen::Sheet {
+                self.screen = Screen::Home;
+                self.board.at_home = true;
+            }
+            let what = if archived { "Archived" } else { "Moved to Trash" };
+            self.notify(format!("{what}: “{name}” · {} to undo", shortcut("Z")), cx);
+        } else {
+            self.notify("A workspace keeps at least one sheet", cx);
+        }
+    }
+
+    // ---------- Notes ----------
+
+    /// A new note with its top-left near `at` (world), ready to type into.
+    pub fn new_note_at(&mut self, at: Vec2, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_edit(cx);
+        let before = self.board.clone();
+        let id = self.board.fresh_id();
+        let paper = next_paper(self.sheet(), self.board.settings.default_paper);
+        let font = self.board.settings.default_font;
+        let (w, h) = (240., 120.);
+        self.board.sheet_mut().stickers.push(Sticker {
+            id,
+            rect: Rect { x: at.x - w / 2., y: at.y - 30., w, h },
+            paper,
+            font,
+            edited: now(),
+            ..Default::default()
+        });
+        self.before = Some(before);
+        self.select(Selection::Sticker(id));
+        self.begin_edit(id, true, window, cx);
+    }
+
+    /// A new note in the middle of the view.
+    pub fn new_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.screen != Screen::Sheet {
+            let ix = self.board.active;
+            self.open_sheet(ix, window, cx);
+        }
+        let (w, h) = self.viewport_size();
+        let (w, h) = if w < 10. { (1000., 600.) } else { (w, h) };
+        let cam = self.sheet().camera;
+        let n = self.sheet().stickers.len() as f32 % 6.;
+        let at = cam.to_world(v2(w / 2. + n * 18., h / 2. + n * 18.));
+        self.new_note_at(at, window, cx);
+    }
+
+    /// Starts typing into note `id` on the sheet.
+    pub fn begin_edit(&mut self, id: Id, is_new: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.sheet().sticker(id) else { return };
+        if s.locked {
+            self.notify("This note is locked · unlock it from its menu", cx);
+            return;
+        }
+        let (title, body) = (s.title.clone(), s.body.clone());
+        if self.before.is_none() {
+            self.before = Some(self.board.clone());
+        }
+        self.title_input.update(cx, |i, cx| i.set_value(title.clone(), window, cx));
+        self.body_input.update(cx, |i, cx| i.set_value(body, window, cx));
+        self.editing = Some(Edit { id, is_new });
+        self.menu = None;
+        self.select(Selection::Sticker(id));
+        let (ti, bi) = (self.title_input.clone(), self.body_input.clone());
+        // A new note starts on its title; an existing one on its text.
+        let to_title = is_new;
+        window.defer(cx, move |window, cx| {
+            if to_title {
+                ti.update(cx, |i, cx| i.focus(window, cx));
+            } else {
+                bi.update(cx, |i, cx| i.focus(window, cx));
+            }
+        });
+        cx.notify();
+    }
+
+    /// Ends typing: keeps the text (an empty new note goes away).
+    pub fn finish_edit(&mut self, cx: &mut Context<Self>) {
         let Some(ed) = self.editing.take() else { return };
         let title = self.title_input.read(cx).value().trim().to_string();
         let body = self.body_input.read(cx).value().trim_end().to_string();
         let before = self.before.take().unwrap_or_else(|| self.board.clone());
-        let sheet = self.board.sheet_mut();
-        match ed.target {
-            Selection::Sticker(id) => {
-                if let Some(s) = sheet.sticker_mut(id) {
+        let t = now();
+        let empty = title.is_empty() && body.trim().is_empty();
+        if let Some(ix) = self.board.sheet_of(ed.id) {
+            let sheet = &mut self.board.categories[ix];
+            let keep = sheet.sticker(ed.id).is_some_and(|s| s.image.is_some() || s.link.is_some());
+            if ed.is_new && empty && !keep {
+                sheet.remove_sticker(ed.id);
+                self.selection.clear();
+            } else if let Some(s) = sheet.sticker_mut(ed.id) {
+                if s.title != title || s.body != body {
                     s.title = title;
                     s.body = body;
-                    s.paper = ed.paper;
-                    s.text_size = ed.text_size;
-                    s.image = ed.image;
-                    s.edited = now();
-                }
-            }
-            Selection::Label(id) => {
-                if body.trim().is_empty() {
-                    sheet.labels.retain(|l| l.id != id);
-                } else if let Some(l) = sheet.labels.iter_mut().find(|l| l.id == id) {
-                    l.text = body;
-                    l.ink = ed.ink;
+                    s.edited = t;
                 }
             }
         }
         self.commit(before, cx);
-        window.focus(&self.focus, cx);
         cx.notify();
     }
 
-    pub fn cancel_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ed) = self.editing.take() else { return };
-        if ed.is_new {
-            if let Some(before) = self.before.take() {
-                self.board = before;
-                self.selected = None;
+    /// Changes note `id` as one undoable step (also while typing into it).
+    pub fn change_note(&mut self, id: Id, cx: &mut Context<Self>, f: impl FnOnce(&mut Sticker)) {
+        let t = now();
+        if self.editing.is_some() {
+            // The edit's snapshot covers it.
+            if let Some(s) = self.board.find_note_mut(id) {
+                f(s);
+                s.edited = t;
             }
+            self.desktop_sync(cx);
+            cx.notify();
+            return;
         }
-        self.before = None;
-        window.focus(&self.focus, cx);
+        self.change(cx, |b| {
+            if let Some(s) = b.find_note_mut(id) {
+                f(s);
+                s.edited = t;
+            }
+        });
+    }
+
+    pub fn toggle_task(&mut self, id: Id, n: usize, cx: &mut Context<Self>) {
+        if self.board.find_note(id).is_some_and(|s| s.locked) {
+            return;
+        }
+        self.change_note(id, cx, |s| s.body = toggle_task(&s.body, n));
+    }
+
+    /// Adds a task line to the note being typed into, or to `id`.
+    pub fn add_task(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.map(|e| e.id) == Some(id) {
+            let v = self.body_input.read(cx).value().to_string();
+            let sep = if v.is_empty() || v.ends_with('\n') { "" } else { "\n" };
+            self.body_input.update(cx, |i, cx| {
+                i.set_value(format!("{v}{sep}- [ ] "), window, cx);
+                i.focus(window, cx);
+            });
+        } else {
+            self.change_note(id, cx, |s| {
+                let sep = if s.body.is_empty() || s.body.ends_with('\n') { "" } else { "\n" };
+                s.body = format!("{}{sep}- [ ] New task", s.body);
+            });
+        }
+    }
+
+    pub fn delete_selection(&mut self, cx: &mut Context<Self>) {
+        if self.selection.is_empty() {
+            return;
+        }
+        let sel = std::mem::take(&mut self.selection);
+        let t = now();
+        let notes = sel.iter().filter(|s| matches!(s, Selection::Sticker(_))).count();
+        self.change(cx, |b| {
+            for s in &sel {
+                match *s {
+                    Selection::Sticker(id) => {
+                        b.bin_note(id, false, t);
+                    }
+                    Selection::Label(id) => b.sheet_mut().labels.retain(|l| l.id != id),
+                    Selection::Frame(id) => b.sheet_mut().frames.retain(|f| f.id != id),
+                }
+            }
+        });
+        if notes > 0 {
+            let what = if notes == 1 { "Note".to_string() } else { format!("{notes} notes") };
+            self.notify(format!("{what} moved to Trash · {} to undo", shortcut("Z")), cx);
+        }
+    }
+
+    pub fn bin_note(&mut self, id: Id, archived: bool, cx: &mut Context<Self>) {
+        self.menu = None;
+        if self.editing.map(|e| e.id) == Some(id) {
+            self.finish_edit(cx);
+        }
+        let t = now();
+        self.change(cx, |b| {
+            b.bin_note(id, archived, t);
+        });
+        self.selection.retain(|s| *s != Selection::Sticker(id));
+        let what = if archived { "Archived" } else { "Moved to Trash" };
+        self.notify(format!("{what} · {} to undo", shortcut("Z")), cx);
+    }
+
+    pub fn duplicate_selection(&mut self, cx: &mut Context<Self>) {
+        let ids = self.selected_notes();
+        if ids.is_empty() {
+            return;
+        }
+        let mut new = Vec::new();
+        let t = now();
+        self.change(cx, |b| {
+            for id in ids {
+                let nid = b.fresh_id();
+                let sheet = b.sheet_mut();
+                if let Some(mut s) = sheet.sticker(id).cloned() {
+                    s.id = nid;
+                    s.rect.x += 24.;
+                    s.rect.y += 24.;
+                    s.edited = t;
+                    s.popped = None;
+                    s.due = None;
+                    s.reminded = false;
+                    sheet.stickers.push(s);
+                    new.push(Selection::Sticker(nid));
+                }
+            }
+        });
+        self.selection = new;
+    }
+
+    pub fn move_note_to(&mut self, id: Id, to: usize, cx: &mut Context<Self>) {
+        self.menu = None;
+        let name = self.board.categories.get(to).map(|c| c.name.clone()).unwrap_or_default();
+        let mut ok = false;
+        self.change(cx, |b| ok = b.move_note(id, to));
+        if ok {
+            self.selection.retain(|s| *s != Selection::Sticker(id));
+            self.notify(format!("Moved to “{name}”"), cx);
+        }
+    }
+
+    pub fn set_reminder(&mut self, id: Id, due: Option<u64>, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.change_note(id, cx, |s| {
+            s.due = due;
+            s.reminded = false;
+        });
+        if let Some(d) = due {
+            self.notify(format!("Reminder set · {}", time::due_label(d, now())), cx);
+        }
+    }
+
+    pub fn copy_note(&mut self, id: Id, cx: &mut Context<Self>) {
+        self.menu = None;
+        if let Some(s) = self.board.find_note(id) {
+            cx.write_to_clipboard(ClipboardItem::new_string(s.text()));
+            self.notify("Copied as text", cx);
+        }
+    }
+
+    /// Lays the selected notes (or every note) out in tidy rows.
+    pub fn tidy(&mut self, cx: &mut Context<Self>) {
+        self.menu = None;
+        let mut ids = self.selected_notes();
+        if ids.len() < 2 {
+            ids = self.sheet().stickers.iter().map(|s| s.id).collect();
+        }
+        let heights = self.heights.borrow().clone();
+        self.change(cx, |b| {
+            b.sheet_mut().tidy(&ids, &|s: &Sticker| {
+                if s.fixed {
+                    s.rect.h
+                } else {
+                    s.rect.h.max(heights.get(&s.id).copied().unwrap_or(0.))
+                }
+            })
+        });
+        self.zoom_to_fit(cx);
+    }
+
+    /// Starts writing a label on the sheet at `at` (world).
+    pub fn new_label_at(&mut self, at: Vec2, window: &mut Window, cx: &mut Context<Self>) {
+        let before = self.board.clone();
+        let id = self.board.fresh_id();
+        let ink = self.ink;
+        self.board.sheet_mut().labels.push(Label { id, at: v2(at.x, at.y - 11.), text: String::new(), ink });
+        self.before = Some(before);
+        self.select(Selection::Label(id));
+        self.edit_label(id, true, window, cx);
+    }
+
+    pub fn edit_label(&mut self, id: Id, is_new: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(l) = self.sheet().labels.iter().find(|l| l.id == id) else { return };
+        let (text, ink) = (l.text.clone(), l.ink);
+        if self.before.is_none() {
+            self.before = Some(self.board.clone());
+        }
+        self.dialog = Some(Dialog::Label { id, is_new, ink });
+        self.menu = None;
+        self.dialog_body.update(cx, |i, cx| i.set_value(text, window, cx));
+        let input = self.dialog_body.clone();
+        window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
         cx.notify();
     }
 
-    pub fn delete_from_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ed) = self.editing.take() else { return };
-        let before = self.before.take().unwrap_or_else(|| self.board.clone());
-        match ed.target {
-            Selection::Sticker(id) => self.board.sheet_mut().remove_sticker(id),
-            Selection::Label(id) => self.board.sheet_mut().labels.retain(|l| l.id != id),
-        }
-        self.selected = None;
-        self.commit(before, cx);
-        window.focus(&self.focus, cx);
-        if !ed.is_new {
-            self.notify(format!("Deleted · {} to undo", shortcut("Z")), cx);
-        }
+    pub fn rename_frame(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(f) = self.sheet().frames.iter().find(|f| f.id == id) else { return };
+        let title = f.title.clone();
+        self.dialog = Some(Dialog::RenameFrame(id));
+        self.menu = None;
+        self.dialog_input.update(cx, |i, cx| i.set_value(title, window, cx));
+        let input = self.dialog_input.clone();
+        window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
         cx.notify();
     }
 
-    /// Asks for a picture and puts it on the sticker being edited.
-    pub fn pick_image(&mut self, cx: &mut Context<Self>) {
+    /// Asks for a picture and puts it on note `id`.
+    pub fn pick_image(&mut self, id: Id, cx: &mut Context<Self>) {
+        self.menu = None;
         let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -531,16 +1038,11 @@ impl Folio {
                     this.notify("That file isn't a picture Folio can show", cx);
                     return;
                 }
-                let id = this.board.fresh_id();
-                match store::import_image(&this.dir, &path, id) {
-                    Ok(name) => {
-                        if let Some(ed) = this.editing.as_mut() {
-                            ed.image = Some(name);
-                        }
-                    }
+                let file_id = this.board.fresh_id();
+                match store::import_image(&this.dir, &path, file_id) {
+                    Ok(name) => this.change_note(id, cx, |s| s.image = Some(name)),
                     Err(e) => this.notify(format!("Couldn't add the picture: {e}"), cx),
                 }
-                cx.notify();
             });
         })
         .detach();
@@ -562,20 +1064,17 @@ impl Folio {
             let id = self.board.fresh_id();
             let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
             let sticker = if store::is_image(&path) {
-                match store::import_image(&self.dir, &path, id) {
-                    Ok(file) => Some(image_sticker(id, at, file, name)),
-                    Err(_) => None,
-                }
+                store::import_image(&self.dir, &path, id).ok().map(|file| image_sticker(id, at, file, name))
             } else if is_text_file(&path) {
                 std::fs::read_to_string(&path).ok().map(|body| Sticker {
                     id,
-                    rect: Rect { x: at.x, y: at.y, w: 280., h: 220. },
+                    rect: Rect { x: at.x, y: at.y, w: 280., h: 140. },
                     paper: Paper::Plain,
                     title: name,
                     body,
-                    image: None,
                     text_size: TextSize::Small,
                     edited: now(),
+                    ..Default::default()
                 })
             } else {
                 None
@@ -593,7 +1092,8 @@ impl Folio {
         cx.notify();
     }
 
-    /// Paste: a picture becomes a picture note, text a note.
+    /// Paste: a picture becomes a picture note, a web address a link card,
+    /// other text a note.
     pub fn paste(&mut self, cx: &mut Context<Self>) {
         let Some(item) = cx.read_from_clipboard() else { return };
         let (w, h) = self.viewport_size();
@@ -605,10 +1105,11 @@ impl Folio {
                     let id = self.board.fresh_id();
                     let media = store::media_dir(&self.dir);
                     let file = format!("{id}.{}", img.format.extension());
-                    let written = std::fs::create_dir_all(&media).and_then(|_| std::fs::write(media.join(&file), &img.bytes));
+                    let written =
+                        std::fs::create_dir_all(&media).and_then(|_| std::fs::write(media.join(&file), &img.bytes));
                     if written.is_ok() {
-                        self.board.sheet_mut().stickers.push(image_sticker(id, at, file, "Pasted picture".into()));
-                        self.selected = Some(Selection::Sticker(id));
+                        self.board.sheet_mut().stickers.push(image_sticker(id, at, file, String::new()));
+                        self.select(Selection::Sticker(id));
                         self.commit(before, cx);
                     }
                     cx.notify();
@@ -624,34 +1125,73 @@ impl Folio {
                     if text.is_empty() {
                         continue;
                     }
+                    if crate::links::is_url(&text) {
+                        self.add_link(text, at, cx);
+                        return;
+                    }
                     let mut new_id = 0;
+                    let def = self.board.settings.default_paper;
                     self.change(cx, |b| {
                         new_id = b.fresh_id();
-                        let paper = next_paper(b.sheet());
+                        let paper = next_paper(b.sheet(), def);
                         b.sheet_mut().stickers.push(Sticker {
                             id: new_id,
-                            rect: Rect { x: at.x - 120., y: at.y - 90., w: 240., h: 180. },
+                            rect: Rect { x: at.x - 120., y: at.y - 60., w: 240., h: 120. },
                             paper,
-                            title: String::new(),
                             body: text,
-                            image: None,
-                            text_size: TextSize::Medium,
                             edited: now(),
+                            ..Default::default()
                         });
                     });
-                    self.selected = Some(Selection::Sticker(new_id));
+                    self.select(Selection::Sticker(new_id));
                     return;
                 }
             }
         }
     }
 
+    /// A link card for `url` at `at`; its title is fetched in the background.
+    pub fn add_link(&mut self, url: String, at: Vec2, cx: &mut Context<Self>) {
+        let mut id = 0;
+        let site = crate::links::site(&url);
+        self.change(cx, |b| {
+            id = b.fresh_id();
+            b.sheet_mut().stickers.push(Sticker {
+                id,
+                rect: Rect { x: at.x - 140., y: at.y - 50., w: 280., h: 96. },
+                paper: Paper::Plain,
+                link: Some(LinkCard { url: url.clone(), title: String::new(), site }),
+                edited: now(),
+                ..Default::default()
+            });
+        });
+        self.select(Selection::Sticker(id));
+        let task = cx.background_executor().spawn(async move { crate::links::fetch_title(&url) });
+        cx.spawn(async move |this, cx| {
+            let title = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(title) = title {
+                    // Not an undo step of its own: it completes the paste.
+                    if let Some(s) = this.board.find_note_mut(id) {
+                        if let Some(l) = s.link.as_mut() {
+                            l.title = title;
+                        }
+                    }
+                    this.schedule_save(cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     // ---------- The view ----------
 
     pub fn set_tool(&mut self, tool: Tool, cx: &mut Context<Self>) {
+        self.finish_edit(cx);
         self.tool = tool;
         if !matches!(tool, Tool::Select) {
-            self.selected = None;
+            self.selection.clear();
         }
         cx.notify();
     }
@@ -665,33 +1205,160 @@ impl Folio {
 
     pub fn zoom_to_fit(&mut self, cx: &mut Context<Self>) {
         let (w, h) = self.viewport_size();
+        let (w, h) = if w < 10. { (1000., 640.) } else { (w, h) };
+        let rects: Vec<Rect> = self.sheet().stickers.iter().map(|s| self.note_rect(s)).collect();
         let sheet = self.board.sheet_mut();
-        match sheet.content_bounds() {
-            Some(r) => sheet.camera.fit(r, w, h, 80.),
+        let all = sheet.content_bounds().into_iter().chain(rects).reduce(|a, b| a.union(&b));
+        match all {
+            Some(r) => {
+                sheet.camera.fit(r, w, h - 60., 80.);
+                sheet.camera.pan.y += 50.;
+            }
             None => sheet.camera = Camera::default(),
         }
         self.schedule_save(cx);
         cx.notify();
     }
 
-    pub fn toggle_theme(&mut self, cx: &mut Context<Self>) {
-        self.board.dark = !self.board.dark;
-        theme::set(self.board.dark, cx);
-        sync_component_theme(cx);
+    /// Selects the nearest note in a direction and brings it into view.
+    pub fn step_selection(&mut self, dx: f32, dy: f32, cx: &mut Context<Self>) {
+        let current = self.selected_notes().first().copied();
+        let next = match current {
+            Some(id) => self.sheet().neighbour(id, dx, dy),
+            None => self.sheet().stickers.first().map(|s| s.id),
+        };
+        let Some(next) = next else { return };
+        self.select(Selection::Sticker(next));
+        let (w, h) = self.viewport_size();
+        if let Some(s) = self.sheet().sticker(next) {
+            let r = self.note_rect(s);
+            let cam = self.sheet().camera;
+            let a = cam.to_screen(v2(r.x, r.y));
+            let b = cam.to_screen(v2(r.x + r.w, r.y + r.h));
+            if a.x < 40. || a.y < 80. || b.x > w - 40. || b.y > h - 100. {
+                let c = r.center();
+                let cam = &mut self.board.sheet_mut().camera;
+                cam.pan = v2(w / 2. - c.x * cam.zoom, h / 2. - c.y * cam.zoom);
+                self.schedule_save(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    // ---------- Trash, archive, backups ----------
+
+    pub fn restore_binned(&mut self, bin_id: Id, cx: &mut Context<Self>) {
+        let mut to = None;
+        self.change(cx, |b| to = b.restore(bin_id));
+        if let Some(ix) = to {
+            let name = self.board.categories[ix].name.clone();
+            self.notify(format!("Restored to “{name}”"), cx);
+        }
+    }
+
+    pub fn delete_forever(&mut self, bin_id: Id, cx: &mut Context<Self>) {
+        self.change(cx, |b| b.bin.retain(|x| x.id != bin_id));
+    }
+
+    pub fn empty_trash(&mut self, cx: &mut Context<Self>) {
+        self.change(cx, |b| b.bin.retain(|x| x.archived));
+        self.notify(format!("Trash emptied · {} to undo", shortcut("Z")), cx);
+    }
+
+    pub fn back_up_now(&mut self, cx: &mut Context<Self>) {
+        let day = time::today();
+        let _ = std::fs::remove_file(store::backup_dir(&self.dir).join(format!("{day}.json")));
+        match store::backup_daily(&self.dir, &self.board, &day) {
+            Ok(_) => self.notify(format!("Backed up · {day}"), cx),
+            Err(e) => self.notify(format!("Couldn't back up: {e}"), cx),
+        }
+    }
+
+    /// Puts a day's backup in place of the board (undoable).
+    pub fn restore_backup(&mut self, day: &str, cx: &mut Context<Self>) {
+        let Some(mut b) = store::load_backup(&self.dir, day) else {
+            self.notify("That backup couldn't be read", cx);
+            return;
+        };
+        b.settings = self.board.settings.clone();
+        self.change(cx, |board| *board = b);
+        self.selection.clear();
+        self.screen = Screen::Home;
+        self.board.at_home = true;
+        self.notify(format!("Restored the backup of {day} · {} to undo", shortcut("Z")), cx);
+    }
+
+    // ---------- Settings ----------
+
+    pub fn set_setting(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Settings)) {
+        let before = self.board.settings.clone();
+        f(&mut self.board.settings);
+        let s = self.board.settings.clone();
+        if s.theme != before.theme || s.high_contrast != before.high_contrast || s.ui_scale != before.ui_scale {
+            self.apply_theme(cx);
+        }
+        if s.start_with_windows != before.start_with_windows {
+            if let Err(e) = crate::desktop::set_start_with_windows(s.start_with_windows) {
+                self.notify(e, cx);
+            }
+        }
+        if s.quick_hotkey != before.quick_hotkey {
+            self.desktop.set_hotkey(s.quick_hotkey);
+        }
         self.schedule_save(cx);
-        cx.refresh_windows();
+        cx.notify();
+    }
+
+    // ---------- Reminders ----------
+
+    pub fn check_reminders(&mut self, cx: &mut Context<Self>) {
+        let due = self.board.take_due(now());
+        if due.is_empty() {
+            return;
+        }
+        for id in &due {
+            if let Some(s) = self.board.find_note(*id) {
+                let t = s.text();
+                let first = t.lines().find(|l| !l.trim().is_empty()).unwrap_or("A note").to_string();
+                crate::desktop::notify("Folio reminder", &first);
+                self.notify(format!("⏰ {first}"), cx);
+            }
+        }
+        self.schedule_save(cx);
+        cx.notify();
+    }
+
+    // ---------- Quick notes ----------
+
+    /// A note from the quick-note window, into the Inbox.
+    pub fn quick_note(&mut self, text: &str, cx: &mut Context<Self>) {
+        if text.trim().is_empty() {
+            return;
+        }
+        let t = now();
+        self.change(cx, |b| {
+            b.quick_note(text, t);
+        });
+        self.notify("Saved to Inbox", cx);
     }
 }
 
 impl Render for Folio {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
+        let main = match self.screen {
+            Screen::Home => self.render_home(window, cx).into_any_element(),
+            Screen::Sheet => self.render_board(window, cx).into_any_element(),
+            Screen::Settings => self.render_settings(window, cx).into_any_element(),
+            Screen::Bin => self.render_bin(window, cx).into_any_element(),
+        };
         div()
             .id("folio")
             .key_context("Folio")
             .size_full()
             .relative()
             .flex()
+            .flex_col()
             .font_family(t.font)
             .text_size(t.text.body)
             .text_color(t.colors.text)
@@ -699,48 +1366,74 @@ impl Render for Folio {
             .on_action(cx.listener(|this, _: &Undo, _, cx| this.undo(cx)))
             .on_action(cx.listener(|this, _: &Redo, _, cx| this.redo(cx)))
             .on_action(cx.listener(|this, _: &ToggleTheme, _, cx| this.toggle_theme(cx)))
-            .on_action(cx.listener(|this, _: &NewSheet, window, cx| this.new_sheet(window, cx)))
-            .on_action(cx.listener(|this, _: &NewNote, window, cx| this.new_sticker(window, cx)))
-            .on_action(cx.listener(|this, _: &NextSheet, _, cx| {
-                let n = this.board.categories.len();
-                this.switch_sheet((this.board.active + 1) % n, cx)
+            .on_action(cx.listener(|this, _: &NewSheet, window, cx| this.new_sheet_dialog(window, cx)))
+            .on_action(cx.listener(|this, _: &NewNote, window, cx| this.new_note(window, cx)))
+            .on_action(cx.listener(|this, _: &NextSheet, window, cx| this.next_sheet(1, window, cx)))
+            .on_action(cx.listener(|this, _: &PrevSheet, window, cx| this.next_sheet(-1, window, cx)))
+            .on_action(cx.listener(|this, _: &GoHome, _, cx| this.go_home(cx)))
+            .on_action(cx.listener(|this, _: &ToggleDrawer, _, cx| {
+                this.drawer = !this.drawer;
+                cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &PrevSheet, _, cx| {
-                let n = this.board.categories.len();
-                this.switch_sheet((this.board.active + n - 1) % n, cx)
-            }))
+            .on_action(cx.listener(|this, _: &OpenPalette, window, cx| this.open_palette(window, cx)))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                this.finish_edit(cx);
                 this.search_input.update(cx, |i, cx| i.focus(window, cx));
             }))
+            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(cx)))
+            .on_action(cx.listener(|_, _: &QuickNote, _, cx| crate::desktop::open_quick_note(cx.entity(), cx)))
             .on_action(cx.listener(|this, _: &Quit, _, cx| {
+                this.finish_edit(cx);
                 this.save_now(cx);
                 cx.quit();
             }))
-            .child(self.render_sidebar(window, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(self.render_topbar(window, cx))
-                    .child(self.render_board(window, cx)),
-            )
-            .children(self.editing.is_some().then(|| self.render_editor(window, cx)))
+            .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
+                if this.editing.is_some() {
+                    this.finish_edit(cx);
+                    window.focus(&this.focus, cx);
+                } else if this.palette {
+                    this.close_palette(window, cx);
+                } else if this.menu.is_some() {
+                    this.menu = None;
+                } else if this.dialog.is_some() {
+                    this.dialog_cancel(window, cx);
+                } else if this.drawer {
+                    this.drawer = false;
+                } else if let Some(i) = this.intro.as_mut() {
+                    i.skip();
+                }
+                cx.notify();
+            }))
+            .child(self.render_topbar(window, cx))
+            .child(div().flex_1().min_h_0().relative().flex().flex_col().child(main))
+            .child(self.render_drawer(window, cx))
+            .children(self.dialog.is_some().then(|| self.render_dialog(window, cx)))
+            .children(self.palette.then(|| self.render_palette(window, cx)))
+            .children(self.menu.is_some().then(|| self.render_menu(window, cx)))
             .children(self.toast.clone().map(|msg| toast(&t, msg)))
+            .children(self.intro.is_some().then(|| self.render_intro(window, cx)))
     }
 }
 
-pub fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+pub fn is_dark(a: gpui::WindowAppearance) -> bool {
+    matches!(a, gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark)
 }
 
-/// The paper after the newest sticker's, so a run of new notes alternates.
-fn next_paper(sheet: &Category) -> Paper {
-    let last = sheet.stickers.last().map(|s| s.paper).unwrap_or(Paper::Plain);
+/// Emoji offered for sheets.
+pub const SHEET_ICONS: [&str; 16] =
+    ["🎨", "🏠", "📚", "🌱", "✈️", "💼", "💡", "🧪", "🍳", "🎯", "📝", "🎵", "🏃", "💰", "🗓️", "⭐"];
+
+fn template_default_name(t: Template) -> String {
+    match t {
+        Template::Blank => "Untitled sheet".into(),
+        other => other.name().into(),
+    }
+}
+
+/// The paper after the newest note's, so a run of new notes alternates;
+/// the first follows the default.
+fn next_paper(sheet: &Category, default: Paper) -> Paper {
+    let Some(last) = sheet.stickers.last().map(|s| s.paper) else { return default };
     let i = Paper::ALL.iter().position(|p| *p == last).unwrap_or(0);
     Paper::ALL[(i + 1) % (Paper::ALL.len() - 1)]
 }
@@ -748,13 +1441,13 @@ fn next_paper(sheet: &Category) -> Paper {
 fn image_sticker(id: Id, at: Vec2, file: String, title: String) -> Sticker {
     Sticker {
         id,
-        rect: Rect { x: at.x, y: at.y, w: 240., h: 220. },
+        rect: Rect { x: at.x, y: at.y, w: 240., h: 200. },
         paper: Paper::Plain,
         title,
-        body: String::new(),
         image: Some(file),
-        text_size: TextSize::Medium,
+        fixed: true,
         edited: now(),
+        ..Default::default()
     }
 }
 
