@@ -65,6 +65,35 @@ pub fn save(dir: &Path, board: &Board) -> std::io::Result<()> {
     std::fs::rename(&tmp, board_file(dir))
 }
 
+/// Undo steps kept on disk, so undo works after a restart.
+pub const HISTORY_KEPT: usize = 30;
+
+/// Writes the newest undo steps to `history.json`.
+pub fn save_history(dir: &Path, undo: &[Board]) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let keep = &undo[undo.len().saturating_sub(HISTORY_KEPT)..];
+    let text = serde_json::to_string(keep).map_err(std::io::Error::other)?;
+    let tmp = dir.join("history.json.tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, dir.join("history.json"))
+}
+
+/// The undo steps from the last session (none if unreadable).
+pub fn load_history(dir: &Path) -> Vec<Board> {
+    std::fs::read_to_string(dir.join("history.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<Board>>(&t).ok())
+        .map(|v| {
+            v.into_iter()
+                .map(|mut b| {
+                    b.normalize();
+                    b
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn backup_dir(dir: &Path) -> PathBuf {
     dir.join("backups")
 }
@@ -181,6 +210,21 @@ mod tests {
         assert_eq!(days.len(), BACKUPS_KEPT);
         assert_eq!(days[0], "2026-10-16");
         assert_eq!(load_backup(&dir, "2026-10-10"), Some(board));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_history_survives_a_restart() {
+        let dir = temp_dir("history");
+        let steps: Vec<Board> = (0..40).map(|i| {
+            let mut b = demo::board();
+            b.next_id += i;
+            b
+        }).collect();
+        save_history(&dir, &steps).unwrap();
+        let back = load_history(&dir);
+        assert_eq!(back.len(), HISTORY_KEPT);
+        assert_eq!(back.last(), steps.last());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

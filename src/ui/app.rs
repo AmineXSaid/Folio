@@ -145,7 +145,7 @@ pub struct Menu {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialog {
-    NewSheet { accent: Accent, icon: &'static str, template: Template },
+    NewSheet { icon: &'static str, template: Template },
     RenameSheet(Id),
     Label { id: Id, is_new: bool, ink: Ink },
     RenameFrame(Id),
@@ -183,6 +183,12 @@ pub struct Folio {
     pub gesture: Gesture,
     /// Alignment guides while moving: (vertical?, world coordinate).
     pub guides: Vec<(bool, f32)>,
+    /// Notes just dropped, and when: they settle with a small bounce.
+    pub settling: Vec<(Id, Instant)>,
+    /// Dragging notes over the left edge: the tray of sheets, and the one
+    /// under the pointer.
+    pub drop_tray: bool,
+    pub drop_sheet: Option<usize>,
     /// The undo snapshot taken when the current gesture began.
     pub before: Option<Board>,
     pub selection: Vec<Selection>,
@@ -203,9 +209,13 @@ pub struct Folio {
     pub dialog: Option<Dialog>,
     pub palette: bool,
     pub palette_ix: usize,
+    /// The emoji picker's tab.
+    pub emoji_tab: usize,
     pub intro: Option<Intro>,
     pub sort: Sort,
     pub bin_tab: BinTab,
+    /// The backup whose sheets are listed: (day, [(id, name, notes, icon)]).
+    pub backup_open: Option<(String, Vec<(Id, String, usize, String)>)>,
     pub toast: Option<SharedString>,
     pub saved: bool,
     /// The OS's light/dark, when the theme follows it.
@@ -302,6 +312,9 @@ impl Folio {
             ink: Ink::Graphite,
             gesture: Gesture::None,
             guides: Vec::new(),
+            settling: Vec::new(),
+            drop_tray: false,
+            drop_sheet: None,
             before: None,
             selection: Vec::new(),
             hovered: None,
@@ -309,16 +322,18 @@ impl Folio {
             cursor: v2(0., 0.),
             viewport: Rc::new(Cell::new(Bounds::default())),
             heights: Rc::new(RefCell::new(HashMap::new())),
-            undo: Vec::new(),
+            undo: store::load_history(&store::data_dir()),
             redo: Vec::new(),
             editing: None,
             menu: None,
             dialog: None,
             palette: false,
             palette_ix: 0,
+            emoji_tab: 0,
             intro,
             sort: Sort::Recent,
             bin_tab: BinTab::Trash,
+            backup_open: None,
             toast: None,
             saved: true,
             system_dark: is_dark(window.appearance()),
@@ -494,6 +509,7 @@ impl Folio {
 
     pub fn save_now(&mut self, cx: &mut Context<Self>) {
         self.save_task = None;
+        let _ = store::save_history(&self.dir, &self.undo);
         match store::save(&self.dir, &self.board) {
             Ok(()) => self.saved = true,
             Err(e) => self.notify(format!("Couldn't save: {e}"), cx),
@@ -589,11 +605,7 @@ impl Folio {
 
     pub fn new_sheet_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let n = self.board.categories.len();
-        self.dialog = Some(Dialog::NewSheet {
-            accent: Accent::ALL[n % Accent::ALL.len()],
-            icon: SHEET_ICONS[n % SHEET_ICONS.len()],
-            template: Template::Blank,
-        });
+        self.dialog = Some(Dialog::NewSheet { icon: super::emoji::default_icon(n), template: Template::Blank });
         self.menu = None;
         self.drawer = false;
         self.dialog_input.update(cx, |i, cx| {
@@ -619,11 +631,11 @@ impl Folio {
         let Some(d) = self.dialog.take() else { return };
         let name = self.dialog_input.read(cx).value().trim().to_string();
         match d {
-            Dialog::NewSheet { accent, icon, template } => {
+            Dialog::NewSheet { icon, template } => {
                 let name = if name.is_empty() { template_default_name(template) } else { name };
                 let t = now();
                 self.change(cx, |b| {
-                    b.add_from_template(&name, template, accent, t);
+                    b.add_from_template(&name, template, Accent::Slate, t);
                     b.sheet_mut().icon = icon.into();
                 });
                 let ix = self.board.active;
@@ -689,32 +701,10 @@ impl Folio {
     pub fn duplicate_sheet(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.menu = None;
         self.change(cx, |b| {
-            let Some(mut c) = b.categories.get(ix).cloned() else { return };
-            c.id = b.fresh_id();
-            c.name = format!("{} copy", c.name);
-            c.inbox = false;
-            c.pinned = false;
-            let mut map = HashMap::new();
-            for s in &mut c.stickers {
-                let n = b.fresh_id();
-                map.insert(s.id, n);
-                s.id = n;
-                s.popped = None;
-            }
-            for l in &mut c.links {
-                l.id = b.fresh_id();
-                l.from = map[&l.from];
-                l.to = map[&l.to];
-            }
-            for x in &mut c.strokes {
-                x.id = b.fresh_id();
-            }
-            for x in &mut c.labels {
-                x.id = b.fresh_id();
-            }
-            for x in &mut c.frames {
-                x.id = b.fresh_id();
-            }
+            let Some(c) = b.categories.get(ix).cloned() else { return };
+            let name = format!("{} copy", c.name);
+            let at = b.adopt_sheet(c, name);
+            let c = b.categories.remove(at);
             b.categories.insert(ix + 1, c);
         });
     }
@@ -1170,26 +1160,41 @@ impl Folio {
                 id,
                 rect: Rect { x: at.x - 140., y: at.y - 50., w: 280., h: 96. },
                 paper: Paper::Plain,
-                link: Some(LinkCard { url: url.clone(), title: String::new(), site }),
+                link: Some(LinkCard { url: url.clone(), title: String::new(), site, icon: None }),
                 edited: now(),
                 ..Default::default()
             });
         });
         self.select(Selection::Sticker(id));
-        let task = cx.background_executor().spawn(async move { crate::links::fetch_title(&url) });
+        let task = cx.background_executor().spawn(async move { crate::links::fetch_page(&url) });
         cx.spawn(async move |this, cx| {
-            let title = task.await;
+            let page = task.await;
             let _ = this.update(cx, |this, cx| {
-                if let Some(title) = title {
-                    // Not an undo step of its own: it completes the paste.
-                    if let Some(s) = this.board.find_note_mut(id) {
-                        if let Some(l) = s.link.as_mut() {
-                            l.title = title;
-                        }
+                // Not an undo step of its own: it completes the paste.
+                let media = store::media_dir(&this.dir);
+                let _ = std::fs::create_dir_all(&media);
+                let save = |this: &mut Folio, file: Option<(Vec<u8>, String)>| {
+                    let (bytes, ext) = file?;
+                    let name = format!("{}.{ext}", this.board.fresh_id());
+                    std::fs::write(media.join(&name), bytes).ok()?;
+                    Some(name)
+                };
+                let image = save(this, page.image);
+                let icon = save(this, page.icon);
+                if let Some(s) = this.board.find_note_mut(id) {
+                    if image.is_some() {
+                        s.image = image;
+                        s.rect.h = s.rect.h.max(200.);
                     }
-                    this.schedule_save(cx);
-                    cx.notify();
+                    if let Some(l) = s.link.as_mut() {
+                        if let Some(t) = page.title {
+                            l.title = t;
+                        }
+                        l.icon = icon;
+                    }
                 }
+                this.schedule_save(cx);
+                cx.notify();
             });
         })
         .detach();
@@ -1282,6 +1287,31 @@ impl Folio {
             Ok(_) => self.notify(format!("Backed up · {day}"), cx),
             Err(e) => self.notify(format!("Couldn't back up: {e}"), cx),
         }
+    }
+
+    /// Lists (or hides) the sheets in a day's backup.
+    pub fn toggle_backup(&mut self, day: &str, cx: &mut Context<Self>) {
+        if self.backup_open.as_ref().is_some_and(|(d, _)| d == day) {
+            self.backup_open = None;
+        } else if let Some(b) = store::load_backup(&self.dir, day) {
+            let sheets = b.categories.iter().map(|c| (c.id, c.name.clone(), c.stickers.len(), c.icon.clone())).collect();
+            self.backup_open = Some((day.to_string(), sheets));
+        }
+        cx.notify();
+    }
+
+    /// Brings back one sheet as it was in a day's backup, as a new sheet
+    /// beside the others (undoable).
+    pub fn restore_backup_sheet(&mut self, day: &str, sheet: Id, cx: &mut Context<Self>) {
+        let Some(c) = store::load_backup(&self.dir, day).and_then(|b| b.categories.into_iter().find(|c| c.id == sheet)) else {
+            self.notify("That backup couldn't be read", cx);
+            return;
+        };
+        let name = format!("{} ({day})", c.name);
+        self.change(cx, |b| {
+            b.adopt_sheet(c, name.clone());
+        });
+        self.notify(format!("Restored “{name}”"), cx);
     }
 
     /// Puts a day's backup in place of the board (undoable).
@@ -1436,10 +1466,6 @@ impl Render for Folio {
 pub fn is_dark(a: gpui::WindowAppearance) -> bool {
     matches!(a, gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark)
 }
-
-/// Emoji offered for sheets.
-pub const SHEET_ICONS: [&str; 16] =
-    ["🎨", "🏠", "📚", "🌱", "✈️", "💼", "💡", "🧪", "🍳", "🎯", "📝", "🎵", "🏃", "💰", "🗓️", "⭐"];
 
 fn template_default_name(t: Template) -> String {
     match t {

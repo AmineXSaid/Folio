@@ -99,7 +99,33 @@ impl Folio {
             BinTab::Backups => {
                 for day in store::backups(&self.dir) {
                     let d = day.clone();
+                    let d2 = day.clone();
+                    let open = self.backup_open.as_ref().filter(|(o, _)| *o == day).map(|(_, sheets)| sheets.clone());
+                    let sheets = open.clone().unwrap_or_default().into_iter().map(|(sid, name, n, icon)| {
+                        let d = day.clone();
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(t.space.md)
+                            .pl(px(40.))
+                            .child(div().w(px(22.)).child(icon))
+                            .child(div().flex_1().child(format!("{name} · {n} notes")))
+                            .child(
+                                secondary_button(gpui::ElementId::Name(format!("rs-{day}-{sid}").into()), "Restore this sheet", &t)
+                                    .on_click(cx.listener(move |this, _, _, cx| this.restore_backup_sheet(&d, sid, cx))),
+                            )
+                    });
                     rows.push(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(t.space.sm)
+                            .p(t.space.md)
+                            .rounded(t.radius.card)
+                            .bg(t.colors.surface)
+                            .border_1()
+                            .border_color(t.colors.border)
+                            .child(
                         div()
                             .flex()
                             .items_center()
@@ -112,9 +138,19 @@ impl Folio {
                             .child(icon("icons/hard-drive-download.svg", t.size.icon, t.colors.text_muted))
                             .child(div().flex_1().child(format!("Backup of {day}")))
                             .child(
-                                secondary_button(gpui::ElementId::Name(format!("restore-{day}").into()), "Restore this day", &t)
-                                    .on_click(cx.listener(move |this, _, _, cx| this.restore_backup(&d, cx))),
+                                secondary_button(
+                                    gpui::ElementId::Name(format!("sheets-{day}").into()),
+                                    if open.is_some() { "Hide sheets" } else { "Pick a sheet…" },
+                                    &t,
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| this.toggle_backup(&d2, cx))),
                             )
+                            .child(
+                                secondary_button(gpui::ElementId::Name(format!("restore-{day}").into()), "Restore everything", &t)
+                                    .on_click(cx.listener(move |this, _, _, cx| this.restore_backup(&d, cx))),
+                            ),
+                            )
+                            .children(sheets)
                             .into_any_element(),
                     );
                 }

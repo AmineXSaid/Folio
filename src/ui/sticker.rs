@@ -30,6 +30,7 @@ pub fn note_body(
     s: &Sticker,
     k: f32,
     t: &Theme,
+    media: &std::path::Path,
     md_ids: Option<u64>,
     on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
 ) -> Vec<AnyElement> {
@@ -49,7 +50,10 @@ pub fn note_body(
                         .gap(px(6. * k))
                         .text_size(px(11. * k))
                         .text_color(t.colors.text_subtle)
-                        .child(icon("icons/globe.svg", px(12. * k), t.colors.text_subtle))
+                        .child(match &l.icon {
+                            Some(name) => img(media.join(name)).size(px(14. * k)).rounded(px(3.)).into_any_element(),
+                            None => icon("icons/globe.svg", px(12. * k), t.colors.text_subtle).into_any_element(),
+                        })
                         .child(l.site.clone()),
                 )
                 .child(
@@ -167,6 +171,17 @@ pub fn note_body(
 }
 
 impl Folio {
+    /// How far (screen px) note `id` is from rest as it settles after a
+    /// drop: a quick, damped bounce over a third of a second.
+    fn settle_offset(&self, id: Id) -> f32 {
+        let Some(start) = self.settling.iter().find(|x| x.0 == id).map(|x| x.1) else { return 0. };
+        let t = start.elapsed().as_secs_f32();
+        if t > 0.35 || self.board.settings.reduce_motion {
+            return 0.;
+        }
+        -4. * (-9. * t).exp() * (22. * t).cos()
+    }
+
     pub(super) fn render_sticker(&self, s: &Sticker, cam: Camera, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let z = cam.zoom;
         let r = self.note_rect(s);
@@ -194,7 +209,7 @@ impl Folio {
         let me = cx.entity();
         let toggle = move |n: usize, _: &mut Window, cx: &mut App| me.update(cx, |f, cx| f.toggle_task(id, n, cx));
         let content: Vec<AnyElement> = if detail {
-            note_body(s, k, t, None, toggle)
+            note_body(s, k, t, &crate::store::media_dir(&self.dir), None, toggle)
         } else {
             vec![div()
                 .text_size(px(15. / DETAIL_ZOOM * z))
@@ -244,6 +259,11 @@ impl Folio {
         let measured = self.heights.clone();
         let natural = self.heights.borrow().get(&s.id).copied().unwrap_or(0.);
         let cut = s.fixed && natural > s.rect.h + 1.;
+        let lines = ((natural - s.rect.h) / (20. * size_factor(s.text_size))).ceil().max(1.) as usize;
+        let more_label = format!("+{lines} more line{}", if lines == 1 { "" } else { "s" });
+        // Dropped notes settle with a small bounce; picked-up ones lift.
+        let settle = self.settle_offset(s.id);
+        let lift = if lifted { -3. } else { 0. };
         let measure = canvas(
             move |b, window, _| {
                 let h = f32::from(b.size.height) / z;
@@ -290,15 +310,18 @@ impl Folio {
         let edge = if t.is_dark { t.colors.border } else { gpui::hsla(0., 0., 0., 0.04) };
         let paper = t.paper(s.paper);
 
+        // A faint sheen, lighter at the top, so the paper isn't flat.
+        let mut top = paper;
+        top.l = (top.l + if t.is_dark { 0.03 } else { 0.022 }).min(1.);
         div()
             .absolute()
             .left(px(at.x))
-            .top(px(at.y))
+            .top(px(at.y + lift + settle))
             .w(px(r.w * z))
             .when(s.fixed, |d| d.h(px(s.rect.h * z)))
             .when(!s.fixed, |d| d.min_h(px(s.rect.h * z)))
             .rounded(px(12. * z))
-            .bg(paper)
+            .bg(gpui::linear_gradient(180., gpui::linear_color_stop(top, 0.), gpui::linear_color_stop(paper, 0.6)))
             .border_1()
             .border_color(edge)
             .shadow(shadow)
@@ -324,7 +347,7 @@ impl Folio {
                         .pb(px(4. * z))
                         .text_size(px(10.5 * z))
                         .text_color(t.colors.text_subtle)
-                        .child("more ↓"),
+                        .child(more_label),
                 )
             })
             .when(s.locked, |d| d.child(div().absolute().top(px(6. * z)).right(px(6. * z)).child(icon("icons/lock.svg", px(12. * z.max(0.8)), t.colors.text_subtle))))

@@ -7,7 +7,7 @@ use gpui::{div, prelude::*, px, Context, Entity, MouseButton, Window};
 use super::app::Folio;
 use super::sticker::note_body;
 use super::*;
-use crate::model::{Id, Popped};
+use crate::model::Id;
 use crate::theme::theme;
 
 pub struct NoteWindow {
@@ -23,17 +23,13 @@ impl NoteWindow {
             // Remember where it was moved to.
             cx.observe_window_bounds(window, |this, window, cx| {
                 let b = window.bounds();
-                let p = Popped {
-                    x: f32::from(b.origin.x),
-                    y: f32::from(b.origin.y),
-                    w: f32::from(b.size.width),
-                    h: f32::from(b.size.height),
-                };
+                let (x, y) = (f32::from(b.origin.x), f32::from(b.origin.y));
+                let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
                 let id = this.id;
                 this.folio.update(cx, |f, cx| {
-                    if let Some(s) = f.board.find_note_mut(id) {
-                        if s.popped.is_some() && s.popped != Some(p) {
-                            s.popped = Some(p);
+                    if let Some(p) = f.board.find_note_mut(id).and_then(|s| s.popped.as_mut()) {
+                        if (p.x, p.y, p.w, p.h) != (x, y, w, h) {
+                            (p.x, p.y, p.w, p.h) = (x, y, w, h);
                             f.schedule_save(cx);
                         }
                     }
@@ -55,8 +51,11 @@ impl Render for NoteWindow {
         let toggle = move |n: usize, _: &mut Window, cx: &mut gpui::App| {
             folio.update(cx, |f, cx| f.toggle_task(id, n, cx));
         };
-        let body = note_body(&s, 1.0, &t, None, toggle);
-        let (f_open, f_dock) = (self.folio.clone(), self.folio.clone());
+        let media = crate::store::media_dir(&self.folio.read(cx).dir);
+        let body = note_body(&s, 1.0, &t, &media, None, toggle);
+        let (f_open, f_dock, f_see) = (self.folio.clone(), self.folio.clone(), self.folio.clone());
+        let see_through = s.popped.is_some_and(|p| p.see_through);
+        let paper = t.paper(s.paper);
         div()
             .size_full()
             .child(
@@ -64,7 +63,10 @@ impl Render for NoteWindow {
                     .size_full()
                     .flex()
                     .flex_col()
-                    .bg(t.paper(s.paper))
+                    .id("paper")
+                    .bg(if see_through { paper.opacity(0.5) } else { paper })
+                    // Solid again under the pointer, to read and tick.
+                    .hover(move |d| d.bg(paper))
                     .border_1()
                     .border_color(t.colors.border)
                     .overflow_hidden()
@@ -104,6 +106,28 @@ impl Render for NoteWindow {
                                                 fo.update(cx, |f, cx| f.reveal_note(id, w, cx));
                                             });
                                         }
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id("see")
+                                    .size(px(22.))
+                                    .rounded(px(6.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(gpui::hsla(0., 0., 0., 0.08)))
+                                    .child(icon(if see_through { "icons/eye-off.svg" } else { "icons/eye.svg" }, px(13.), t.colors.text_muted))
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                    .on_click(move |_, _, cx| {
+                                        f_see.update(cx, |f, cx| {
+                                            if let Some(p) = f.board.find_note_mut(id).and_then(|s| s.popped.as_mut()) {
+                                                p.see_through = !p.see_through;
+                                            }
+                                            f.schedule_save(cx);
+                                            cx.notify();
+                                        })
                                     }),
                             )
                             .child(

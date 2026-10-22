@@ -142,6 +142,12 @@ impl Folio {
                 &t,
             ))
             .child(setting(
+                "Snap to the grid",
+                "Dropped notes line up with the sheet's dots",
+                switch("s-grid", s.grid, &t).on_click(cx.listener(|this, _, _, cx| this.set_setting(cx, |s| s.grid = !s.grid))),
+                &t,
+            ))
+            .child(setting(
                 "Map",
                 "A small overview of the sheet in the corner",
                 switch("s-map", s.minimap, &t).on_click(cx.listener(|this, _, _, cx| this.set_setting(cx, |s| s.minimap = !s.minimap))),

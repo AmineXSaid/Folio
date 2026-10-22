@@ -121,7 +121,7 @@ impl Folio {
         let x = f32::from(wb.origin.x + origin.x) + at.x + 24.;
         let y = f32::from(wb.origin.y + origin.y) + at.y + 24.;
         let (w, h) = (r.w.clamp(200., 420.), (r.h + 40.).clamp(140., 520.));
-        self.change_note(id, cx, |s| s.popped = Some(Popped { x, y, w, h }));
+        self.change_note(id, cx, |s| s.popped = Some(Popped { x, y, w, h, see_through: false }));
         self.notify("Pinned to the desktop", cx);
     }
 
@@ -167,6 +167,8 @@ impl Folio {
                 focus: false,
                 show: true,
                 app_id: Some("folio".into()),
+                // So see-through notes can let the desktop show.
+                window_background: gpui::WindowBackgroundAppearance::Transparent,
                 ..Default::default()
             };
             // Opened after this update, so the window can read the board.

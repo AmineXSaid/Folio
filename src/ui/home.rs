@@ -33,7 +33,11 @@ impl Folio {
             (greet.to_string(), format!("{} sheets · {} notes", self.board.categories.len(), n_notes))
         } else {
             let hits = self.board.search(&q).len();
-            (format!("Results for “{q}”"), format!("{hits} note{} found", if hits == 1 { "" } else { "s" }))
+            let what = match q.strip_prefix("paper:") {
+                Some(p) => format!("{}{} notes", p[..1].to_uppercase(), &p[1..]),
+                None => format!("Results for “{q}”"),
+            };
+            (what, format!("{hits} note{} found", if hits == 1 { "" } else { "s" }))
         };
 
         let sort = self.sort;
@@ -68,9 +72,34 @@ impl Folio {
                 body = body.child(today);
             }
             let tags = self.board.all_tags();
-            if !tags.is_empty() {
-                body = body.child(
-                    div().flex().flex_wrap().gap(t.space.sm).children(tags.into_iter().take(14).map(|(tag, n)| {
+            // Filters: a note colour, then the tags.
+            let papers = Paper::ALL.iter().map(|&p| {
+                let q = format!("paper:{}", p.key());
+                div()
+                    .id(("paper-filter", p as usize))
+                    .size(px(28.))
+                    .rounded(t.radius.full)
+                    .bg(t.paper(p))
+                    .border_1()
+                    .border_color(t.colors.border)
+                    .cursor_pointer()
+                    .hover(|d| d.border_color(t.colors.brand))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let q = q.clone();
+                        this.search_input.update(cx, |i, cx| i.set_value(q, window, cx));
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            });
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(t.space.sm)
+                    .children(papers)
+                    .child(div().w(px(1.)).h(px(20.)).mx(t.space.xs).bg(t.colors.border))
+                    .children(tags.into_iter().take(14).map(|(tag, n)| -> gpui::AnyElement {
                         let label = format!("#{tag}");
                         let id = SharedString::from(format!("tag-{tag}"));
                         div()
@@ -95,9 +124,9 @@ impl Folio {
                                 this.search_input.update(cx, |i, cx| i.set_value(l, window, cx));
                                 cx.notify();
                             }))
+                            .into_any_element()
                     })),
-                );
-            }
+            );
             let mut order = self.board.ordered();
             if self.sort == Sort::Name {
                 order.sort_by_key(|&i| {
@@ -342,7 +371,7 @@ impl Folio {
                         .bg(t.colors.hover)
                         .text_size(t.text.micro)
                         .text_color(t.colors.text_muted)
-                        .child(div().size(px(8.)).rounded(t.radius.full).bg(t.accent(c.accent)))
+                        .when(!c.icon.is_empty(), |d| d.child(c.icon.clone()))
                         .child(c.name.clone()),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| this.reveal_note(id, window, cx)))

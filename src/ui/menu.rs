@@ -4,7 +4,7 @@
 
 use gpui::{anchored, deferred, div, prelude::*, px, Context, MouseButton, SharedString, Stateful, Div, Window};
 
-use super::app::{Folio, MenuKind, MenuPage, Screen, SHEET_ICONS};
+use super::app::{Folio, MenuKind, MenuPage, Screen};
 use super::*;
 use crate::model::*;
 use crate::theme::{theme, Theme};
@@ -203,6 +203,16 @@ impl Folio {
                             }))
                             .into_any_element(),
                     );
+                    items.push(
+                        row("m-snooze", "icons/clock.svg", "Snooze for a week", None, &t)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.menu = None;
+                                let until = now() + 7 * 86_400;
+                                this.change_note(id, cx, |s| s.snoozed = until);
+                                this.notify("Snoozed for a week", cx);
+                            }))
+                            .into_any_element(),
+                    );
                 }
                 items.push(sep(&t).into_any_element());
                 items.push(
@@ -331,8 +341,7 @@ impl Folio {
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_pin_sheet(ix, cx)))
                         .into_any_element(),
                 );
-                items.push(row("m-icon", "icons/sparkles.svg", "Icon", Some("›".into()), &t).on_click(cx.listener(goto(MenuPage::Icon))).into_any_element());
-                items.push(row("m-colour", "icons/palette.svg", "Colour", Some("›".into()), &t).on_click(cx.listener(goto(MenuPage::Colour))).into_any_element());
+                items.push(row("m-icon", "icons/face-slightly-smiling.svg", "Change emoji", Some("›".into()), &t).on_click(cx.listener(goto(MenuPage::Icon))).into_any_element());
                 items.push(
                     row("m-dup-sheet", "icons/copy.svg", "Duplicate", None, &t)
                         .on_click(cx.listener(move |this, _, _, cx| this.duplicate_sheet(ix, cx)))
@@ -352,34 +361,20 @@ impl Folio {
                 );
             }
             (MenuKind::Card(ix), MenuPage::Icon) => {
-                items.push(back("Icon", cx).into_any_element());
+                items.push(back("Change emoji", cx).into_any_element());
                 items.push(sep(&t).into_any_element());
-                let grid = div().w(px(216.)).flex().flex_wrap().gap(px(4.)).p(t.space.xs).children(
-                    std::iter::once("").chain(SHEET_ICONS.iter().copied()).enumerate().map(|(i, e)| {
-                        div()
-                            .id(("m-emoji", i))
-                            .size(px(32.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(t.radius.small)
-                            .text_size(px(17.))
-                            .cursor_pointer()
-                            .hover(|d| d.bg(t.colors.hover))
-                            .child(if e.is_empty() { "—".to_string() } else { e.to_string() })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.menu = None;
-                                this.change(cx, |b| {
-                                    if let Some(c) = b.categories.get_mut(ix) {
-                                        c.icon = e.into();
-                                    }
-                                });
-                            }))
-                    }),
-                );
-                items.push(grid.into_any_element());
+                let current = self.board.categories.get(ix).map(|c| c.icon.clone()).unwrap_or_default();
+                let picker = div().w(px(340.)).p(t.space.xs).child(self.emoji_picker(&current, &t, cx, move |this, e, cx| {
+                    this.menu = None;
+                    this.change(cx, |b| {
+                        if let Some(c) = b.categories.get_mut(ix) {
+                            c.icon = e.into();
+                        }
+                    });
+                }));
+                items.push(picker.into_any_element());
             }
-            (MenuKind::Card(_), MenuPage::Colour) | (MenuKind::Frame(_), MenuPage::Colour) => {
+            (MenuKind::Frame(_), MenuPage::Colour) => {
                 let (frame, ix) = match kind {
                     MenuKind::Frame(id) => (true, id as usize),
                     MenuKind::Card(ix) => (false, ix),
@@ -511,7 +506,7 @@ impl Folio {
                         .id("menu")
                         .occlude()
                         .min_w(px(240.))
-                        .max_w(px(300.))
+                        .max_w(px(360.))
                         .p(t.space.xs)
                         .rounded(t.radius.card)
                         .bg(t.colors.surface)

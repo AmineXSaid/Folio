@@ -15,19 +15,19 @@ and what is still to come.
 
 | Capability | Built (v0.2) | Planned |
 |---|---|---|
-| Categories as sheets, each with its own content and camera | ✅ home screen of sheet cards with live miniatures (real note titles), Recent/A–Z, pinned first; icon, colour, rename, duplicate, archive, trash; templates (Kanban, weekly planner, brainstorm, meeting notes, reading list); the drawer (hidden sidebar, Ctrl+B); Ctrl+Tab | reorder by drag |
+| Categories as sheets, each with its own content and camera | ✅ home screen of sheet cards with live miniatures (real note titles), Recent/A–Z, pinned first; an emoji from a picker of about 200 (sheets have no colours of their own), rename, duplicate, archive, trash; templates (Kanban, weekly planner, brainstorm, meeting notes, reading list); the drawer (hidden sidebar, Ctrl+B); Ctrl+Tab | reorder by drag |
 | Getting a thought down fast | ✅ Ctrl+Alt+N from any app opens a quick-note box → Inbox sheet; tray icon (Windows); start with Windows | a phone companion |
-| Notes visible outside the app | ✅ pin a note to the desktop: its own always-on-top window, ticks sync both ways, remembers where it was | see-through mode |
-| Freeform canvas | ✅ pan (wheel, Space+drag, middle-drag, Hand), zoom at the cursor, zoom to fit; box select, Shift-click, group move; alignment guides; areas that carry their notes; tidy up; arrow keys between notes; a map in the corner | grid snapping |
-| Sticker styling | ✅ 6 papers, 3 sizes, 3 fonts (sans, handwritten, mono), grow-with-text or fixed height (with a "more" fade), lock | slight tilt (needs a custom element) |
+| Notes visible outside the app | ✅ pin a note to the desktop: its own always-on-top window, ticks sync both ways, remembers where it was; see-through mode (solid again under the pointer) | |
+| Freeform canvas | ✅ pan (wheel, Space+drag, middle-drag, Hand), zoom at the cursor, zoom to fit; box select, Shift-click, group move; alignment guides; snap to the dot grid (Settings); areas that carry their notes; tidy up; arrow keys between notes; a map in the corner; drag notes to the left edge to drop them on another sheet; notes lift while dragged and settle with a small bounce | |
+| Sticker styling | ✅ 6 papers, 3 sizes, 3 fonts (sans, handwritten, mono), grow-with-text or fixed height (with a "+N more lines" fade), lock, a faint paper sheen | slight tilt: GPUI can't rotate elements, so it needs custom-drawn notes |
 | Editing | ✅ type straight on the note with a format bar (paper, font, size, task, picture, reminder, more); Esc/Done keeps it | WYSIWYG rendering while typing |
 | Tasks | ✅ `- [ ]` lines are real checkboxes you tick with a click, with a done/total chip | |
 | Coloured text | ✅ highlights (`<mark color="green">`), in tasks too | foreground colour (§4.1) |
-| Tables, images, GIFs, SVG | ✅ as before; link cards from a pasted address (page title fetched) | crop, captions; animated SVG (§4.2) |
+| Tables, images, GIFs, SVG | ✅ as before; link cards from a pasted address: the page's title, site icon and preview picture | crop, captions; animated SVG (§4.2) |
 | Reminders | ✅ presets (in an hour, this evening, tomorrow morning, Monday); Windows notification + in-app toast; Today strip on the home screen; overdue in red | custom date and time; repeat |
-| Search | ✅ every note on every sheet, by text or `#tag`; jumps to the note; tag chips on the home screen; Ctrl+K palette for commands, sheets and notes | |
+| Search | ✅ every note on every sheet, by text, `#tag` or note colour (`paper:sage`, or the colour dots on the home screen); jumps to the note; Ctrl+K palette for commands, sheets and notes | |
 | Right-click menus | ✅ note, empty sheet, area, label, sheet card; Move to sheet | |
-| Safety | ✅ undo (100 steps), Trash (30 days), Archive, a daily backup (14 kept) with restore; "untouched for weeks" hint with keep-fresh | sync |
+| Safety | ✅ undo (100 steps; the last 30 survive a restart), Trash (30 days), Archive, a daily backup (14 kept) restorable whole or one sheet at a time; "untouched for weeks" hint with keep-fresh or snooze for a week | sync |
 | Settings | ✅ theme (light/dark/follow Windows), interface size, high contrast, reduce motion, default paper and font, guides, map, opening animation, open on home/last sheet, start with Windows, quick-note shortcut, data folder, backups | |
 | Opening | ✅ animated logo intro: full the first time, short after, skippable, off in Settings | |
 

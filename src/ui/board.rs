@@ -13,6 +13,8 @@ use gpui::{
     MouseMoveEvent, PathBuilder, Pixels, ScrollWheelEvent, Window,
 };
 
+use std::time::Instant;
+
 use super::app::{Folio, Gesture, MenuKind, MenuPage, Selection, Tool};
 use super::sticker::size_factor;
 use super::*;
@@ -25,6 +27,13 @@ const GRIP_REACH: f32 = 16.;
 const SNAP: f32 = 6.;
 /// An area's title bar, in world units: press there to move the area.
 const FRAME_BAR: f32 = 40.;
+/// The "move to sheet" tray: how close to the left edge a drag must come,
+/// and its layout (sheet-local pixels).
+const TRAY_REACH: f32 = 56.;
+const TRAY_W: f32 = 240.;
+const TRAY_TOP: f32 = 12.;
+const TRAY_HEAD: f32 = 44.;
+const TRAY_ROW: f32 = 44.;
 
 /// A stroke ready to paint: screen points, colour, width.
 struct InkPath {
@@ -36,6 +45,11 @@ struct InkPath {
 impl Folio {
     pub(super) fn render_board(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
+        // Keep drawing while dropped notes settle.
+        self.settling.retain(|(_, at)| at.elapsed().as_secs_f32() < 0.4);
+        if !self.settling.is_empty() {
+            window.request_animation_frame();
+        }
         let sheet = self.sheet();
         let cam = sheet.camera;
         let (vw, vh) = self.viewport_size();
@@ -332,7 +346,8 @@ impl Folio {
                     d.top(px(at)).left_0().right_0().h(px(1.))
                 }
             }))
-            .when(empty, |d| d.child(empty_state(&t)));
+            .when(empty, |d| d.child(empty_state(&t)))
+            .when(self.drop_tray, |d| d.child(self.render_tray(&t)));
 
         let edit_layer = self.render_edit_layer(&t, window, cx);
         div()
@@ -819,7 +834,7 @@ impl Folio {
             self.release(cx);
             return;
         }
-        let snap_on = self.board.settings.snap;
+        let snap_on = self.board.settings.snap || self.board.settings.grid;
         match &mut self.gesture {
             Gesture::None => {
                 let hovered = self.note_at(world);
@@ -921,7 +936,71 @@ impl Folio {
             }
             Gesture::Connect { to, .. } => *to = world,
         }
+        // Dragging notes to the left edge offers the other sheets to drop on.
+        if let Gesture::Move { moved: true, items, .. } = &self.gesture {
+            let notes = items.iter().any(|(s, _)| matches!(s, Selection::Sticker(_)));
+            let near = notes && (at.x < TRAY_REACH || (self.drop_tray && at.x < TRAY_W + 20.));
+            self.drop_tray = near;
+            self.drop_sheet = None;
+            if near {
+                let row = ((at.y - TRAY_TOP - TRAY_HEAD) / TRAY_ROW).floor();
+                let targets = self.tray_targets();
+                if row >= 0. && (row as usize) < targets.len() && at.x < TRAY_W + 12. {
+                    self.drop_sheet = Some(targets[row as usize]);
+                }
+            }
+        }
         cx.notify();
+    }
+
+    /// The sheets a dragged note can be dropped on: every other one.
+    fn tray_targets(&self) -> Vec<usize> {
+        self.board.ordered().into_iter().filter(|&i| i != self.board.active).collect()
+    }
+
+    fn render_tray(&self, t: &Theme) -> impl IntoElement {
+        let rows = self.tray_targets().into_iter().map(|ix| {
+            let c = &self.board.categories[ix];
+            let on = self.drop_sheet == Some(ix);
+            div()
+                .h(px(TRAY_ROW - 6.))
+                .mb(px(6.))
+                .px(t.space.sm)
+                .flex()
+                .items_center()
+                .gap(t.space.sm)
+                .rounded(t.radius.button)
+                .border_1()
+                .border_color(if on { t.colors.brand } else { t.colors.border })
+                .bg(if on { t.colors.brand_tint } else { t.colors.surface })
+                .child(sheet_badge(c, 24., t))
+                .child(div().flex_1().min_w_0().truncate().text_size(t.text.body).child(c.name.clone()))
+        });
+        div()
+            .absolute()
+            .left(px(12.))
+            .top(px(TRAY_TOP))
+            .w(px(TRAY_W))
+            .max_h(px(560.))
+            .overflow_hidden()
+            .p(t.space.sm)
+            .rounded(t.radius.card)
+            .bg(t.colors.surface)
+            .border_1()
+            .border_color(t.colors.border)
+            .shadow(t.shadow_float())
+            .child(
+                div()
+                    .h(px(TRAY_HEAD - 8.))
+                    .flex()
+                    .items_center()
+                    .gap(t.space.xs)
+                    .text_size(t.text.caption)
+                    .text_color(t.colors.text_muted)
+                    .child(icon("icons/folder-input.svg", t.size.icon_sm, t.colors.text_muted))
+                    .child("Drop on a sheet to move"),
+            )
+            .children(rows)
     }
 
     /// The move `d` adjusted so the moving box lines up with another note's
@@ -946,7 +1025,7 @@ impl Folio {
             })
             .collect();
         let Some(b) = boxes.into_iter().reduce(|a, b| a.union(&b)) else { return (d, Vec::new()) };
-        let reach = SNAP / zoom;
+        let reach = if self.board.settings.snap { SNAP / zoom } else { -1. };
         let xs = [b.x, b.x + b.w / 2., b.x + b.w];
         let ys = [b.y, b.y + b.h / 2., b.y + b.h];
         let (mut best_x, mut best_y): (Option<(f32, f32)>, Option<(f32, f32)>) = (None, None);
@@ -971,13 +1050,23 @@ impl Folio {
         }
         let mut guides = Vec::new();
         let mut d = d;
-        if let Some((off, at)) = best_x {
-            d.x += off;
-            guides.push((true, at));
+        let grid = self.board.settings.grid.then_some(theme_grid());
+        match (best_x, grid) {
+            (Some((off, at)), _) => {
+                d.x += off;
+                guides.push((true, at));
+            }
+            // No neighbour to line up with: land on the dot grid.
+            (None, Some(g)) => d.x += (b.x / g).round() * g - b.x,
+            _ => {}
         }
-        if let Some((off, at)) = best_y {
-            d.y += off;
-            guides.push((false, at));
+        match (best_y, grid) {
+            (Some((off, at)), _) => {
+                d.y += off;
+                guides.push((false, at));
+            }
+            (None, Some(g)) => d.y += (b.y / g).round() * g - b.y,
+            _ => {}
         }
         (d, guides)
     }
@@ -995,6 +1084,38 @@ impl Folio {
                 return;
             }
             Gesture::Pan { .. } => self.schedule_save(cx),
+            Gesture::Move { items, moved: true, .. } => {
+                let target = self.drop_sheet.take();
+                self.drop_tray = false;
+                let ids: Vec<Id> = items
+                    .iter()
+                    .filter_map(|(s, _)| match s {
+                        Selection::Sticker(id) => Some(*id),
+                        _ => None,
+                    })
+                    .collect();
+                if let Some(to) = target {
+                    // Back where they were, then over to the other sheet.
+                    for (sel, from) in &items {
+                        if let Selection::Sticker(id) = sel {
+                            if let Some(s) = self.board.sheet_mut().sticker_mut(*id) {
+                                s.rect.x = from.x;
+                                s.rect.y = from.y;
+                            }
+                        }
+                    }
+                    for id in &ids {
+                        self.board.move_note(*id, to);
+                    }
+                    let name = self.board.categories[to].name.clone();
+                    let n = ids.len();
+                    self.selection.clear();
+                    self.notify(format!("Moved {} to “{name}”", if n == 1 { "the note".to_string() } else { format!("{n} notes") }), cx);
+                } else {
+                    let t = Instant::now();
+                    self.settling = ids.into_iter().map(|id| (id, t)).collect();
+                }
+            }
             Gesture::Marquee { start, now, .. } => {
                 if start.sub(now).len() * self.sheet().camera.zoom < 3. {
                     // A click on the empty sheet.
@@ -1097,6 +1218,11 @@ impl Folio {
             ((corner.x - at.x).abs() <= GRIP_REACH && (corner.y - at.y).abs() <= GRIP_REACH).then_some(f.id)
         })
     }
+}
+
+/// The dot grid's spacing, in world units.
+fn theme_grid() -> f32 {
+    crate::theme::Theme::light().size.dot_grid
 }
 
 fn contains(outer: &Rect, inner: &Rect) -> bool {

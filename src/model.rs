@@ -79,6 +79,17 @@ pub enum Paper {
 }
 
 impl Paper {
+    /// The name used in searches: `paper:sage`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Paper::Butter => "butter",
+            Paper::Sage => "sage",
+            Paper::Sky => "sky",
+            Paper::Blush => "blush",
+            Paper::Lilac => "lilac",
+            Paper::Plain => "plain",
+        }
+    }
     pub const ALL: [Paper; 6] = [
         Paper::Butter,
         Paper::Sage,
@@ -151,6 +162,9 @@ pub struct LinkCard {
     /// The page's title, once fetched.
     #[serde(default)]
     pub title: String,
+    /// The site's icon: a file in the media folder.
+    #[serde(default)]
+    pub icon: Option<String>,
     /// The host, shown under the title.
     #[serde(default)]
     pub site: String,
@@ -163,6 +177,9 @@ pub struct Popped {
     pub y: f32,
     pub w: f32,
     pub h: f32,
+    /// See-through: the desktop shows behind it.
+    #[serde(default)]
+    pub see_through: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
@@ -202,6 +219,9 @@ pub struct Sticker {
     /// Out on the desktop as its own always-on-top window.
     #[serde(default)]
     pub popped: Option<Popped>,
+    /// Not flagged as stale before this (Unix seconds).
+    #[serde(default)]
+    pub snoozed: u64,
 }
 
 fn yes() -> bool {
@@ -240,6 +260,9 @@ impl Sticker {
         if q.is_empty() {
             return true;
         }
+        if let Some(p) = q.strip_prefix("paper:") {
+            return self.paper.key() == p.trim();
+        }
         if let Some(tag) = q.strip_prefix('#') {
             return self.tags().iter().any(|t| t.starts_with(tag));
         }
@@ -247,7 +270,7 @@ impl Sticker {
     }
     /// Untouched for three weeks.
     pub fn is_stale(&self, now: u64) -> bool {
-        self.edited > 0 && now.saturating_sub(self.edited) > STALE_AFTER
+        self.edited > 0 && now.saturating_sub(self.edited) > STALE_AFTER && now >= self.snoozed
     }
 }
 
@@ -774,6 +797,8 @@ pub struct Settings {
     pub high_contrast: bool,
     pub reduce_motion: bool,
     pub snap: bool,
+    /// Moved notes land on the dot grid.
+    pub grid: bool,
     pub minimap: bool,
 }
 
@@ -792,6 +817,7 @@ impl Default for Settings {
             high_contrast: false,
             reduce_motion: false,
             snap: true,
+            grid: false,
             minimap: true,
         }
     }
@@ -1134,6 +1160,39 @@ impl Board {
     /// Empties trash older than 30 days.
     pub fn purge(&mut self, now: u64) {
         self.bin.retain(|b| b.archived || now.saturating_sub(b.at) < TRASH_KEEPS);
+    }
+
+    /// Adds a copy of `c` (from a backup, or a duplicate) with fresh ids
+    /// throughout, after the other sheets; returns its index.
+    pub fn adopt_sheet(&mut self, mut c: Category, name: String) -> usize {
+        c.id = self.fresh_id();
+        c.name = name;
+        c.inbox = false;
+        c.pinned = false;
+        let mut map = std::collections::HashMap::new();
+        for s in &mut c.stickers {
+            let n = self.fresh_id();
+            map.insert(s.id, n);
+            s.id = n;
+            s.popped = None;
+        }
+        for l in &mut c.links {
+            l.id = self.fresh_id();
+            l.from = map.get(&l.from).copied().unwrap_or(0);
+            l.to = map.get(&l.to).copied().unwrap_or(0);
+        }
+        c.links.retain(|l| l.from != 0 && l.to != 0);
+        for x in &mut c.strokes {
+            x.id = self.fresh_id();
+        }
+        for x in &mut c.labels {
+            x.id = self.fresh_id();
+        }
+        for x in &mut c.frames {
+            x.id = self.fresh_id();
+        }
+        self.categories.push(c);
+        self.categories.len() - 1
     }
 
     /// Sheets for lists: pinned first (Inbox first of those), then the rest
@@ -1488,5 +1547,32 @@ mod tests {
         assert_eq!(c.frame_members(2), vec![3]);
         assert_eq!(c.neighbour(3, 1., 0.), Some(4));
         assert_eq!(c.neighbour(3, -1., 0.), None);
+    }
+
+    #[test]
+    fn adopted_sheets_get_fresh_ids_and_keep_links() {
+        let mut b = Board::empty();
+        b.sheet_mut().stickers.push(sticker(10, 0., 0.));
+        b.sheet_mut().stickers.push(sticker(11, 300., 0.));
+        b.sheet_mut().links.push(Link { id: 12, from: 10, to: 11, ink: Ink::Forest });
+        b.normalize();
+        let copy = b.sheet().clone();
+        let ix = b.adopt_sheet(copy, "Copy".into());
+        let c = &b.categories[ix];
+        assert!(c.stickers.iter().all(|s| s.id > 12));
+        assert_eq!(c.links.len(), 1);
+        assert!(c.sticker(c.links[0].from).is_some());
+    }
+
+    #[test]
+    fn paper_search_and_snooze() {
+        let mut s = sticker(1, 0., 0.);
+        s.paper = Paper::Sage;
+        assert!(s.matches("paper:sage"));
+        assert!(!s.matches("paper:sky"));
+        s.edited = 1;
+        assert!(s.is_stale(STALE_AFTER + 10));
+        s.snoozed = STALE_AFTER + 100;
+        assert!(!s.is_stale(STALE_AFTER + 10));
     }
 }

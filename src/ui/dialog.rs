@@ -4,7 +4,7 @@
 use gpui::component::input::{Input, Textarea};
 use gpui::{div, prelude::*, px, Context, MouseButton, Window};
 
-use super::app::{Dialog, Folio, SHEET_ICONS};
+use super::app::{Dialog, Folio};
 use super::*;
 use crate::model::*;
 use crate::theme::{theme, Theme};
@@ -37,54 +37,21 @@ impl Folio {
         };
         let mut body = div().flex().flex_col().gap(t.space.lg);
         match d {
-            Dialog::NewSheet { accent, icon: chosen, template } => {
+            Dialog::NewSheet { icon: chosen, template } => {
                 body = body
                     .child(div().flex().flex_col().gap(t.space.xs).child(label("Name", &t)).child(Input::new(&self.dialog_input)))
                     .child(
-                        div().flex().flex_col().gap(t.space.xs).child(label("Icon", &t)).child(
-                            div().flex().flex_wrap().gap(px(4.)).children(SHEET_ICONS.iter().map(|&e| {
-                                div()
-                                    .id(gpui::ElementId::Name(format!("d-icon-{e}").into()))
-                                    .size(px(34.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(t.radius.button)
-                                    .text_size(px(18.))
-                                    .cursor_pointer()
-                                    .border_1()
-                                    .border_color(if e == chosen { t.colors.brand } else { t.colors.surface })
-                                    .when(e == chosen, |d| d.bg(t.colors.brand_tint))
-                                    .when(e != chosen, |d| d.hover(|d| d.bg(t.colors.hover)))
-                                    .child(e)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(Dialog::NewSheet { icon, .. }) = this.dialog.as_mut() {
-                                            *icon = e;
-                                        }
-                                        cx.notify();
-                                    }))
-                            })),
-                        ),
-                    )
-                    .child(
-                        div().flex().flex_col().gap(t.space.xs).child(label("Colour", &t)).child(
-                            div().flex().gap(px(8.)).children(Accent::ALL.iter().map(|&a| {
-                                div()
-                                    .id(("d-accent", a as usize))
-                                    .size(px(28.))
-                                    .rounded(t.radius.button)
-                                    .bg(t.accent(a))
-                                    .border_2()
-                                    .border_color(if a == accent { t.colors.text } else { t.colors.surface })
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(Dialog::NewSheet { accent, .. }) = this.dialog.as_mut() {
-                                            *accent = a;
-                                        }
-                                        cx.notify();
-                                    }))
-                            })),
-                        ),
+                        div().flex().flex_col().gap(t.space.xs).child(label("Icon", &t)).child(self.emoji_picker(
+                            chosen,
+                            &t,
+                            cx,
+                            |this, e, cx| {
+                                if let Some(Dialog::NewSheet { icon, .. }) = this.dialog.as_mut() {
+                                    *icon = e;
+                                }
+                                cx.notify();
+                            },
+                        )),
                     )
                     .child(
                         div().flex().flex_col().gap(t.space.xs).child(label("Start from", &t)).child(
@@ -92,7 +59,7 @@ impl Folio {
                                 let on = tp == template;
                                 div()
                                     .id(("d-template", tp as usize))
-                                    .w(px(128.))
+                                    .w(px(150.))
                                     .p(t.space.sm)
                                     .flex()
                                     .flex_col()
@@ -158,7 +125,7 @@ impl Folio {
             .child(
                 div()
                     .id("dialog")
-                    .w(if wide { px(452.) } else { t.size.dialog_w })
+                    .w(if wide { px(520.) } else { t.size.dialog_w })
                     .p(t.space.xl)
                     .rounded(t.radius.dialog)
                     .bg(t.colors.surface)
