@@ -763,16 +763,6 @@ pub enum ThemeMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum IntroMode {
-    /// The full opening the first time, a short one after.
-    #[default]
-    Auto,
-    Full,
-    Short,
-    Off,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OpenOn {
     #[default]
     Home,
@@ -783,9 +773,6 @@ pub enum OpenOn {
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeMode,
-    pub intro: IntroMode,
-    /// The full opening has played once.
-    pub intro_seen: bool,
     pub open_on: OpenOn,
     pub start_with_windows: bool,
     /// Ctrl+Alt+N opens a quick note from anywhere.
@@ -806,8 +793,6 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             theme: ThemeMode::Light,
-            intro: IntroMode::Auto,
-            intro_seen: false,
             open_on: OpenOn::Home,
             start_with_windows: false,
             quick_hotkey: true,
@@ -940,8 +925,6 @@ impl Board {
             if self.dark {
                 self.settings.theme = ThemeMode::Dark;
             }
-            // Older boards had no first-run intro.
-            self.settings.intro_seen = true;
             self.version = FORMAT_VERSION;
         }
         self.settings.ui_scale = self.settings.ui_scale.clamp(0.8, 1.4);

@@ -139,7 +139,7 @@ impl Folio {
                         _ => self.set_setting(cx, |s| s.minimap = !s.minimap),
                     }
                 }
-                Cmd::Intro => self.intro = Some(Intro { start: Instant::now(), full: true }),
+                Cmd::Intro => self.intro = Some(Intro { start: Instant::now() }),
             },
         }
         cx.notify();

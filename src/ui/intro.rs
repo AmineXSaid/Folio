@@ -1,12 +1,10 @@
 //! The opening, like a studio's logo before a film: the pink tile springs
 //! in, the note drops onto it and settles, the pin pops, the highlight
 //! wipes across, the lines write themselves, the corner peels, and
-//! "folio." rises letter by letter. The full version plays the first time;
-//! after that a short one (or none, from Settings). A click or a key skips.
+//! "folio." rises letter by letter. It plays in full at every launch and
+//! can't be skipped; the credit sits along the bottom.
 
-use std::time::{Duration, Instant};
-
-use gpui::{canvas, div, point, prelude::*, px, rgb, rgba, Bounds, Context, Hsla, MouseButton, PathBuilder, Pixels, Point, Window};
+use gpui::{canvas, div, point, prelude::*, px, rgb, rgba, Bounds, Context, Hsla, PathBuilder, Pixels, Point, Window};
 
 use super::app::{Folio, Intro};
 
@@ -15,24 +13,13 @@ const CREAM: u32 = 0xf1ebdd;
 const PEEL: u32 = 0xddd5c4;
 const INK: u32 = 0x111111;
 
-/// When the full opening starts to fade out, and when it's gone.
-const FULL_OUT: f32 = 3.4;
-const SHORT_OUT: f32 = 0.75;
+/// When the opening starts to fade out, and how long the fade takes.
+const OUT: f32 = 3.4;
 const FADE: f32 = 0.6;
 
 impl Intro {
     fn elapsed(&self) -> f32 {
         self.start.elapsed().as_secs_f32()
-    }
-    fn out_at(&self) -> f32 {
-        if self.full { FULL_OUT } else { SHORT_OUT }
-    }
-    /// Jumps to the fade-out.
-    pub fn skip(&mut self) {
-        let out = self.out_at();
-        if self.elapsed() < out {
-            self.start = Instant::now() - Duration::from_secs_f32(out);
-        }
     }
 }
 
@@ -63,11 +50,7 @@ struct Pose {
     zoom: f32,
 }
 
-fn pose(t: f32, full: bool) -> Pose {
-    if !full {
-        let k = back_out(span(t, 0.0, 0.42));
-        return Pose { tile: k, drop: k, pin: k, wipe: 1., lines: [1.; 3], peel: 1., zoom: 1. + 0.25 * span(t, SHORT_OUT, SHORT_OUT + FADE) };
-    }
+fn pose(t: f32) -> Pose {
     Pose {
         tile: back_out(span(t, 0.15, 0.8)),
         drop: span(t, 0.7, 1.45),
@@ -75,7 +58,7 @@ fn pose(t: f32, full: bool) -> Pose {
         wipe: ease_out(span(t, 1.55, 1.95)),
         lines: [span(t, 1.6, 1.95), span(t, 1.78, 2.12), span(t, 1.92, 2.25)],
         peel: back_out(span(t, 1.9, 2.35)),
-        zoom: 1. + 0.25 * ease_out(span(t, FULL_OUT, FULL_OUT + FADE)),
+        zoom: 1. + 0.25 * ease_out(span(t, OUT, OUT + FADE)),
     }
 }
 
@@ -97,24 +80,22 @@ fn fall(k: f32) -> (f32, f32) {
 }
 
 impl Folio {
-    pub(super) fn render_intro(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_intro(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let Some(intro) = self.intro.as_ref() else { return div().into_any_element() };
         let t = intro.elapsed();
-        let full = intro.full;
-        let out = intro.out_at();
-        if t > out + FADE {
+        if t > OUT + FADE {
             self.intro = None;
             window.refresh();
             return div().into_any_element();
         }
         window.request_animation_frame();
-        let p = pose(t, full);
-        let fade = 1. - span(t, out, out + FADE);
+        let p = pose(t);
+        let fade = 1. - span(t, OUT, OUT + FADE);
         let size = 180.;
 
         let logo = canvas(|_, _, _| {}, move |b, _, window, _| paint_logo(b, p, size, window)).w(px(size * 1.4)).h(px(size * 1.4));
 
-        let word_t = if full { t - 1.95 } else { 10. };
+        let word_t = t - 1.95;
         let letters = "folio.".chars().enumerate().map(|(i, ch)| {
             let k = ease_out(span(word_t, i as f32 * 0.07, i as f32 * 0.07 + 0.55));
             let k = if i == 5 { back_out(span(word_t, 0.45, 0.85)) } else { k };
@@ -125,8 +106,8 @@ impl Folio {
                 .text_color(if i == 5 { rgb(PINK) } else { rgb(0xf4f1ea) })
                 .child(ch.to_string())
         });
-        let tag = if full { ease_out(span(t, 2.35, 2.9)) } else { 1. };
-        let glow = if full { ease_out(span(t, 0.3, 2.0)) } else { 0.7 };
+        let tag = ease_out(span(t, 2.35, 2.9));
+        let glow = ease_out(span(t, 0.3, 2.0));
         let pink: Hsla = rgb(PINK).into();
 
         div()
@@ -140,16 +121,8 @@ impl Folio {
             .items_center()
             .justify_center()
             .gap(px(18.))
-            .cursor_pointer()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    if let Some(i) = this.intro.as_mut() {
-                        i.skip();
-                    }
-                    cx.notify();
-                }),
-            )
+            // Covers the app: nothing underneath takes a click until it's done.
+            .occlude()
             .child(
                 // A soft pink glow behind the logo.
                 div()
@@ -183,11 +156,15 @@ impl Folio {
             .child(
                 div()
                     .absolute()
-                    .right(px(22.))
-                    .bottom(px(18.))
+                    .bottom(px(26.))
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
                     .text_size(px(12.))
                     .text_color(rgb(0x7d8682))
-                    .child("Click or press any key to skip"),
+                    .opacity(tag)
+                    .child("Created and designed by M. Amine Said"),
             )
             .into_any_element()
     }
@@ -282,7 +259,7 @@ mod tests {
         let (dy, turn) = fall(1.);
         assert!(dy.abs() < 1e-3 && turn.abs() < 1e-3);
         assert!(fall(0.).0 < -200.);
-        let p = pose(5., true);
+        let p = pose(5.);
         assert!((p.tile - 1.).abs() < 1e-4 && p.wipe == 1. && p.lines == [1.; 3]);
         assert!(back_out(0.7) > 1., "the spring overshoots");
     }

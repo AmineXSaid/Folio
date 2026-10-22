@@ -153,7 +153,6 @@ pub enum Dialog {
 
 pub struct Intro {
     pub start: Instant,
-    pub full: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -282,14 +281,8 @@ impl Folio {
         window.focus(&root_focus, cx);
 
         let s = board.settings.clone();
-        let reduce = s.reduce_motion;
-        let intro = match (s.intro, s.intro_seen, reduce) {
-            (IntroMode::Off, _, _) => None,
-            (_, _, true) => None,
-            (IntroMode::Full, _, _) | (IntroMode::Auto, false, _) => Some(Intro { start: Instant::now(), full: true }),
-            _ => Some(Intro { start: Instant::now(), full: false }),
-        };
-        board.settings.intro_seen = true;
+        // The opening plays in full at every launch.
+        let intro = Some(Intro { start: Instant::now() });
         let screen = if s.open_on == OpenOn::LastSheet && !board.at_home { Screen::Sheet } else { Screen::Home };
         board.at_home = screen == Screen::Home;
 
@@ -1447,8 +1440,6 @@ impl Render for Folio {
                     this.dialog_cancel(window, cx);
                 } else if this.drawer {
                     this.drawer = false;
-                } else if let Some(i) = this.intro.as_mut() {
-                    i.skip();
                 }
                 cx.notify();
             }))

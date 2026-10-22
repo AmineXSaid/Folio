@@ -160,7 +160,7 @@ impl Folio {
                     )
                     .child(icon_button("replay-intro", "icons/play.svg", &t).on_click(cx.listener(|this, _, _, cx| {
                         this.drawer = false;
-                        this.intro = Some(Intro { start: Instant::now(), full: true });
+                        this.intro = Some(Intro { start: Instant::now() });
                         cx.notify();
                     }))),
             );

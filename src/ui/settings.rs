@@ -156,17 +156,6 @@ impl Folio {
 
         let startup = card("Starting up", &t)
             .child(setting(
-                "Opening animation",
-                "Automatic plays it in full the first time, short after",
-                segmented(
-                    "s-intro",
-                    &[("Automatic", s.intro == IntroMode::Auto), ("Full", s.intro == IntroMode::Full), ("Short", s.intro == IntroMode::Short), ("Off", s.intro == IntroMode::Off)],
-                    &t,
-                    l(|s, i| s.intro = [IntroMode::Auto, IntroMode::Full, IntroMode::Short, IntroMode::Off][i]),
-                ),
-                &t,
-            ))
-            .child(setting(
                 "Open on",
                 "Where Folio starts",
                 segmented(

@@ -28,8 +28,8 @@ and what is still to come.
 | Search | ✅ every note on every sheet, by text, `#tag` or note colour (`paper:sage`, or the colour dots on the home screen); jumps to the note; Ctrl+K palette for commands, sheets and notes | |
 | Right-click menus | ✅ note, empty sheet, area, label, sheet card; Move to sheet | |
 | Safety | ✅ undo (100 steps; the last 30 survive a restart), Trash (30 days), Archive, a daily backup (14 kept) restorable whole or one sheet at a time; "untouched for weeks" hint with keep-fresh or snooze for a week | sync |
-| Settings | ✅ theme (light/dark/follow Windows), interface size, high contrast, reduce motion, default paper and font, guides, map, opening animation, open on home/last sheet, start with Windows, quick-note shortcut, data folder, backups | |
-| Opening | ✅ animated logo intro: full the first time, short after, skippable, off in Settings | |
+| Settings | ✅ theme (light/dark/follow Windows), interface size, high contrast, reduce motion, default paper and font, guides, map, open on home/last sheet, start with Windows, quick-note shortcut, data folder, backups | |
+| Opening | ✅ animated logo intro, played in full at every launch and not skippable, with the credit "Created and designed by M. Amine Said" | |
 
 ### Experience principles
 
