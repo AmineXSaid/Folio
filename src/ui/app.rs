@@ -227,6 +227,8 @@ pub struct Folio {
     pub before: Option<Board>,
     pub selection: Vec<Selection>,
     pub hovered: Option<Id>,
+    /// The note or area edge under the pointer, for the resize arrow.
+    pub hover_grip: Option<crate::model::Grip>,
     /// Space is held: drag pans.
     pub space: bool,
     /// The last pointer position over the sheet, in sheet-local pixels.
@@ -406,6 +408,7 @@ impl Folio {
             before: None,
             selection: Vec::new(),
             hovered: None,
+            hover_grip: None,
             space: false,
             cursor: v2(0., 0.),
             viewport: Rc::new(Cell::new(Bounds::default())),

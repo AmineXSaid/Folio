@@ -24,7 +24,11 @@ use crate::theme::{theme, Theme};
 
 /// How close, in screen pixels, a press must be to an edge or corner to
 /// resize (either side of it).
-const GRIP_REACH: f32 = 7.;
+/// How far a note's edge reaches for a resize, in screen pixels: inside
+/// the note, beyond it, and along an edge from a corner.
+const GRIP_IN: f32 = 10.;
+const GRIP_OUT: f32 = 8.;
+const GRIP_CORNER: f32 = 18.;
 /// How close, in screen pixels, edges must come to snap together.
 const SNAP: f32 = 6.;
 /// An area's title bar, in world units: press there to move the area.
@@ -924,8 +928,12 @@ impl Folio {
         match &mut self.gesture {
             Gesture::None => {
                 let hovered = self.note_at(world);
-                if hovered != self.hovered {
+                // The pointer changes to a resize arrow on an edge: draw
+                // again whenever what's under it changes, edge included.
+                let grip = self.grip_at(at).or_else(|| self.frame_grip_at(at)).map(|(_, g)| g);
+                if hovered != self.hovered || grip != self.hover_grip {
                     self.hovered = hovered;
+                    self.hover_grip = grip;
                     cx.notify();
                 }
                 return;
@@ -1285,19 +1293,23 @@ impl Folio {
         cx.notify();
     }
 
-    /// The note whose edge or corner is under `at` (screen), and which:
-    /// the selected or hovered one, so edges don't catch presses on notes
-    /// at rest.
+    /// The note whose edge or corner is under `at` (screen), and which.
+    /// Over a note, only its own edges (or a selected note's) count; in the
+    /// open, the edge of any note just beside it does, the top one first.
     pub(super) fn grip_at(&self, at: Vec2) -> Option<(Id, Grip)> {
         let cam = self.sheet().camera;
+        let over = self.note_at(cam.to_world(at));
         let mut candidates: Vec<Id> = self.selected_notes();
-        candidates.extend(self.hovered);
+        match over {
+            Some(id) => candidates.push(id),
+            None => candidates.extend(self.sheet().stickers.iter().rev().map(|s| s.id)),
+        }
         candidates.into_iter().find_map(|id| {
             let s = self.sheet().sticker(id).filter(|s| !s.locked)?;
             let r = self.note_rect(s);
             let a = cam.to_screen(v2(r.x, r.y));
             let b = cam.to_screen(v2(r.x + r.w, r.y + r.h));
-            Rect { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y }.grip_at(at, GRIP_REACH).map(|g| (id, g))
+            Rect { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y }.grip_at(at, GRIP_IN, GRIP_OUT, GRIP_CORNER).map(|g| (id, g))
         })
     }
 
@@ -1306,7 +1318,7 @@ impl Folio {
         self.sheet().frames.iter().filter(|f| self.is_selected(Selection::Frame(f.id))).find_map(|f| {
             let a = cam.to_screen(v2(f.rect.x, f.rect.y));
             let b = cam.to_screen(v2(f.rect.x + f.rect.w, f.rect.y + f.rect.h));
-            Rect { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y }.grip_at(at, GRIP_REACH).map(|g| (f.id, g))
+            Rect { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y }.grip_at(at, GRIP_IN, GRIP_OUT, GRIP_CORNER).map(|g| (f.id, g))
         })
     }
 }

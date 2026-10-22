@@ -65,19 +65,29 @@ impl Rect {
         }
     }
 
-    /// Which edges of this rectangle `p` is on, within `reach` either side
-    /// of each (a corner is two edges). None away from the edges.
-    pub fn grip_at(&self, p: Vec2, reach: f32) -> Option<Grip> {
+    /// Which edges of this rectangle `p` is on: up to `inside` within an
+    /// edge or `outside` beyond it (a corner is two edges). Within `corner`
+    /// of a corner along an edge counts as the corner, so corners are easy
+    /// to catch. None away from the edges.
+    pub fn grip_at(&self, p: Vec2, inside: f32, outside: f32, corner: f32) -> Option<Grip> {
         let (x1, y1) = (self.x + self.w, self.y + self.h);
-        let within_x = p.x >= self.x - reach && p.x <= x1 + reach;
-        let within_y = p.y >= self.y - reach && p.y <= y1 + reach;
-        if !within_x || !within_y {
+        if p.x < self.x - outside || p.x > x1 + outside || p.y < self.y - outside || p.y > y1 + outside {
             return None;
         }
-        // On a small rectangle the reaches overlap: the nearer edge wins.
-        let near = |a: f32, b: f32, v: f32| ((v - a).abs() <= reach && (v - a).abs() <= (v - b).abs(), (v - b).abs() <= reach && (v - b).abs() < (v - a).abs());
-        let (left, right) = near(self.x, x1, p.x);
-        let (top, bottom) = near(self.y, y1, p.y);
+        // How far in from each edge (negative outside it). On a small
+        // rectangle the zones overlap: the nearer edge wins.
+        let on = |from_a: f32, from_b: f32| {
+            let hit = |d: f32| d <= inside && d >= -outside;
+            (hit(from_a) && from_a <= from_b, hit(from_b) && from_b < from_a)
+        };
+        let (mut left, mut right) = on(p.x - self.x, x1 - p.x);
+        let (mut top, mut bottom) = on(p.y - self.y, y1 - p.y);
+        let near = |from_a: f32, from_b: f32| (from_a <= corner && from_a <= from_b, from_b <= corner && from_b < from_a);
+        if (left || right) && !(top || bottom) {
+            (top, bottom) = near(p.y - self.y, y1 - p.y);
+        } else if (top || bottom) && !(left || right) {
+            (left, right) = near(p.x - self.x, x1 - p.x);
+        }
         let g = Grip { left, right, top, bottom };
         (left || right || top || bottom).then_some(g)
     }
@@ -1539,13 +1549,21 @@ mod tests {
     #[test]
     fn notes_resize_from_any_edge_or_corner() {
         let r = Rect { x: 100., y: 100., w: 200., h: 100. };
-        let g = |x, y| r.grip_at(v2(x, y), 8.);
+        let g = |x, y| r.grip_at(v2(x, y), 10., 8., 18.);
+        let (l, rt, t, b) = (Grip { left: true, ..Default::default() }, Grip { right: true, ..Default::default() }, Grip { top: true, ..Default::default() }, Grip { bottom: true, ..Default::default() });
         assert_eq!(g(100., 100.), Some(Grip { left: true, top: true, ..Default::default() }));
-        assert_eq!(g(305., 150.), Some(Grip { right: true, ..Default::default() }));
-        assert_eq!(g(200., 96.), Some(Grip { top: true, ..Default::default() }));
+        assert_eq!(g(305., 150.), Some(rt), "just outside the edge");
+        assert_eq!(g(292., 150.), Some(rt), "just inside it");
+        assert_eq!(g(200., 96.), Some(t));
         assert_eq!(g(98., 203.), Some(Grip { left: true, bottom: true, ..Default::default() }));
+        // Along an edge, near the corner is the corner.
+        assert_eq!(g(104., 115.), Some(Grip { left: true, top: true, ..Default::default() }));
+        assert_eq!(g(285., 196.), Some(Grip { right: true, bottom: true, ..Default::default() }));
+        assert_eq!(g(104., 150.), Some(l));
+        assert_eq!(g(200., 197.), Some(b));
         assert_eq!(g(200., 150.), None, "the middle moves, it doesn't resize");
-        assert_eq!(g(330., 150.), None);
+        assert_eq!(g(285., 150.), None);
+        assert_eq!(g(310., 150.), None, "too far out");
 
         let left_top = Grip { left: true, top: true, ..Default::default() };
         let out = r.resized(left_top, -20., 30., 50., 40.);
