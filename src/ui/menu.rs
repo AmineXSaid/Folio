@@ -60,11 +60,13 @@ impl Folio {
         match (kind, page) {
             (MenuKind::Note(id), MenuPage::Main) => {
                 let Some(s) = self.board.find_note(id).cloned() else { return div().into_any_element() };
-                let papers = div().flex().gap(px(6.)).px(t.space.sm).py(t.space.xs).children(Paper::ALL.iter().map(|&p| {
+                // Twelve papers as small circles: the same width six squares took.
+                let papers = div().flex().items_center().gap(px(3.)).px(t.space.sm).py(t.space.xs).children(Paper::ALL.iter().map(|&p| {
                     div()
                         .id(("m-paper", p as usize))
-                        .size(px(22.))
-                        .rounded(t.radius.small)
+                        .size(px(15.))
+                        .rounded(t.radius.full)
+                        .hover(|d| d.border_color(t.colors.text_subtle))
                         .bg(t.paper(p))
                         .border_1()
                         .border_color(t.colors.border)
@@ -451,12 +453,15 @@ impl Folio {
                 items.push(
                     div()
                         .flex()
-                        .gap(px(6.))
+                        .flex_wrap()
+                        .gap(px(5.))
                         .p(t.space.sm)
+                        .max_w(px(240.))
                         .children(Ink::ALL.iter().map(|&ink| {
                             div()
                                 .id(("m-ink", ink as usize))
-                                .size(px(22.))
+                                .size(px(18.))
+                                .hover(|d| d.border_2().border_color(t.colors.surface))
                                 .rounded(t.radius.full)
                                 .bg(t.ink(ink))
                                 .cursor_pointer()

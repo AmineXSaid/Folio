@@ -196,7 +196,7 @@ impl Folio {
         let labels: Vec<_> = sheet
             .labels
             .iter()
-            .filter(|l| label_rect(l).intersects(&view))
+            .filter(|l| Some(l.id) != self.label_edit && label_rect(l).intersects(&view))
             .map(|l| {
                 let at = cam.to_screen(l.at);
                 let selected = self.is_selected(Selection::Label(l.id));
@@ -363,6 +363,7 @@ impl Folio {
             // Outside the sheet's key context, so typing a new name never
             // trips a one-letter tool key.
             .child(self.render_sheet_head(&t, cx))
+            .children(self.render_label_edit(&t))
             .children(edit_layer)
             .child(self.render_toolbar(window, cx))
             .child(self.render_zoom(cx))
@@ -435,6 +436,31 @@ impl Folio {
             .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(meta))
     }
 
+    /// Text being written on the sheet: a caret where the text sits, in
+    /// its italic, its size and its ink; no box.
+    fn render_label_edit(&self, t: &Theme) -> Option<gpui::AnyElement> {
+        let id = self.label_edit?;
+        let l = self.sheet().labels.iter().find(|l| l.id == id)?;
+        let cam = self.sheet().camera;
+        let at = cam.to_screen(l.at);
+        let size = 15. * cam.zoom;
+        Some(
+            div()
+                .absolute()
+                .left(px(at.x - 4.))
+                .top(px(at.y - 4.))
+                .min_w(px(260. * cam.zoom.max(0.6)))
+                .max_w(px(640.))
+                .key_context("LabelEdit")
+                .italic()
+                .text_color(t.ink(l.ink))
+                // The text area's text is 0.875rem: a rem that gives the
+                // label's size.
+                .child(rem_scaled(px(size / 0.875), Textarea::new(&self.label_input).appearance(false)))
+                .into_any_element(),
+        )
+    }
+
     /// The note being typed into, drawn over the sheet, with its format
     /// bar above it.
     fn render_edit_layer(&self, t: &Theme, _: &mut Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
@@ -461,8 +487,9 @@ impl Folio {
         let papers = Paper::ALL.iter().map(|&p| {
             div()
                 .id(("e-paper", p as usize))
-                .size(px(20.))
-                .rounded(px(5.))
+                .size(px(15.))
+                .rounded(t.radius.full)
+                .hover(|d| d.border_color(t.colors.text_subtle))
                 .bg(t.paper(p))
                 .border_1()
                 .border_color(t.colors.border)
@@ -631,6 +658,7 @@ impl Folio {
         let to_world = move |x: f32, y: f32| v2((x - ox) / k, (y - oy) / k);
         div()
             .id("minimap")
+            .occlude()
             .absolute()
             .left(t.space.xl)
             .bottom(t.space.xl)
@@ -767,6 +795,12 @@ impl Folio {
     fn press(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         self.menu = None;
+        self.ink_palette = false;
+        // Clicking away from text being written just finishes it.
+        if self.label_edit.is_some() {
+            self.finish_label(cx);
+            return;
+        }
         self.finish_edit(cx);
         let at = self.local(ev.position);
         self.cursor = at;

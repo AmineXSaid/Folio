@@ -34,6 +34,7 @@ enum Cmd {
     Tidy,
     Map,
     Profile,
+    Intro,
     Back,
     Forward,
     Drive,
@@ -42,7 +43,7 @@ enum Cmd {
     Rename,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 21] = [
+const CMDS: [(Cmd, &str, &str, &str); 22] = [
     (Cmd::NewNote, "New note", "Ctrl N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl Shift N", "icons/plus.svg"),
     (Cmd::QuickNote, "Quick note to Inbox", "Ctrl Alt N", "icons/inbox.svg"),
@@ -62,6 +63,7 @@ const CMDS: [(Cmd, &str, &str, &str); 21] = [
     (Cmd::Tidy, "Tidy up the sheet", "", "icons/wand-sparkles.svg"),
     (Cmd::Map, "Show / hide the map", "", "icons/map.svg"),
     (Cmd::Profile, "Change your name and avatar", "", "icons/user-round-pen.svg"),
+    (Cmd::Intro, "Play the opening again", "", "icons/play.svg"),
     (Cmd::Back, "Go back", "Alt Left", "icons/arrow-left.svg"),
     (Cmd::Forward, "Go forward", "Alt Right", "icons/arrow-right.svg"),
 ];
@@ -190,6 +192,37 @@ pub fn fuzzy(query: &str, text: &str) -> Option<(i32, Vec<usize>)> {
     Some((score * 10 - text.len() as i32 / 4, positions))
 }
 
+/// A note's first line as it reads: no Markdown marks, link targets or
+/// highlight tags.
+fn plain(line: &str) -> String {
+    let mut s = line.to_string();
+    // <mark color="…">word</mark> → word
+    while let (Some(a), Some(b)) = (s.find("<mark"), s.find('>')) {
+        if b <= a {
+            break;
+        }
+        s.replace_range(a..=b, "");
+    }
+    s = s.replace("</mark>", "");
+    // [text](url) → text
+    while let Some(a) = s.find("](") {
+        let Some(close) = s[a..].find(')') else { break };
+        s.replace_range(a..a + close + 1, "");
+        if let Some(open) = s[..a].rfind('[') {
+            s.remove(open);
+        }
+    }
+    let s = s.trim_start_matches(|c| c == '#' || c == '>' || c == ' ');
+    let s = s.strip_prefix("- [ ] ").or_else(|| s.strip_prefix("- [x] ")).or_else(|| s.strip_prefix("- ")).unwrap_or(s);
+    let out: String = s.replace("**", "").replace("__", "").replace('`', "").replace("~~", "");
+    let out = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    if out.is_empty() {
+        "Untitled note".into()
+    } else {
+        out
+    }
+}
+
 /// Where `needle` sits in `text` (any case), as byte offsets to highlight.
 fn substring_hits(text: &str, needle: &str) -> Vec<usize> {
     let lower = text.to_lowercase();
@@ -315,7 +348,7 @@ impl Folio {
             notes.sort_by(|a, b| b.1.edited.cmp(&a.1.edited));
         }
         for (c, s) in notes {
-            let line: SharedString = first_line(s).into();
+            let line: SharedString = plain(&first_line(s)).into();
             let found = if q.is_empty() {
                 Some((0, vec![]))
             } else if semantic {
@@ -549,6 +582,7 @@ impl Folio {
                     }
                 }
                 Cmd::Profile => self.open_welcome(false, window, cx),
+                Cmd::Intro => self.intro = Some(super::app::Intro { start: std::time::Instant::now() }),
                 Cmd::Back => self.go_back(window, cx),
                 Cmd::Forward => self.go_forward(window, cx),
             },
@@ -710,7 +744,8 @@ impl Folio {
                 .flex()
                 .items_center()
                 .gap(t.space.md)
-                .h(px(36.))
+                .min_h(px(36.))
+                .py(px(6.))
                 .px(t.space.md)
                 .rounded(t.radius.button)
                 .cursor_pointer()
@@ -731,17 +766,19 @@ impl Folio {
                             None => d.child(icon(row.icon, px(13.), if on { t.colors.brand } else { t.colors.text_muted })),
                         }),
                 )
+                // The whole label, wrapping if it must; what it belongs to
+                // underneath, never cut short mid-thought.
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .flex()
-                        .items_baseline()
-                        .gap(t.space.sm)
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .child(div().flex_none().max_w(px(300.)).truncate().text_size(t.text.body).child(highlighted(&row.label, pos, on, &t)))
-                        .children(row.detail.clone().map(|d| div().flex_1().min_w_0().truncate().text_size(t.text.caption).text_color(t.colors.text_subtle).child(d))),
+                        .flex_col()
+                        .gap(px(1.))
+                        .child(div().text_size(t.text.body).line_height(px(18.)).child(highlighted(&row.label, pos, on, &t)))
+                        .children(row.detail.clone().map(|d| {
+                            div().text_size(t.text.caption).line_height(px(16.)).text_color(if on { t.colors.text_muted } else { t.colors.text_subtle }).child(d)
+                        })),
                 )
                 .children(row.hint.as_ref().map(|h| keys(&t, h)))
                 .when(on, |d| d.child(icon("icons/corner-down-left.svg", px(12.), t.colors.brand_on_tint)))
@@ -782,13 +819,14 @@ impl Folio {
             .child(hint(keys(&t, "Esc"), "close"))
             .child(div().flex_1())
             .child(hint(keys(&t, "Tab"), "next scope"))
-            .child(div().child("> commands · / sheets · @ notes"));
+            .child(hint(keys(&t, "> / @"), "narrow"));
 
         div()
             .absolute()
             .top(t.size.bar_control + px(8.))
-            .left(px(-1.))
-            .right(px(-1.))
+            // Wider than the field, centred under it, so nothing gets cut.
+            .left(px(-80.))
+            .right(px(-80.))
             .child(motion::edge_draw(
                 div()
                     .id("palette")
@@ -857,6 +895,14 @@ mod tests {
         for s in Scope::TABS {
             assert_eq!(scope(&format!("{}x", s.prefix())).0, s);
         }
+    }
+
+    #[test]
+    fn note_lines_read_as_plain_text() {
+        assert_eq!(plain("Functional testing** = tests **what** it does"), "Functional testing = tests what it does");
+        assert_eq!(plain("## Plan for `v2`"), "Plan for v2");
+        assert_eq!(plain("- [ ] Call [Sam](https://x.y) <mark color=\"yellow\">today</mark>"), "Call Sam today");
+        assert_eq!(plain("   "), "Untitled note");
     }
 
     #[test]

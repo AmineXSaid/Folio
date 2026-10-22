@@ -85,6 +85,11 @@ pub enum Selection {
     Frame(Id),
 }
 
+/// The opening, playing (every launch).
+pub struct Intro {
+    pub start: Instant,
+}
+
 /// Somewhere you can go back to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
@@ -163,7 +168,6 @@ pub struct Menu {
 pub enum Dialog {
     NewSheet { icon: &'static str, template: Template },
     RenameSheet(Id),
-    Label { id: Id, is_new: bool, ink: Ink },
     RenameFrame(Id),
     /// The first sync, and both sides have notes: merge, or keep one.
     DriveChoice(super::sync::Pick),
@@ -203,6 +207,8 @@ pub struct Folio {
     pub drawer: bool,
     pub tool: Tool,
     pub ink: Ink,
+    /// The ink palette (every ink) is open above the dock.
+    pub ink_palette: bool,
     pub gesture: Gesture,
     /// Alignment guides while moving: (vertical?, world coordinate).
     pub guides: Vec<(bool, f32)>,
@@ -244,6 +250,7 @@ pub struct Folio {
     pub palette_reveal: bool,
     /// The emoji picker's tab.
     pub emoji_tab: usize,
+    pub intro: Option<Intro>,
     /// The welcome (your name, your avatar), first launch or on request.
     pub welcome: Option<super::welcome::Welcome>,
     pub welcome_input: Entity<InputState>,
@@ -263,7 +270,9 @@ pub struct Folio {
     /// The sheet's name while it's being renamed in place.
     pub name_input: Entity<InputState>,
     pub naming: bool,
-    pub dialog_body: Entity<TextareaState>,
+    /// Text being written straight on the sheet.
+    pub label_edit: Option<Id>,
+    pub label_input: Entity<TextareaState>,
     pub desktop: crate::desktop::Desktop,
     pub sync: super::sync::DriveSync,
     pub export: super::transfer::ExportChoice,
@@ -292,7 +301,7 @@ impl Folio {
         let dialog_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name this sheet"));
         let welcome_input = cx.new(|cx| InputState::new(window, cx).placeholder("Your name"));
-        let dialog_body = cx.new(|cx| TextareaState::new(window, cx).auto_grow(3, 10).placeholder("Write on the sheet…"));
+        let label_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 30).placeholder("Write…"));
         let subs = vec![
             cx.observe(&search_input, |this, _, cx| {
                 if this.screen != Screen::Home && !this.search_text(cx).is_empty() {
@@ -318,6 +327,12 @@ impl Folio {
                 }
                 InputEvent::Blur => this.finish_naming(true, cx),
                 _ => {}
+            }),
+            // Writing on the sheet: clicking away keeps it.
+            cx.subscribe_in(&label_input, window, |this, _, ev, _, cx| {
+                if matches!(ev, InputEvent::Blur) {
+                    this.finish_label(cx);
+                }
             }),
             cx.subscribe_in(&welcome_input, window, |this, _, ev, window, cx| match ev {
                 InputEvent::PressEnter { .. } => this.welcome_next(window, cx),
@@ -374,6 +389,7 @@ impl Folio {
             drawer: false,
             tool: Tool::Select,
             ink: Ink::Graphite,
+            ink_palette: false,
             gesture: Gesture::None,
             guides: Vec::new(),
             settling: Vec::new(),
@@ -399,6 +415,8 @@ impl Folio {
             palette_scroll: gpui::ScrollHandle::new(),
             palette_reveal: false,
             emoji_tab: 0,
+            // The opening plays in full at every launch.
+            intro: Some(Intro { start: Instant::now() }),
             welcome: None,
             welcome_input,
             sort: Sort::Recent,
@@ -414,7 +432,8 @@ impl Folio {
             dialog_input,
             name_input,
             naming: false,
-            dialog_body,
+            label_edit: None,
+            label_input,
             desktop: crate::desktop::Desktop::default(),
             sync: Default::default(),
             export: Default::default(),
@@ -879,18 +898,6 @@ impl Folio {
                     }
                 });
             }
-            Dialog::Label { id, ink, .. } => {
-                let text = self.dialog_body.read(cx).value().trim_end().to_string();
-                let before = self.before.take().unwrap_or_else(|| self.board.clone());
-                let sheet = self.board.sheet_mut();
-                if text.trim().is_empty() {
-                    sheet.labels.retain(|l| l.id != id);
-                } else if let Some(l) = sheet.labels.iter_mut().find(|l| l.id == id) {
-                    l.text = text;
-                    l.ink = ink;
-                }
-                self.commit(before, cx);
-            }
             // Its own buttons decide; Ctrl+Enter doesn't pick for you.
             Dialog::DriveChoice(_) | Dialog::DriveReplace(_) => {
                 self.dialog = Some(d);
@@ -902,12 +909,6 @@ impl Folio {
     }
 
     pub fn dialog_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(Dialog::Label { is_new: true, .. }) = self.dialog {
-            if let Some(before) = self.before.take() {
-                self.board = before;
-            }
-        }
-        self.before = None;
         self.dialog = None;
         window.focus(&self.focus, cx);
         cx.notify();
@@ -1220,17 +1221,40 @@ impl Folio {
         self.edit_label(id, true, window, cx);
     }
 
-    pub fn edit_label(&mut self, id: Id, is_new: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// Writes on the sheet in place: the text gets a caret where it sits,
+    /// in its own style; clicking away, Ctrl+Enter or Esc keeps it.
+    pub fn edit_label(&mut self, id: Id, _is_new: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(l) = self.sheet().labels.iter().find(|l| l.id == id) else { return };
-        let (text, ink) = (l.text.clone(), l.ink);
+        let text = l.text.clone();
+        self.finish_label(cx);
         if self.before.is_none() {
             self.before = Some(self.board.clone());
         }
-        self.dialog = Some(Dialog::Label { id, is_new, ink });
+        self.label_edit = Some(id);
         self.menu = None;
-        self.dialog_body.update(cx, |i, cx| i.set_value(text, window, cx));
-        let input = self.dialog_body.clone();
+        let end = text.len();
+        self.label_input.update(cx, |i, cx| {
+            i.set_value(text, window, cx);
+            i.set_selected_range(end..end, cx);
+        });
+        let input = self.label_input.clone();
         window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+        cx.notify();
+    }
+
+    /// Ends writing on the sheet: the text is kept (one undo step), or
+    /// gone if it was left empty.
+    pub fn finish_label(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.label_edit.take() else { return };
+        let text = self.label_input.read(cx).value().trim_end().to_string();
+        let before = self.before.take().unwrap_or_else(|| self.board.clone());
+        let sheet = self.board.sheet_mut();
+        if text.trim().is_empty() {
+            sheet.labels.retain(|l| l.id != id);
+        } else if let Some(l) = sheet.labels.iter_mut().find(|l| l.id == id) {
+            l.text = text;
+        }
+        self.commit(before, cx);
         cx.notify();
     }
 
@@ -1674,6 +1698,9 @@ impl Render for Folio {
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
                 if this.welcome.is_some() {
                     this.welcome_close(cx);
+                } else if this.label_edit.is_some() {
+                    this.finish_label(cx);
+                    window.focus(&this.focus, cx);
                 } else if this.naming {
                     this.finish_naming(false, cx);
                     window.focus(&this.focus, cx);
@@ -1707,7 +1734,10 @@ impl Render for Folio {
             .children(self.palette.then(|| self.render_palette_scrim(cx)))
             .children(self.menu.is_some().then(|| self.render_menu(window, cx)))
             .children(self.toast.clone().map(|msg| toast(&t, msg)))
-            .children(self.welcome.is_some().then(|| self.render_welcome(window, cx)))
+            // The first time, the welcome rises in as the opening fades
+            // away over it.
+            .children((self.welcome.is_some() && self.intro.as_ref().is_none_or(|i| i.revealing())).then(|| self.render_welcome(window, cx)))
+            .children(self.intro.is_some().then(|| self.render_intro(window, cx)))
     }
 }
 

@@ -77,6 +77,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-enter", SaveNote, Some("Dialog > Input")),
         KeyBinding::new("escape", Dismiss, Some("Dialog > Input")),
         KeyBinding::new("escape", Dismiss, Some("SheetName > Input")),
+        KeyBinding::new("escape", Dismiss, Some("LabelEdit > Input")),
+        KeyBinding::new("secondary-enter", Dismiss, Some("LabelEdit > Input")),
         KeyBinding::new("up", PaletteUp, Some("Palette > Input")),
         KeyBinding::new("down", PaletteDown, Some("Palette > Input")),
         KeyBinding::new("tab", PaletteTab, Some("Palette > Input")),

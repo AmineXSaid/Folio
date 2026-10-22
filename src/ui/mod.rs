@@ -7,6 +7,7 @@ mod dialog;
 mod drawer;
 mod emoji;
 mod home;
+mod intro;
 mod menu;
 mod motion;
 mod mini;

@@ -86,7 +86,7 @@ impl Folio {
                 let q = format!("paper:{}", p.key());
                 div()
                     .id(("paper-filter", p as usize))
-                    .size(px(28.))
+                    .size(px(22.))
                     .rounded(t.radius.full)
                     .bg(t.paper(p))
                     .border_1()

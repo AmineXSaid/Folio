@@ -1,7 +1,7 @@
 //! Dialogs over a scrim: a new sheet (name, icon, colour, template),
 //! renaming a sheet or an area, and writing text on the sheet.
 
-use gpui::component::input::{Input, Textarea};
+use gpui::component::input::Input;
 use gpui::{div, prelude::*, px, Context, MouseButton, Window};
 
 use super::app::{Dialog, Folio};
@@ -34,8 +34,6 @@ impl Folio {
             Dialog::NewSheet { .. } => ("New sheet", "Create sheet"),
             Dialog::RenameSheet(_) => ("Rename sheet", "Save"),
             Dialog::RenameFrame(_) => ("Name this area", "Save"),
-            Dialog::Label { is_new: true, .. } => ("Write on the sheet", "Add"),
-            Dialog::Label { .. } => ("Edit text", "Save"),
             Dialog::DriveChoice(_) => ("Google Drive already has Folio notes", "Continue"),
             Dialog::DriveReplace(Keep::ThisComputer) => ("Replace Google Drive's notes?", "Replace Drive's"),
             Dialog::DriveReplace(Keep::Drive) => ("Replace this computer's notes?", "Replace mine"),
@@ -209,30 +207,6 @@ impl Folio {
             }
             Dialog::RenameSheet(_) | Dialog::RenameFrame(_) => {
                 body = body.child(Input::new(&self.dialog_input));
-            }
-            Dialog::Label { ink, .. } => {
-                body = body.child(Textarea::new(&self.dialog_body)).child(
-                    div().flex().flex_col().gap(t.space.xs).child(label("Ink", &t)).child(
-                        div().flex().gap(px(6.)).children(Ink::ALL.iter().map(|&i| {
-                            div()
-                                .id(("d-ink", i as usize))
-                                .size(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(t.radius.full)
-                                .cursor_pointer()
-                                .when(i == ink, |d| d.border_2().border_color(t.ink(i)))
-                                .child(div().size(px(14.)).rounded(t.radius.full).bg(t.ink(i)))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(Dialog::Label { ink, .. }) = this.dialog.as_mut() {
-                                        *ink = i;
-                                    }
-                                    cx.notify();
-                                }))
-                        })),
-                    ),
-                );
             }
         }
         let wide = matches!(d, Dialog::NewSheet { .. } | Dialog::DriveChoice(_));

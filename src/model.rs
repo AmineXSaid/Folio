@@ -121,6 +121,12 @@ pub enum Paper {
     Blush,
     Lilac,
     Plain,
+    Peach,
+    Rose,
+    Ocean,
+    Mint,
+    Sand,
+    Stone,
 }
 
 impl Paper {
@@ -133,14 +139,28 @@ impl Paper {
             Paper::Blush => "blush",
             Paper::Lilac => "lilac",
             Paper::Plain => "plain",
+            Paper::Peach => "peach",
+            Paper::Rose => "rose",
+            Paper::Ocean => "ocean",
+            Paper::Mint => "mint",
+            Paper::Sand => "sand",
+            Paper::Stone => "stone",
         }
     }
-    pub const ALL: [Paper; 6] = [
+    /// In the order the swatches show: warm to cool, then the quiet ones;
+    /// Plain stays last.
+    pub const ALL: [Paper; 12] = [
         Paper::Butter,
-        Paper::Sage,
-        Paper::Sky,
+        Paper::Peach,
         Paper::Blush,
+        Paper::Rose,
         Paper::Lilac,
+        Paper::Sky,
+        Paper::Ocean,
+        Paper::Mint,
+        Paper::Sage,
+        Paper::Sand,
+        Paper::Stone,
         Paper::Plain,
     ];
 }
@@ -153,10 +173,43 @@ pub enum Ink {
     Coral,
     Cobalt,
     Marigold,
+    Ruby,
+    Pink,
+    Violet,
+    Indigo,
+    Sky,
+    Teal,
+    Lime,
+    Tangerine,
+    Brown,
+    Slate,
+    Silver,
+    Midnight,
 }
 
 impl Ink {
-    pub const ALL: [Ink; 5] = [Ink::Graphite, Ink::Forest, Ink::Coral, Ink::Cobalt, Ink::Marigold];
+    /// The five always at hand in the tool dock.
+    pub const QUICK: [Ink; 5] = [Ink::Graphite, Ink::Forest, Ink::Coral, Ink::Cobalt, Ink::Marigold];
+    /// Every ink, by hue, for the palette.
+    pub const ALL: [Ink; 17] = [
+        Ink::Ruby,
+        Ink::Coral,
+        Ink::Tangerine,
+        Ink::Marigold,
+        Ink::Lime,
+        Ink::Forest,
+        Ink::Teal,
+        Ink::Sky,
+        Ink::Cobalt,
+        Ink::Indigo,
+        Ink::Violet,
+        Ink::Pink,
+        Ink::Brown,
+        Ink::Slate,
+        Ink::Silver,
+        Ink::Graphite,
+        Ink::Midnight,
+    ];
 }
 
 /// The type size of a sticker's text.

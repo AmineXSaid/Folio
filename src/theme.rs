@@ -24,7 +24,6 @@ pub struct Colors {
     pub primary_fg: Hsla,
     /// The active row and tool: a wash of the primary.
     pub primary_tint: Hsla,
-    pub primary_on_tint: Hsla,
     pub selection: Hsla,
     pub scrim: Hsla,
     pub toast: Hsla,
@@ -189,7 +188,6 @@ impl Theme {
                 primary_hover: c(0xd23a6b),
                 primary_fg: c(0xffffff),
                 primary_tint: c(0xfdeaf0),
-                primary_on_tint: c(0xb8285a),
                 selection: c(0xe5487a),
                 scrim: ca(0x18211f55),
                 toast: c(0x22392f),
@@ -231,7 +229,6 @@ impl Theme {
                 primary_hover: c(0xf0628f),
                 primary_fg: c(0xffffff),
                 primary_tint: c(0x3a1a26),
-                primary_on_tint: c(0xff8fb3),
                 selection: c(0xf0628f),
                 scrim: ca(0x00000088),
                 toast: c(0xe6efe9),
@@ -263,6 +260,12 @@ impl Theme {
             Paper::Blush => (0xf8e7e2, 0x3b2a27),
             Paper::Lilac => (0xeee8f7, 0x2e2939),
             Paper::Plain => (0xffffff, 0x232926),
+            Paper::Peach => (0xffe7d4, 0x3d2c21),
+            Paper::Rose => (0xfbe2eb, 0x3b2530),
+            Paper::Ocean => (0xdcf0f1, 0x1f3436),
+            Paper::Mint => (0xdff4e8, 0x1f3628),
+            Paper::Sand => (0xf2ebdc, 0x35302a),
+            Paper::Stone => (0xeceeed, 0x2b2f2e),
         };
         c(if self.is_dark { dark } else { light })
     }
@@ -274,6 +277,18 @@ impl Theme {
             Ink::Coral => (0xd0674a, 0xf08c70),
             Ink::Cobalt => (0x3f68b0, 0x82a6e6),
             Ink::Marigold => (0xc88d1c, 0xe9b54d),
+            Ink::Ruby => (0xc0392b, 0xff7a6b),
+            Ink::Pink => (0xd6457f, 0xff8fb8),
+            Ink::Violet => (0x7e4bc4, 0xb894f2),
+            Ink::Indigo => (0x4b4fc4, 0x9a9df2),
+            Ink::Sky => (0x2f8fd0, 0x7cc4f2),
+            Ink::Teal => (0x1f8f8a, 0x6fd3cc),
+            Ink::Lime => (0x6f9a1f, 0xb5dc5c),
+            Ink::Tangerine => (0xe07b1a, 0xffaa5c),
+            Ink::Brown => (0x8a5a3c, 0xc9977a),
+            Ink::Slate => (0x5f6f7f, 0xa9b6c2),
+            Ink::Silver => (0xa3a9a6, 0x6e7471),
+            Ink::Midnight => (0x101418, 0xf4f4f2),
         };
         c(if self.is_dark { dark } else { light })
     }

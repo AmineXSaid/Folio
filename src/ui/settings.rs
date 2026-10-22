@@ -110,11 +110,11 @@ impl Folio {
             .child(setting(
                 "New notes start on",
                 "The paper of a sheet's first note",
-                div().flex().gap(px(6.)).children(Paper::ALL.iter().map(|&p| {
+                div().flex().gap(px(4.)).children(Paper::ALL.iter().map(|&p| {
                     div()
                         .id(("s-paper", p as usize))
-                        .size(px(26.))
-                        .rounded(t.radius.small)
+                        .size(px(20.))
+                        .rounded(t.radius.full)
                         .bg(t.paper(p))
                         .border_1()
                         .border_color(t.colors.border)
