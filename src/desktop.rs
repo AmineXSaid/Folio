@@ -154,11 +154,10 @@ impl Folio {
                 continue;
             }
             let folio = me.clone();
+            let (bounds, display_id) = on_a_screen(&p, cx);
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                    Point::new(px(p.x), px(p.y)),
-                    size(px(p.w), px(p.h)),
-                ))),
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                display_id,
                 titlebar: None,
                 kind: WindowKind::PopUp,
                 is_movable: true,
@@ -191,6 +190,30 @@ impl Folio {
         }
     }
 }
+
+/// Where a pinned note's window goes: on the screen holding its middle (or
+/// the main one), wholly inside it and no bigger than it. Windows opens a
+/// window it finds off its screen at a default, large size instead.
+fn on_a_screen(p: &Popped, cx: &App) -> (Bounds<gpui::Pixels>, Option<gpui::DisplayId>) {
+    let (w, h) = (p.w.clamp(MIN_W, 900.), p.h.clamp(MIN_H, 900.));
+    let mid = Point::new(px(p.x + w / 2.), px(p.y + h / 2.));
+    let displays = cx.displays();
+    let display = displays.iter().find(|d| d.bounds().contains(&mid)).cloned().or_else(|| cx.primary_display());
+    let Some(display) = display else {
+        return (Bounds::new(Point::new(px(p.x), px(p.y)), size(px(w), px(h))), None);
+    };
+    let screen = display.visible_bounds();
+    let (sx, sy) = (f32::from(screen.origin.x), f32::from(screen.origin.y));
+    let (sw, sh) = (f32::from(screen.size.width), f32::from(screen.size.height));
+    let (w, h) = (w.min(sw - 16.), h.min(sh - 16.));
+    let x = p.x.clamp(sx + 8., sx + sw - w - 8.);
+    let y = p.y.clamp(sy + 8., sy + sh - h - 8.);
+    (Bounds::new(Point::new(px(x), px(y)), size(px(w), px(h))), Some(display.id()))
+}
+
+/// The smallest a pinned note can be made.
+pub const MIN_W: f32 = 180.;
+pub const MIN_H: f32 = 120.;
 
 /// Starts Folio when you sign in to Windows (the Run key), or stops it.
 pub fn set_start_with_windows(on: bool) -> Result<(), String> {

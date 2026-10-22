@@ -73,12 +73,15 @@ impl Render for QuickNoteWindow {
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .on_mouse_down(gpui::MouseButton::Left, |_, window, _| window.start_window_move())
+                            .window_control_area(gpui::WindowControlArea::Drag)
+                            .when(!cfg!(target_os = "windows"), |d| {
+                                d.on_mouse_down(gpui::MouseButton::Left, |_, window, _| window.start_window_move())
+                            })
                             .child(img("brand/folio-64.png").size(px(22.)))
                             .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Quick note"))
                             .child(div().text_size(t.text.caption).text_color(t.colors.text_subtle).child("→ Inbox"))
                             .child(div().flex_1())
-                            .child(icon_button("quick-close", "icons/x.svg", &t).on_click(cx.listener(|this, _, window, cx| this.close(window, cx)))),
+                            .child(icon_button("quick-close", "icons/x.svg", &t).occlude().on_click(cx.listener(|this, _, window, cx| this.close(window, cx)))),
                     )
                     .child(div().flex_1().child(Textarea::new(&self.input)))
                     .child(
