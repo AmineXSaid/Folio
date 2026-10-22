@@ -9,8 +9,6 @@
 //! Everything clickable in the bar blocks the drag area under it.
 
 use gpui::component::InteractiveElementExt;
-use gpui::component::input::Input;
-use gpui::component::Sizable as _;
 use gpui::{div, prelude::*, px, Context, MouseButton, Window, WindowControlArea};
 
 use super::app::{Folio, Screen};
@@ -99,20 +97,6 @@ impl Folio {
                         cx.notify();
                     })),
             )
-            // Back and forward through where you were, dimmed when there's
-            // nowhere to go.
-            .child({
-                let can = !self.nav_back.is_empty();
-                bar_button("go-back", "icons/arrow-left.svg")
-                    .when(!can, |d| d.opacity(0.35).cursor_default())
-                    .on_click(cx.listener(|this, _, window, cx| this.go_back(window, cx)))
-            })
-            .child({
-                let can = !self.nav_forward.is_empty();
-                bar_button("go-forward", "icons/arrow-right.svg")
-                    .when(!can, |d| d.opacity(0.35).cursor_default())
-                    .on_click(cx.listener(|this, _, window, cx| this.go_forward(window, cx)))
-            })
             .child(div().w(px(1.)).h(px(16.)).mx(t.space.xs).bg(t.colors.border))
             .child(
                 div()
@@ -130,47 +114,6 @@ impl Folio {
             )
             .children(here.map(|name| {
                 let icon_text = (self.screen == Screen::Sheet).then(|| self.sheet().icon.clone()).filter(|i| !i.is_empty());
-                // On a sheet, its name: click it to rename it right there.
-                // Outside the sheet's key context, so typing never trips a
-                // one-letter tool key.
-                let name_el = if on_sheet && self.naming {
-                    div()
-                        .id("sheet-name")
-                        .key_context("SheetName")
-                        .occlude()
-                        .w(px(240.))
-                        // The field's own inset, taken back so the name
-                        // doesn't move when the edit starts.
-                        .ml(-t.space.sm)
-                        .h(t.size.bar_control)
-                        .flex()
-                        .items_center()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(t.colors.text)
-                        // The field's small text is 0.875rem: a rem that
-                        // makes it the crumb's size.
-                        .child(rem_scaled(t.text.body / 0.875, Input::new(&self.name_input).appearance(false).small()))
-                        .into_any_element()
-                } else if on_sheet {
-                    div()
-                        .id("sheet-name")
-                        .occlude()
-                        .px(t.space.xs)
-                        .mx(-t.space.xs)
-                        .rounded(t.radius.small)
-                        .cursor(gpui::CursorStyle::IBeam)
-                        .hover(|d| d.bg(t.colors.hover))
-                        .text_size(t.text.body)
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(t.colors.text)
-                        .truncate()
-                        .child(name)
-                        .tooltip(|window, cx| gpui::component::tooltip::Tooltip::new("Rename").build(window, cx))
-                        .on_click(cx.listener(|this, _, window, cx| this.start_naming(window, cx)))
-                        .into_any_element()
-                } else {
-                    div().font_weight(gpui::FontWeight::MEDIUM).text_color(t.colors.text_body).truncate().child(name).into_any_element()
-                };
                 div()
                     .flex()
                     .items_center()
@@ -179,31 +122,36 @@ impl Folio {
                     .text_size(t.text.caption)
                     .child(div().text_color(t.colors.text_subtle).child("/"))
                     .children(icon_text.map(|i| mark(&i, 18., &t)))
-                    .child(name_el)
+                    .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(t.colors.text_body).truncate().child(name))
             }));
 
-        let field = self.palette_field(window, cx);
-        // On a sheet, how many notes and whether it's saved, just past the
-        // search field (hidden while the search is open and wider, and in
-        // a narrow window, where it would run into the buttons).
-        let roomy = window.viewport_size().width >= px(1180.);
-        let meta = (on_sheet && !self.palette && roomy).then(|| {
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left(gpui::relative(1.))
-                .ml(t.space.md)
-                .flex()
-                .items_center()
-                .gap(t.space.xs)
-                .whitespace_nowrap()
-                .text_size(t.text.caption)
-                .text_color(t.colors.text_subtle)
-                .child(div().size(px(6.)).rounded(t.radius.full).bg(if self.saved { t.colors.ok } else { t.colors.alert }))
-                .child(self.sheet_meta())
-        });
-        let field = div().relative().child(field).children(meta);
+        // Back and forward through where you were, just left of the
+        // search, dimmed when there's nowhere to go. Placed off the field's
+        // left edge, so the field stays centred.
+        let nav = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .right(gpui::relative(1.))
+            .mr(t.space.sm)
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .child({
+                let can = !self.nav_back.is_empty();
+                bar_button("go-back", "icons/arrow-left.svg")
+                    .when(!can, |d| d.opacity(0.35).cursor_default())
+                    .tooltip(|window, cx| gpui::component::tooltip::Tooltip::new("Back  Alt+←").build(window, cx))
+                    .on_click(cx.listener(|this, _, window, cx| this.go_back(window, cx)))
+            })
+            .child({
+                let can = !self.nav_forward.is_empty();
+                bar_button("go-forward", "icons/arrow-right.svg")
+                    .when(!can, |d| d.opacity(0.35).cursor_default())
+                    .tooltip(|window, cx| gpui::component::tooltip::Tooltip::new("Forward  Alt+→").build(window, cx))
+                    .on_click(cx.listener(|this, _, window, cx| this.go_forward(window, cx)))
+            });
+        let field = div().relative().child(nav).child(self.palette_field(window, cx));
         let search = div()
             .absolute()
             .left_0()

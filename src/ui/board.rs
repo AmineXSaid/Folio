@@ -8,6 +8,7 @@
 //! fields aren't inside the sheet's single-letter shortcuts.
 
 use gpui::component::input::{Input, Textarea};
+use gpui::component::Sizable as _;
 use gpui::{
     canvas, div, point, prelude::*, px, Context, Hsla, KeyDownEvent, KeyUpEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, PathBuilder, Pixels, ScrollWheelEvent, Window,
@@ -359,6 +360,9 @@ impl Folio {
             .flex_1()
             .min_h_0()
             .child(board)
+            // Outside the sheet's key context, so typing a new name never
+            // trips a one-letter tool key.
+            .child(self.render_sheet_head(&t, cx))
             .children(self.render_label_edit(&t))
             .children(edit_layer)
             .child(self.render_toolbar(window, cx))
@@ -366,11 +370,70 @@ impl Folio {
             .when(self.board.settings.minimap && !empty, |d| d.child(self.render_minimap(&t, cx)))
     }
 
-    /// Beside the search in the title bar: the sheet's count of notes and
-    /// whether it's saved.
-    pub(super) fn sheet_meta(&self) -> String {
-        let n = self.sheet().stickers.len();
-        format!("{n} note{} · {}", if n == 1 { "" } else { "s" }, if self.saved { "Saved" } else { "Saving…" })
+    fn render_sheet_head(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let sheet = self.sheet();
+        let n = sheet.stickers.len();
+        let meta = format!(
+            "{}{} note{} · {}",
+            if sheet.blurb.is_empty() { String::new() } else { format!("{} · ", sheet.blurb) },
+            n,
+            if n == 1 { "" } else { "s" },
+            if self.saved { "Saved" } else { "Saving…" }
+        );
+        let icon_text = sheet.icon.clone();
+        // The name: click it to rename the sheet right there.
+        let title = if self.naming {
+            // Typed into in place: same size, same weight, no box; only the
+            // caret says it's being edited.
+            div()
+                .id("sheet-name")
+                .key_context("SheetName")
+                .w(px(560.))
+                .h(px(34.))
+                .ml(px(-8.))
+                .flex()
+                .items_center()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(t.colors.text)
+                // The field's small text is 0.875rem: a rem that makes it
+                // the heading's size.
+                .child(rem_scaled(t.text.heading / 0.875, Input::new(&self.name_input).appearance(false).small()))
+                .into_any_element()
+        } else {
+            div()
+                .id("sheet-name")
+                .occlude()
+                .cursor(gpui::CursorStyle::IBeam)
+                .text_size(t.text.heading)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(t.colors.text)
+                .child(sheet.name.clone())
+                .on_click(cx.listener(|this, _, window, cx| this.start_naming(window, cx)))
+                .into_any_element()
+        };
+        div()
+            .absolute()
+            .top(t.space.xl)
+            .left(t.space.xxl)
+            .flex()
+            .flex_col()
+            .gap(t.space.xxs)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(t.space.xs)
+                    .gap(t.space.sm)
+                    .when(!icon_text.is_empty(), |d| {
+                        d.child(if is_monogram(&icon_text) {
+                            mark(&icon_text, 34., t).into_any_element()
+                        } else {
+                            div().text_size(t.text.heading).child(icon_text).into_any_element()
+                        })
+                    })
+                    .child(title),
+            )
+            .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(meta))
     }
 
     /// Text being written on the sheet: a caret where the text sits, in
