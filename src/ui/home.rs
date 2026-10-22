@@ -225,7 +225,7 @@ impl Folio {
         let thumb = miniature(c, inner, (inner * 0.66).round(), true, t);
         let n = c.stickers.len();
         let when = format!("{n} note{} · {}", if n == 1 { "" } else { "s" }, time::ago(c.opened.max(c.edited), now()));
-        let name = if c.icon.is_empty() { c.name.clone() } else { format!("{}  {}", c.icon, c.name) };
+        let name = c.name.clone();
         let pinned = c.pinned && !c.inbox;
         let shadow = t.shadow_card(0.6);
         div()
@@ -249,7 +249,7 @@ impl Folio {
                     .items_center()
                     .gap(t.space.sm)
                     .px(px(4.))
-                    .child(div().size(px(12.)).flex_none().rounded(px(3.)).bg(t.accent(c.accent)))
+                    .child(sheet_badge(c, 32., t))
                     .child(
                         div()
                             .flex_1()

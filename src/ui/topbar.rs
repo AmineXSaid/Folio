@@ -30,7 +30,23 @@ impl Folio {
             .gap(t.space.sm)
             .min_w_0()
             .child(
-                icon_button("drawer", "icons/panel-left.svg", &t)
+                // Opens the sheets drawer: a stack of sheets and a label.
+                div()
+                    .id("drawer")
+                    .h(t.size.control)
+                    .pl(t.space.sm)
+                    .pr(t.space.md)
+                    .flex()
+                    .items_center()
+                    .gap(t.space.sm)
+                    .rounded(t.radius.button)
+                    .border_1()
+                    .border_color(t.colors.border)
+                    .bg(t.colors.surface_sunk)
+                    .cursor_pointer()
+                    .hover(|d| d.bg(t.colors.hover).border_color(t.colors.text_subtle))
+                    .child(icon("icons/layers.svg", t.size.icon, t.colors.text))
+                    .child(div().text_size(t.text.caption).font_weight(gpui::FontWeight::MEDIUM).child("Sheets"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.finish_edit(cx);
                         this.drawer = !this.drawer;
@@ -62,16 +78,6 @@ impl Folio {
                     .gap(t.space.sm)
                     .min_w_0()
                     .text_size(t.text.body)
-                    .child(div().text_color(t.colors.border).child("/"))
-                    .child(
-                        div()
-                            .id("crumb-home")
-                            .text_color(t.colors.text_subtle)
-                            .cursor_pointer()
-                            .hover(|d| d.text_color(t.colors.text))
-                            .child("Sheets")
-                            .on_click(cx.listener(|this, _, _, cx| this.go_home(cx))),
-                    )
                     .child(div().text_color(t.colors.border).child("/"))
                     .child(div().font_weight(gpui::FontWeight::SEMIBOLD).truncate().child(name))
             }));

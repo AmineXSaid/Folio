@@ -133,6 +133,26 @@ pub fn secondary_button(id: impl Into<gpui::ElementId>, label: &'static str, t: 
         .child(label)
 }
 
+/// A sheet's badge: its emoji (or first letter) on a soft tile tinted
+/// with the sheet's colour: one mark, not an emoji beside a swatch.
+pub fn sheet_badge(c: &crate::model::Category, size: f32, t: &Theme) -> gpui::Div {
+    let tint = t.accent(c.accent);
+    let tile = div()
+        .size(px(size))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(size * 0.3))
+        .bg(tint.opacity(if t.is_dark { 0.22 } else { 0.18 }));
+    if c.icon.is_empty() {
+        let letter: String = c.name.chars().find(|ch| ch.is_alphanumeric()).unwrap_or('•').to_uppercase().collect();
+        tile.text_size(px(size * 0.5)).font_weight(gpui::FontWeight::BOLD).text_color(tint).child(letter)
+    } else {
+        tile.text_size(px(size * 0.56)).child(c.icon.clone())
+    }
+}
+
 /// A keyboard hint chip.
 pub fn kbd(text: impl Into<SharedString>, t: &Theme) -> gpui::Div {
     div()

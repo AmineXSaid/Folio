@@ -192,7 +192,7 @@ impl Folio {
     fn drawer_card(&self, ix: usize, active: bool, t: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let c = &self.board.categories[ix];
         let n = c.stickers.len();
-        let name = if c.icon.is_empty() { c.name.clone() } else { format!("{} {}", c.icon, c.name) };
+        let name = c.name.clone();
         let meta = format!("{n} note{} · {}", if n == 1 { "" } else { "s" }, time::ago(c.opened.max(c.edited), now()));
         div()
             .id(("drawer-card", ix))
@@ -221,10 +221,17 @@ impl Folio {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(div().text_size(t.text.body).font_weight(gpui::FontWeight::SEMIBOLD).truncate().child(name))
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(t.space.sm)
+                            .child(sheet_badge(c, 20., t))
+                            .child(div().flex_1().min_w_0().text_size(t.text.body).font_weight(gpui::FontWeight::SEMIBOLD).truncate().child(name)),
+                    )
                     .child(div().text_size(t.text.micro).text_color(t.colors.text_subtle).child(meta)),
             )
-            .child(div().size(px(8.)).flex_none().self_start().mt(px(4.)).rounded(t.radius.full).bg(t.accent(c.accent)))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, ev: &MouseDownEvent, _, cx| this.open_menu(ev.position, MenuKind::Card(ix), cx)),
