@@ -6,7 +6,7 @@
 #   cargo build && scripts/screenshots.sh [out-dir]
 #
 # Runs the debug build on a virtual display with a throwaway data folder
-# (FOLIO_DATA_DIR), so it opens on the demo board, and saves, as
+# (FOLIO_DATA_DIR) and FOLIO_DEMO=1, so it opens on the sample sheets, and saves, as
 # <name>-light.png and <name>-dark.png:
 #   intro   the opening, mid-way      home    the home screen
 #   drawer  the sheets drawer         sheet   a sheet
@@ -43,7 +43,7 @@ key() { xdotool key --clearmodifiers "$@"; sleep 0.4; }
 for mode in light dark; do
   rm -rf "$TMP/data"
   mkdir -p "$TMP/data"
-  FOLIO_DATA_DIR="$TMP/data" "$BIN" >"$TMP/app-$mode.log" 2>&1 &
+  FOLIO_DEMO=1 FOLIO_DATA_DIR="$TMP/data" "$BIN" >"$TMP/app-$mode.log" 2>&1 &
   APP_PID=$!
   WID=""
   for _ in $(seq 1 40); do WID="$(xdotool search --pid "$APP_PID" 2>/dev/null | tail -1 || true)"; [ -n "$WID" ] && break; sleep 0.25; done

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub type Id = u64;
 
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 pub const MIN_ZOOM: f32 = 0.25;
 pub const MAX_ZOOM: f32 = 3.0;
 pub const MIN_STICKER: (f32, f32) = (140., 90.);
@@ -902,6 +902,14 @@ impl Board {
     }
     /// Repairs what a hand-edited or older file might get wrong.
     pub fn normalize(&mut self) {
+        if self.version < 3 {
+            // Folio no longer starts with sample sheets: the ones nobody
+            // touched go (edited ones stay).
+            crate::demo::remove_untouched(self);
+            if self.categories.is_empty() {
+                self.add_sheet_with_icon("My notes", "📝");
+            }
+        }
         if self.categories.is_empty() {
             *self = Board::empty();
         }
@@ -921,12 +929,10 @@ impl Board {
             .max()
             .unwrap_or(0);
         self.next_id = self.next_id.max(max);
-        if self.version < 2 {
-            if self.dark {
-                self.settings.theme = ThemeMode::Dark;
-            }
-            self.version = FORMAT_VERSION;
+        if self.version < 2 && self.dark {
+            self.settings.theme = ThemeMode::Dark;
         }
+        self.version = FORMAT_VERSION;
         self.settings.ui_scale = self.settings.ui_scale.clamp(0.8, 1.4);
         for c in &mut self.categories {
             c.camera.zoom = c.camera.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
@@ -938,10 +944,21 @@ impl Board {
             c.links.retain(|l| ids.contains(&l.from) && ids.contains(&l.to));
         }
     }
+    /// A first launch: one empty sheet.
     pub fn empty() -> Board {
         let mut b = Board::blank();
-        b.add_sheet("My first sheet");
+        b.add_sheet_with_icon("My notes", "📝");
         b
+    }
+
+    fn add_sheet_with_icon(&mut self, name: &str, icon: &str) {
+        self.add_sheet(name);
+        let t = crate::time::now();
+        let sheet = self.sheet_mut();
+        sheet.icon = icon.into();
+        sheet.edited = t;
+        sheet.opened = t;
+        self.active = 0;
     }
 
     /// No sheets at all; callers add them.

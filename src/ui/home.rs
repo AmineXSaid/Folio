@@ -30,7 +30,8 @@ impl Folio {
             _ => "Good evening",
         };
         let (title, sub) = if q.is_empty() {
-            (greet.to_string(), format!("{} sheets · {} notes", self.board.categories.len(), n_notes))
+            let count = |n: usize, one: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {one}s") };
+            (greet.to_string(), format!("{} · {}", count(self.board.categories.len(), "sheet"), count(n_notes, "note")))
         } else {
             let hits = self.board.search(&q).len();
             let what = match q.strip_prefix("paper:") {
@@ -91,7 +92,9 @@ impl Folio {
                     }))
                     .into_any_element()
             });
-            body = body.child(
+            // Nothing to filter until there are notes.
+            let any_notes = self.board.categories.iter().any(|c| !c.stickers.is_empty());
+            body = body.when(any_notes, |b| b.child(
                 div()
                     .flex()
                     .flex_wrap()
@@ -126,7 +129,7 @@ impl Folio {
                             }))
                             .into_any_element()
                     })),
-            );
+            ));
             let mut order = self.board.ordered();
             if self.sort == Sort::Name {
                 order.sort_by_key(|&i| {

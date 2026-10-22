@@ -1,16 +1,23 @@
-//! The bar across the top: the sheets button (opens the drawer), the logo
-//! and where you are; the search box in the middle; on the right the
-//! screen's main action.
+//! The bar across the top, which is also the window's title bar: the
+//! sheets button (opens the drawer), the wordmark and where you are; the
+//! search box in the middle; on the right the screen's main action, then
+//! minimize, maximize and close. Dragging the bar moves the window and a
+//! double-click maximizes it.
+//!
+//! On Windows the system does the moving, snapping and the caption buttons'
+//! clicks (each area says what it is); elsewhere the bar does them itself.
+//! Everything clickable in the bar blocks the drag area under it.
 
 use gpui::component::input::Input;
-use gpui::{div, prelude::*, px, Context, Window};
+use gpui::component::InteractiveElementExt;
+use gpui::{div, prelude::*, px, Context, MouseButton, Window, WindowControlArea};
 
 use super::app::{Folio, Screen};
 use super::*;
 use crate::theme::theme;
 
 impl Folio {
-    pub(super) fn render_topbar(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_topbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         let here: Option<String> = match self.screen {
             Screen::Home => None,
@@ -34,6 +41,7 @@ impl Folio {
             }
         };
         let sync_button = icon_button("sync", sync_icon, &t)
+            .occlude()
             .relative()
             .children(sync_dot.map(|c| {
                 div()
@@ -59,6 +67,7 @@ impl Folio {
                 // Opens the sheets drawer: a stack of sheets and a label.
                 div()
                     .id("drawer")
+                    .occlude()
                     .h(t.size.control)
                     .pl(t.space.sm)
                     .pr(t.space.md)
@@ -82,6 +91,7 @@ impl Folio {
             .child(
                 div()
                     .id("home-mark")
+                    .occlude()
                     .flex()
                     .items_center()
                     .gap(t.space.sm)
@@ -118,6 +128,8 @@ impl Folio {
             .justify_center()
             .child(
                 div()
+                    .id("search")
+                    .occlude()
                     .w(px(480.))
                     .h(px(38.))
                     .flex()
@@ -135,6 +147,8 @@ impl Folio {
             );
 
         let right = div()
+            .id("bar-actions")
+            .occlude()
             .flex()
             .items_center()
             .gap(t.space.xs)
@@ -158,19 +172,90 @@ impl Folio {
                     .into_any_element()
             });
 
+        let controls = window_controls(window, &t);
+        let has_controls = controls.is_some();
         div()
+            .id("topbar")
             .h(t.size.topbar)
             .flex_none()
             .relative()
             .flex()
             .items_center()
-            .px(t.space.lg)
+            .pl(if cfg!(target_os = "macos") { px(84.) } else { t.space.lg })
+            .when(!has_controls, |d| d.pr(t.space.lg))
             .bg(t.colors.surface)
             .border_b_1()
             .border_color(t.colors.border)
+            .window_control_area(WindowControlArea::Drag)
+            .when(cfg!(target_os = "linux"), |d| {
+                d.on_double_click(|_, window, _| window.zoom_window())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| this.bar_drag = true),
+                    )
+                    .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.bar_drag = false))
+                    .on_mouse_move(cx.listener(|this, _, window, _| {
+                        if std::mem::take(&mut this.bar_drag) {
+                            window.start_window_move();
+                        }
+                    }))
+            })
             .child(search)
             .child(left)
             .child(div().flex_1())
             .child(right)
+            .children(controls)
     }
+}
+
+/// Minimize, maximize (or restore) and close, at the bar's right end, the
+/// size Windows draws them. None on a Mac, where the window has its own.
+fn window_controls(window: &Window, t: &crate::theme::Theme) -> Option<gpui::Div> {
+    if cfg!(target_os = "macos") {
+        return None;
+    }
+    let maximized = window.is_maximized();
+    let button = |id: &'static str, glyph: &'static str, area: WindowControlArea| {
+        let close = area == WindowControlArea::Close;
+        let (hover_bg, hover_fg) = if close { (t.colors.window_close, t.colors.primary_fg) } else { (t.colors.hover, t.colors.text) };
+        div()
+            .id(id)
+            .group(id)
+            .occlude()
+            .w(px(46.))
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .hover(move |d| d.bg(hover_bg))
+            .window_control_area(area)
+            .child(svg_glyph(glyph, t).group_hover(id, move |s| s.text_color(hover_fg)))
+            .when(!cfg!(target_os = "windows"), |d| {
+                d.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    match area {
+                        WindowControlArea::Min => window.minimize_window(),
+                        WindowControlArea::Max => window.zoom_window(),
+                        _ => window.dispatch_action(Box::new(Quit), cx),
+                    }
+                })
+            })
+    };
+    Some(
+        div()
+            .h_full()
+            .flex()
+            .ml(t.space.sm)
+            .child(button("win-min", "icons/caption-minimize.svg", WindowControlArea::Min))
+            .child(button(
+                "win-max",
+                if maximized { "icons/caption-restore.svg" } else { "icons/caption-maximize.svg" },
+                WindowControlArea::Max,
+            ))
+            .child(button("win-close", "icons/caption-close.svg", WindowControlArea::Close)),
+    )
+}
+
+fn svg_glyph(path: &'static str, t: &crate::theme::Theme) -> gpui::Svg {
+    icon(path, t.size.icon, t.colors.text_muted)
 }

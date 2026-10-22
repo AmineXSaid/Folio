@@ -38,6 +38,8 @@ pub struct Colors {
     pub alert: Hsla,
     /// All's well: synced, done.
     pub ok: Hsla,
+    /// The window's close button under the pointer (as Windows draws it).
+    pub window_close: Hsla,
 }
 
 #[derive(Clone, Copy)]
@@ -180,6 +182,7 @@ impl Theme {
                 brand_on_tint: c(0xb8285a),
                 alert: c(0xd03b3b),
                 ok: c(0x2f8f5b),
+                window_close: c(0xc42b1c),
             },
             text: TEXT,
             space: SPACE,
@@ -220,6 +223,7 @@ impl Theme {
                 brand_on_tint: c(0xff8fb3),
                 alert: c(0xff7b6e),
                 ok: c(0x5cc98a),
+                window_close: c(0xc42b1c),
             },
             text: TEXT,
             space: SPACE,

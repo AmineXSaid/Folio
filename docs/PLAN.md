@@ -31,6 +31,7 @@ and what is still to come.
 | Google Drive | ✅ optional sign-in with Google (browser, PKCE, `drive.file` only); board and pictures kept in a Folio folder in Drive, synced after changes, every minute, at start-up and quit; three-way merge per item from the last shared version, ids renumbered where two computers collide; first sync asks merge / keep mine / use Drive's; start over either way (`src/cloud.rs`, `src/merge.rs`, `src/ui/sync.rs`) | merge inside a note's text (today the newest edit wins); verified Google app (needed beyond 100 test users) |
 | Export & import | ✅ chosen sheets to Markdown (a folder, one `.md` per sheet, pictures alongside) or a `.folio` file (pictures inside); import a `.folio` as new sheets, from the screen or by dropping it (`src/export.rs`, `src/ui/transfer.rs`) | PNG/PDF of a sheet |
 | Settings | ✅ theme (light/dark/follow Windows), interface size, high contrast, reduce motion, default paper and font, guides, map, open on home/last sheet, start with Windows, quick-note shortcut, data folder, backups | |
+| Window | ✅ no system title bar: the top bar is the title bar (drag to move, Windows snap, double-click to maximize), with Folio's own minimize / maximize / close; first launch on one empty sheet, no samples | |
 | Opening | ✅ animated logo intro, played in full at every launch and not skippable, with the credit "Created and designed by M. Amine Said" | |
 
 ### Experience principles

@@ -193,6 +193,9 @@ pub struct Folio {
     /// Dragging notes over the left edge: the tray of sheets, and the one
     /// under the pointer.
     pub drop_tray: bool,
+    /// The top bar was pressed: moving now moves the window (Linux; on
+    /// Windows the system does it).
+    pub bar_drag: bool,
     pub drop_sheet: Option<usize>,
     /// The undo snapshot taken when the current gesture began.
     pub before: Option<Board>,
@@ -321,6 +324,7 @@ impl Folio {
             guides: Vec::new(),
             settling: Vec::new(),
             drop_tray: false,
+            bar_drag: false,
             drop_sheet: None,
             before: None,
             selection: Vec::new(),

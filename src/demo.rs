@@ -1,5 +1,7 @@
-//! The board a first launch opens on: three sheets that show what a sheet
-//! can hold, so there's something to move around straight away.
+//! Sample sheets that show what a sheet can hold. Folio starts empty; these
+//! are for the tests, for screenshots and demos (`FOLIO_DEMO=1` on a new
+//! data folder), and to tell the samples older versions started with from
+//! sheets people made.
 
 use crate::model::*;
 
@@ -151,4 +153,60 @@ pub fn board() -> Board {
     }
     b.active = 0;
     b
+}
+
+/// Removes the sample sheets an older Folio started with, if they're as
+/// they came: same id and contents (where they're scrolled to, when they
+/// were opened and reminders that went off don't count as changes).
+pub fn remove_untouched(b: &mut Board) {
+    fn plain(c: &Category) -> Category {
+        let mut c = c.clone();
+        c.camera = Camera::default();
+        c.opened = 0;
+        c.edited = 0;
+        for s in &mut c.stickers {
+            s.edited = 0;
+            s.due = None;
+            s.reminded = false;
+            s.popped = None;
+            s.snoozed = 0;
+        }
+        c
+    }
+    let samples: Vec<Category> = board().categories.iter().map(plain).collect();
+    let active = b.categories.get(b.active).map(|c| c.id);
+    b.categories.retain(|c| !samples.iter().any(|s| s.id == c.id && *s == plain(c)));
+    b.active = active.and_then(|id| b.categories.iter().position(|c| c.id == id)).unwrap_or(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn untouched_samples_go_and_edited_ones_stay() {
+        let mut old = board();
+        old.version = 2;
+        old.categories[2].camera.zoom = 2.;
+        old.categories[3].stickers[0].body.push_str(" and more");
+        let kept = old.categories[3].name.clone();
+        old.add_sheet("Mine");
+        old.normalize();
+        let names: Vec<&str> = old.categories.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, [kept.as_str(), "Mine"]);
+
+        let mut untouched = board();
+        untouched.version = 2;
+        untouched.normalize();
+        assert_eq!(untouched.categories.len(), 1);
+        assert_eq!(untouched.categories[0].name, "My notes");
+    }
+
+    #[test]
+    fn current_boards_are_left_alone() {
+        let mut b = board();
+        let n = b.categories.len();
+        b.normalize();
+        assert_eq!(b.categories.len(), n);
+    }
 }

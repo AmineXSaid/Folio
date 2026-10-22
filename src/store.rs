@@ -38,12 +38,16 @@ pub fn media_dir(dir: &Path) -> PathBuf {
     dir.join("media")
 }
 
-/// The saved board, the demo board on first run, or — if the file can't be
-/// read — the demo board, with the bad file kept aside as `board.json.bad`.
+/// The saved board; on first run one empty sheet (the sample sheets with
+/// `FOLIO_DEMO=1`); if the file can't be read, an empty board, with the bad
+/// file kept aside as `board.json.bad`.
 pub fn load(dir: &Path) -> Board {
     let path = board_file(dir);
     let Ok(text) = std::fs::read_to_string(&path) else {
-        return demo::board();
+        if std::env::var_os("FOLIO_DEMO").is_some() {
+            return demo::board();
+        }
+        return Board::empty();
     };
     match serde_json::from_str::<Board>(&text) {
         Ok(mut b) => {
@@ -52,7 +56,7 @@ pub fn load(dir: &Path) -> Board {
         }
         Err(_) => {
             let _ = std::fs::rename(&path, dir.join("board.json.bad"));
-            demo::board()
+            Board::empty()
         }
     }
 }

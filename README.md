@@ -39,6 +39,16 @@ Your workspace is saved in `%APPDATA%\Folio` (Windows),
 (Linux). Set `FOLIO_DATA_DIR` to use another folder. It holds `board.json`
 and a `media/` folder for pictures.
 
+A first launch opens on one empty sheet, *My notes*. Older versions started
+with sample sheets; the ones left untouched are removed on update, edited
+ones stay. `FOLIO_DEMO=1` with a new data folder opens on the samples
+(for screenshots and demos).
+
+The window has no system title bar: Folio's top bar is the title bar.
+Drag it to move the window (on Windows, with snapping), double-click it
+to maximize, and use the minimize / maximize / close buttons at its right
+end.
+
 ### Sync & export
 
 The cloud button in the top bar (or the drawer, or Ctrl+K › *Sync &

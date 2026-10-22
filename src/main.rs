@@ -94,7 +94,16 @@ fn main() {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(760.), px(520.))),
             app_id: Some("folio".into()),
-            titlebar: Some(gpui::TitlebarOptions { title: Some("Folio".into()), ..Default::default() }),
+            // No system title bar: Folio's top bar is the title bar, with its
+            // own minimize / maximize / close (see ui/topbar.rs). The title
+            // still names the window in the taskbar and Alt+Tab.
+            titlebar: Some(gpui::TitlebarOptions {
+                title: Some("Folio".into()),
+                appears_transparent: true,
+                traffic_light_position: Some(gpui::point(px(14.), px(22.))),
+            }),
+            window_decorations: Some(gpui::WindowDecorations::Client),
+            app_owns_titlebar_drag: true,
             ..Default::default()
         };
         let (handle, folio) = gpui::open_window(options, cx, |window, cx| cx.new(|cx| ui::app::Folio::new(window, cx)))
