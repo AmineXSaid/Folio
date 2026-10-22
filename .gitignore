@@ -1,2 +1,5 @@
 target/
 dist/
+# Fonts licensed to whoever builds, embedded by build.rs, never committed.
+assets/fonts/extra/*
+!assets/fonts/extra/README.md

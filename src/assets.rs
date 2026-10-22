@@ -1,5 +1,6 @@
 //! What ships inside the binary: Lucide icons (ISC, `assets/icons/LICENSE`),
-//! Hanken Grotesk, JetBrains Mono and Comic Neue (OFL), and the Folio logo.
+//! Hanken Grotesk, JetBrains Mono and Comic Neue (OFL), the Folio logo, and
+//! any fonts placed in `assets/fonts/extra` at build time (see build.rs).
 
 use std::borrow::Cow;
 
@@ -38,6 +39,8 @@ pub fn load_fonts(cx: &App) {
         Cow::Borrowed(include_bytes!("../assets/fonts/ComicNeue-Regular.otf")),
         Cow::Borrowed(include_bytes!("../assets/fonts/ComicNeue-Bold.otf")),
     ];
+    // Fonts put in assets/fonts/extra when this was built (see build.rs).
+    let fonts: Vec<Cow<'static, [u8]>> = fonts.into_iter().chain(EXTRA_FONTS.iter().map(|f| Cow::Borrowed(*f))).collect();
     if let Err(e) = cx.text_system().add_fonts(fonts) {
         eprintln!("could not load the bundled fonts: {e}");
     }

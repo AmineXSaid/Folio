@@ -183,6 +183,8 @@ pub struct Folio {
     /// The window's own focus, off the sheet: the app-wide shortcuts.
     pub root_focus: FocusHandle,
     pub screen: Screen,
+    /// Where a side screen (Settings, Trash, Sync & export) goes back to.
+    pub back_to: Screen,
     pub drawer: bool,
     pub tool: Tool,
     pub ink: Ink,
@@ -218,6 +220,13 @@ pub struct Folio {
     pub dialog: Option<Dialog>,
     pub palette: bool,
     pub palette_ix: usize,
+    /// Counts openings, so each plays its arrival again.
+    pub palette_opened: usize,
+    /// Commands and sheets run from the search lately, newest first.
+    pub palette_recent: Vec<SharedString>,
+    pub palette_scroll: gpui::ScrollHandle,
+    /// The selection moved by key: scroll it into view next frame.
+    pub palette_reveal: bool,
     /// The emoji picker's tab.
     pub emoji_tab: usize,
     pub intro: Option<Intro>,
@@ -234,6 +243,9 @@ pub struct Folio {
     pub search_input: Entity<InputState>,
     pub palette_input: Entity<InputState>,
     pub dialog_input: Entity<InputState>,
+    /// The sheet's name while it's being renamed in place.
+    pub name_input: Entity<InputState>,
+    pub naming: bool,
     pub dialog_body: Entity<TextareaState>,
     pub desktop: crate::desktop::Desktop,
     pub sync: super::sync::DriveSync,
@@ -261,6 +273,7 @@ impl Folio {
         let palette_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Type a command, a sheet or a note…"));
         let dialog_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
+        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name this sheet"));
         let dialog_body = cx.new(|cx| TextareaState::new(window, cx).auto_grow(3, 10).placeholder("Write on the sheet…"));
         let subs = vec![
             cx.observe(&search_input, |this, _, cx| {
@@ -276,6 +289,16 @@ impl Folio {
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => this.palette_run(this.palette_ix, window, cx),
+                _ => {}
+            }),
+            // The sheet's name, typed over its title: Enter or clicking away
+            // keeps it.
+            cx.subscribe_in(&name_input, window, |this, _, ev, window, cx| match ev {
+                InputEvent::PressEnter { .. } => {
+                    this.finish_naming(true, cx);
+                    window.focus(&this.focus, cx);
+                }
+                InputEvent::Blur => this.finish_naming(true, cx),
                 _ => {}
             }),
             cx.subscribe_in(&dialog_input, window, |this, _, ev, window, cx| {
@@ -318,6 +341,7 @@ impl Folio {
             focus,
             root_focus,
             screen,
+            back_to: screen,
             drawer: false,
             tool: Tool::Select,
             ink: Ink::Graphite,
@@ -341,6 +365,10 @@ impl Folio {
             dialog: None,
             palette: false,
             palette_ix: 0,
+            palette_opened: 0,
+            palette_recent: Vec::new(),
+            palette_scroll: gpui::ScrollHandle::new(),
+            palette_reveal: false,
             emoji_tab: 0,
             intro,
             sort: Sort::Recent,
@@ -354,6 +382,8 @@ impl Folio {
             search_input,
             palette_input,
             dialog_input,
+            name_input,
+            naming: false,
             dialog_body,
             desktop: crate::desktop::Desktop::default(),
             sync: Default::default(),
@@ -441,6 +471,7 @@ impl Folio {
 
     pub fn apply_theme(&mut self, cx: &mut Context<Self>) {
         let s = &self.board.settings;
+        super::motion::set_reduced(s.reduce_motion);
         theme::set(self.dark(), s.high_contrast, s.ui_scale, cx);
         sync_component_theme(cx);
         cx.refresh_windows();
@@ -586,16 +617,41 @@ impl Folio {
         cx.notify();
     }
 
-    pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+    /// Settings, Trash and Sync & export open over where you were; going
+    /// to the one already open takes you back.
+    pub fn open_side(&mut self, to: Screen, cx: &mut Context<Self>) {
         self.finish_edit(cx);
-        self.screen = Screen::Settings;
         self.drawer = false;
+        self.menu = None;
+        if self.screen == to {
+            self.close_side(cx);
+            return;
+        }
+        if matches!(self.screen, Screen::Home | Screen::Sheet) {
+            self.back_to = self.screen;
+        }
+        self.screen = to;
         cx.notify();
     }
 
+    /// Back from Settings, Trash or Sync & export to the sheet or home.
+    pub fn close_side(&mut self, cx: &mut Context<Self>) {
+        self.screen = if self.back_to == Screen::Sheet && !self.board.categories.is_empty() { Screen::Sheet } else { Screen::Home };
+        self.board.at_home = self.screen == Screen::Home;
+        cx.notify();
+    }
+
+    pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.open_side(Screen::Settings, cx);
+    }
+
     pub fn open_bin(&mut self, tab: BinTab, cx: &mut Context<Self>) {
-        self.finish_edit(cx);
-        self.screen = Screen::Bin;
+        if self.screen == Screen::Bin && self.bin_tab != tab {
+            self.bin_tab = tab;
+            cx.notify();
+            return;
+        }
+        self.open_side(Screen::Bin, cx);
         self.bin_tab = tab;
         self.drawer = false;
         cx.notify();
@@ -638,6 +694,33 @@ impl Folio {
         });
         let input = self.dialog_input.clone();
         window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+        cx.notify();
+    }
+
+    /// Renaming the open sheet in place: its title becomes a text field.
+    pub fn start_naming(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_edit(cx);
+        let name = self.sheet().name.clone();
+        self.naming = true;
+        self.name_input.update(cx, |i, cx| {
+            i.set_value(name.clone(), window, cx);
+            i.set_selected_range(0..name.len(), cx);
+        });
+        let input = self.name_input.clone();
+        window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+        cx.notify();
+    }
+
+    /// Ends renaming; `keep` saves the name (one undo step), else it's
+    /// left as it was. An empty name changes nothing.
+    pub fn finish_naming(&mut self, keep: bool, cx: &mut Context<Self>) {
+        if !std::mem::take(&mut self.naming) {
+            return;
+        }
+        let name = self.name_input.read(cx).value().trim().to_string();
+        if keep && !name.is_empty() && name != self.sheet().name {
+            self.change(cx, |b| b.sheet_mut().name = name);
+        }
         cx.notify();
     }
 
@@ -1373,7 +1456,7 @@ impl Folio {
         let before = self.board.settings.clone();
         f(&mut self.board.settings);
         let s = self.board.settings.clone();
-        if s.theme != before.theme || s.high_contrast != before.high_contrast || s.ui_scale != before.ui_scale {
+        if s.theme != before.theme || s.high_contrast != before.high_contrast || s.ui_scale != before.ui_scale || s.reduce_motion != before.reduce_motion {
             self.apply_theme(cx);
         }
         if s.start_with_windows != before.start_with_windows {
@@ -1465,8 +1548,7 @@ impl Render for Folio {
             }))
             .on_action(cx.listener(|this, _: &OpenPalette, window, cx| this.open_palette(window, cx)))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
-                this.finish_edit(cx);
-                this.search_input.update(cx, |i, cx| i.focus(window, cx));
+                this.open_palette_with("@", window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(cx)))
             .on_action(cx.listener(|_, _: &QuickNote, _, cx| crate::desktop::open_quick_note(cx.entity(), cx)))
@@ -1476,7 +1558,10 @@ impl Render for Folio {
                 cx.quit();
             }))
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
-                if this.editing.is_some() {
+                if this.naming {
+                    this.finish_naming(false, cx);
+                    window.focus(&this.focus, cx);
+                } else if this.editing.is_some() {
                     this.finish_edit(cx);
                     window.focus(&this.focus, cx);
                 } else if this.palette {
@@ -1487,14 +1572,23 @@ impl Render for Folio {
                     this.dialog_cancel(window, cx);
                 } else if this.drawer {
                     this.drawer = false;
+                } else if matches!(this.screen, Screen::Settings | Screen::Bin | Screen::Transfer) {
+                    this.close_side(cx);
                 }
                 cx.notify();
             }))
             .child(self.render_topbar(window, cx))
-            .child(div().flex_1().min_h_0().relative().flex().flex_col().child(main))
+            .child({
+                // Going somewhere: the page fades up into place.
+                let key = match self.screen {
+                    Screen::Sheet => format!("page-sheet-{}", self.sheet().id),
+                    s => format!("page-{s:?}"),
+                };
+                super::motion::page_in(div().flex_1().min_h_0().relative().flex().flex_col().child(main), gpui::ElementId::Name(key.into()), &t)
+            })
             .child(self.render_drawer(window, cx))
             .children(self.dialog.is_some().then(|| self.render_dialog(window, cx)))
-            .children(self.palette.then(|| self.render_palette(window, cx)))
+            .children(self.palette.then(|| self.render_palette_scrim(cx)))
             .children(self.menu.is_some().then(|| self.render_menu(window, cx)))
             .children(self.toast.clone().map(|msg| toast(&t, msg)))
             .children(self.intro.is_some().then(|| self.render_intro(window, cx)))

@@ -326,7 +326,6 @@ impl Folio {
                 this.drop_paths(paths.paths().to_vec(), cx);
             }))
             .child(underlay)
-            .child(self.render_sheet_head(&t))
             .children(frames)
             .children(labels)
             .children(stickers)
@@ -360,13 +359,16 @@ impl Folio {
             .flex_1()
             .min_h_0()
             .child(board)
+            // Outside the sheet's key context, so typing a new name never
+            // trips a one-letter tool key.
+            .child(self.render_sheet_head(&t, cx))
             .children(edit_layer)
             .child(self.render_toolbar(window, cx))
             .child(self.render_zoom(cx))
             .when(self.board.settings.minimap && !empty, |d| d.child(self.render_minimap(&t, cx)))
     }
 
-    fn render_sheet_head(&self, t: &Theme) -> impl IntoElement {
+    fn render_sheet_head(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let sheet = self.sheet();
         let n = sheet.stickers.len();
         let meta = format!(
@@ -376,7 +378,42 @@ impl Folio {
             if n == 1 { "" } else { "s" },
             if self.saved { "Saved" } else { "Saving…" }
         );
-        let name = if sheet.icon.is_empty() { sheet.name.clone() } else { format!("{} {}", sheet.icon, sheet.name) };
+        let icon_text = sheet.icon.clone();
+        // The name: click it to rename the sheet right there.
+        let title = if self.naming {
+            div()
+                .id("sheet-name")
+                .key_context("SheetName")
+                .min_w(px(280.))
+                .px(t.space.sm)
+                .ml(px(-9.))
+                .rounded(t.radius.button)
+                .border_1()
+                .border_color(t.colors.brand)
+                .bg(t.colors.surface)
+                .shadow(t.shadow_card(1.))
+                .text_size(t.text.heading)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(Input::new(&self.name_input).appearance(false))
+                .into_any_element()
+        } else {
+            div()
+                .id("sheet-name")
+                .occlude()
+                .px(t.space.sm)
+                .ml(px(-9.))
+                .rounded(t.radius.button)
+                .border_1()
+                .border_color(gpui::transparent_black())
+                .cursor(gpui::CursorStyle::IBeam)
+                .hover(|d| d.bg(t.colors.hover).border_color(t.colors.border))
+                .text_size(t.text.heading)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(t.colors.text)
+                .child(sheet.name.clone())
+                .on_click(cx.listener(|this, _, window, cx| this.start_naming(window, cx)))
+                .into_any_element()
+        };
         div()
             .absolute()
             .top(t.space.xl)
@@ -384,7 +421,14 @@ impl Folio {
             .flex()
             .flex_col()
             .gap(t.space.xxs)
-            .child(div().text_size(t.text.heading).font_weight(gpui::FontWeight::SEMIBOLD).text_color(t.colors.text).child(name))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(t.space.xs)
+                    .when(!icon_text.is_empty(), |d| d.child(div().text_size(t.text.heading).child(icon_text)))
+                    .child(title),
+            )
             .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(meta))
     }
 

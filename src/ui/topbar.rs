@@ -8,8 +8,7 @@
 //! clicks (each area says what it is); elsewhere the bar does them itself.
 //! Everything clickable in the bar blocks the drag area under it.
 
-use gpui::component::input::Input;
-use gpui::component::{InteractiveElementExt, Sizable};
+use gpui::component::InteractiveElementExt;
 use gpui::{div, prelude::*, px, Context, MouseButton, Window, WindowControlArea};
 
 use super::app::{Folio, Screen};
@@ -53,6 +52,7 @@ impl Folio {
                 .rounded(t.radius.small)
                 .cursor_pointer()
                 .hover(|d| d.bg(t.colors.hover))
+                .active(|d| d.bg(t.colors.border))
                 .child(icon(path, t.size.icon_sm, t.colors.text_muted))
         };
         let sync_button = bar_button("sync", sync_icon)
@@ -126,6 +126,7 @@ impl Folio {
                     .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(t.colors.text_body).truncate().child(name))
             }));
 
+        let field = self.palette_field(window, cx);
         let search = div()
             .absolute()
             .left_0()
@@ -135,26 +136,7 @@ impl Folio {
             .flex()
             .items_center()
             .justify_center()
-            .child(
-                div()
-                    .id("search")
-                    .occlude()
-                    .w(px(400.))
-                    .h(t.size.bar_control)
-                    .flex()
-                    .items_center()
-                    .gap(t.space.sm)
-                    .pl(t.space.sm)
-                    .pr(px(3.))
-                    .rounded(t.radius.button)
-                    .border_1()
-                    .border_color(t.colors.border)
-                    .bg(t.colors.surface_sunk)
-                    .text_size(t.text.caption)
-                    .child(icon("icons/search.svg", t.size.icon_sm, t.colors.text_subtle))
-                    .child(div().flex_1().child(Input::new(&self.search_input).appearance(false).cleanable(true).small()))
-                    .child(kbd(shortcut("F"), &t)),
-            );
+            .child(field);
 
         let new_button = |id: &'static str, label: &'static str| {
             div()
@@ -168,7 +150,9 @@ impl Folio {
                 .gap(t.space.xs)
                 .rounded(t.radius.small)
                 .bg(t.colors.primary)
+                .shadow(t.shadow_primary())
                 .hover(|d| d.bg(t.colors.primary_hover))
+                .active(|d| d.bg(t.colors.primary_hover).opacity(0.9))
                 .text_color(t.colors.primary_fg)
                 .text_size(t.text.caption)
                 .font_weight(gpui::FontWeight::SEMIBOLD)

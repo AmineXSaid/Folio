@@ -1,6 +1,9 @@
-//! Two jobs:
+//! Three jobs:
 //! - Lists every file under `assets/icons` and `assets/brand` (PNG) for
 //!   `src/assets.rs` to embed, so a new icon needs no hand-kept list.
+//! - Embeds any .ttf/.otf in `assets/fonts/extra` (git-ignored): fonts you
+//!   hold a licence to ship, such as Anthropic Sans, go in the .exe from
+//!   there and never into the repository.
 //! - On Windows, embeds the Folio logo as the .exe's icon (resource 1, which
 //!   the window and the taskbar load too): `assets/folio.rc`. A build
 //!   without a resource compiler fails here rather than ship a blank icon.
@@ -33,6 +36,26 @@ fn main() {
     for f in &files {
         let full = root.join(f);
         writeln!(code, "    ({f:?}, include_bytes!({:?})),", full.display().to_string()).unwrap();
+    }
+    code.push_str("];\n");
+
+    println!("cargo:rerun-if-changed=assets/fonts/extra");
+    let mut extra: Vec<String> = std::fs::read_dir(root.join("fonts/extra"))
+        .map(|r| {
+            r.flatten()
+                .filter_map(|e| e.file_name().to_str().map(String::from))
+                .filter(|n| {
+                    let l = n.to_ascii_lowercase();
+                    l.ends_with(".ttf") || l.ends_with(".otf")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    extra.sort();
+    code.push_str("const EXTRA_FONTS: &[&[u8]] = &[\n");
+    for f in &extra {
+        let full = root.join("fonts/extra").join(f);
+        writeln!(code, "    include_bytes!({:?}),", full.display().to_string()).unwrap();
     }
     code.push_str("];\n");
     let out = Path::new(&std::env::var("OUT_DIR").unwrap()).join("assets.rs");

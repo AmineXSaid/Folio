@@ -506,7 +506,7 @@ impl Folio {
                 }),
             )
             .child(deferred(
-                anchored().position(at).snap_to_window_with_margin(px(8.)).child(
+                anchored().position(at).snap_to_window_with_margin(px(8.)).child(super::motion::rise_in(
                     div()
                         .id("menu")
                         .occlude()
@@ -521,7 +521,11 @@ impl Folio {
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .children(heading.map(|h| caption_owned(h, &t)))
                         .children(items),
-                ),
+                    // Each opening (and each page) rises into place.
+                    gpui::ElementId::Name(format!("menu-{at:?}-{kind:?}-{page:?}").into()),
+                    -4.,
+                    &t,
+                )),
             ))
             .into_any_element()
     }

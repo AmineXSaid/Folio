@@ -1,16 +1,23 @@
-//! Ctrl+K: one box for commands, sheets and notes. Type to filter, arrows
-//! to choose, Enter to go.
+//! The search in the title bar, which is also the command palette
+//! (Ctrl+K, or Ctrl+F for notes): every command, sheet and note, fuzzy
+//! filtered as you type. Closed it's a quiet field; open, you type in it and
+//! the results drop below, under tabs for each scope with how many each
+//! finds. A first `>` keeps to commands, `/` to sheets, `@` to notes (where
+//! `#tag` and `paper:sage` work too), and Tab moves between them. Arrows
+//! move, Enter runs, Esc closes; with nothing found, Enter makes a note of
+//! what you typed.
 
 use std::time::Instant;
 
 use gpui::component::input::Input;
-use gpui::{div, prelude::*, px, Context, MouseButton, SharedString, Window};
+use gpui::component::Sizable as _;
+use gpui::{div, font, prelude::*, px, Context, CursorStyle, FontWeight, MouseButton, SharedString, StyledText, TextRun, Window};
 
 use super::app::{BinTab, Folio, Intro, Screen};
 use super::home::first_line;
 use super::*;
 use crate::model::Id;
-use crate::theme::theme;
+use crate::theme::{theme, Theme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Cmd {
@@ -32,46 +39,229 @@ enum Cmd {
     Drive,
     Transfer,
     Import,
+    Rename,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 18] = [
-    (Cmd::NewNote, "New note", "Ctrl+N", "icons/sticky-note.svg"),
-    (Cmd::NewSheet, "New sheet", "Ctrl+Shift+N", "icons/plus.svg"),
-    (Cmd::QuickNote, "Quick note to Inbox", "Ctrl+Alt+N", "icons/inbox.svg"),
-    (Cmd::Home, "Go to all sheets", "", "icons/layout-grid.svg"),
-    (Cmd::Drawer, "Show the sheets drawer", "Ctrl+B", "icons/panel-left.svg"),
-    (Cmd::Settings, "Settings", "Ctrl+,", "icons/settings.svg"),
+const CMDS: [(Cmd, &str, &str, &str); 19] = [
+    (Cmd::NewNote, "New note", "Ctrl N", "icons/sticky-note.svg"),
+    (Cmd::NewSheet, "New sheet", "Ctrl Shift N", "icons/plus.svg"),
+    (Cmd::QuickNote, "Quick note to Inbox", "Ctrl Alt N", "icons/inbox.svg"),
+    (Cmd::Rename, "Rename this sheet", "", "icons/pencil.svg"),
+    (Cmd::Home, "Go to all sheets", "Ctrl Shift H", "icons/layout-grid.svg"),
+    (Cmd::Drawer, "Show the sheets drawer", "Ctrl B", "icons/panel-left.svg"),
+    (Cmd::Transfer, "Sync & export: Google Drive, files", "", "icons/cloud.svg"),
+    (Cmd::Drive, "Sync with Google Drive", "", "icons/refresh-cw.svg"),
+    (Cmd::Import, "Import a Folio file…", "", "icons/upload.svg"),
+    (Cmd::Settings, "Settings", "Ctrl ,", "icons/settings.svg"),
     (Cmd::Trash, "Open the Trash", "", "icons/trash.svg"),
     (Cmd::Archive, "Open the Archive", "", "icons/archive.svg"),
     (Cmd::Backups, "Restore a backup", "", "icons/rotate-ccw.svg"),
     (Cmd::BackUpNow, "Back up now", "", "icons/hard-drive-download.svg"),
-    (Cmd::Drive, "Sync with Google Drive", "", "icons/refresh-cw.svg"),
-    (Cmd::Transfer, "Sync & export: Google Drive, files", "", "icons/cloud.svg"),
-    (Cmd::Import, "Import a Folio file…", "", "icons/upload.svg"),
-    (Cmd::Theme, "Switch light / dark", "Ctrl+Shift+L", "icons/moon.svg"),
-    (Cmd::Fit, "Zoom to fit", "Ctrl+0", "icons/scan.svg"),
+    (Cmd::Theme, "Switch light / dark", "Ctrl Shift L", "icons/moon.svg"),
+    (Cmd::Fit, "Zoom to fit", "Ctrl 0", "icons/scan.svg"),
     (Cmd::Tidy, "Tidy up the sheet", "", "icons/wand-sparkles.svg"),
     (Cmd::Map, "Show / hide the map", "", "icons/map.svg"),
     (Cmd::Intro, "Play the opening again", "", "icons/play.svg"),
 ];
 
-#[derive(Clone, Debug)]
-enum Item {
+/// What a query looks through, from its first character: the tabs.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Scope {
+    All,
+    Commands,
+    Sheets,
+    Notes,
+}
+
+impl Scope {
+    const TABS: [Scope; 4] = [Scope::All, Scope::Commands, Scope::Sheets, Scope::Notes];
+
+    fn prefix(self) -> &'static str {
+        match self {
+            Scope::All => "",
+            Scope::Commands => ">",
+            Scope::Sheets => "/",
+            Scope::Notes => "@",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Scope::All => "All",
+            Scope::Commands => "Commands",
+            Scope::Sheets => "Sheets",
+            Scope::Notes => "Notes",
+        }
+    }
+
+    fn icon(self) -> Option<&'static str> {
+        match self {
+            Scope::All => None,
+            Scope::Commands => Some("icons/command.svg"),
+            Scope::Sheets => Some("icons/layers.svg"),
+            Scope::Notes => Some("icons/sticky-note.svg"),
+        }
+    }
+
+    fn of(group: &str) -> Scope {
+        match group {
+            "Commands" => Scope::Commands,
+            "Sheets" => Scope::Sheets,
+            "Notes" => Scope::Notes,
+            _ => Scope::All,
+        }
+    }
+
+    fn index(self) -> usize {
+        Scope::TABS.iter().position(|s| *s == self).unwrap_or(0)
+    }
+}
+
+/// The scope a query asks for, and its words.
+fn scope(query: &str) -> (Scope, &str) {
+    match query.chars().next() {
+        Some('>') => (Scope::Commands, &query[1..]),
+        Some('/') => (Scope::Sheets, &query[1..]),
+        Some('@') => (Scope::Notes, &query[1..]),
+        _ => (Scope::All, query),
+    }
+}
+
+/// In All, each group shows this many rows; its tab shows the rest.
+const PER_GROUP: usize = 4;
+const MAX_RECENT: usize = 5;
+const MAX_NOTES: usize = 40;
+
+#[derive(Clone, Debug, PartialEq)]
+enum Target {
     Cmd(Cmd),
-    Sheet(usize),
+    Sheet(Id),
     Note(Id),
+    /// Nothing matched: a note holding the query.
+    NoteOf(String),
+    /// Nothing matched: a sheet named by it.
+    SheetOf(String),
+}
+
+#[derive(Clone)]
+struct Row {
+    label: SharedString,
+    group: &'static str,
+    icon: &'static str,
+    hint: Option<SharedString>,
+    /// A quieter second part: the note's sheet, a snippet.
+    detail: Option<SharedString>,
+    /// Shown in the icon's place: a sheet's emoji.
+    emoji: Option<SharedString>,
+    target: Target,
+}
+
+struct Found {
+    scope: Scope,
+    typed: bool,
+    rows: Vec<(Row, Vec<usize>)>,
+    counts: [usize; 4],
+    /// Groups All shows cut short, with how many each has.
+    cut: Vec<(&'static str, usize)>,
+}
+
+/// Fuzzy match: every query character in order. Higher is better: matches
+/// at word starts and in runs score more. Returns the matched byte offsets.
+pub fn fuzzy(query: &str, text: &str) -> Option<(i32, Vec<usize>)> {
+    if query.is_empty() {
+        return Some((0, vec![]));
+    }
+    let lower: Vec<(usize, char)> = text.char_indices().map(|(i, c)| (i, c.to_ascii_lowercase())).collect();
+    let mut positions = vec![];
+    let mut score = 0;
+    let mut at = 0;
+    let mut prev: Option<usize> = None;
+    for q in query.chars().map(|c| c.to_ascii_lowercase()).filter(|c| !c.is_whitespace()) {
+        let found = (at..lower.len()).find(|&k| lower[k].1 == q)?;
+        let word_start = found == 0 || !lower[found - 1].1.is_alphanumeric();
+        score += 1 + if word_start { 8 } else { 0 } + if prev == Some(found.wrapping_sub(1)) { 5 } else { 0 };
+        positions.push(lower[found].0);
+        prev = Some(found);
+        at = found + 1;
+    }
+    // Shorter labels win ties.
+    Some((score * 10 - text.len() as i32 / 4, positions))
+}
+
+/// Where `needle` sits in `text` (any case), as byte offsets to highlight.
+fn substring_hits(text: &str, needle: &str) -> Vec<usize> {
+    let lower = text.to_lowercase();
+    if needle.is_empty() || lower.len() != text.len() {
+        return vec![];
+    }
+    lower.find(needle).map(|at| text[at..at + needle.len()].char_indices().map(|(i, _)| at + i).collect()).unwrap_or_default()
+}
+
+/// A label with its matched letters picked out.
+fn highlighted(label: &SharedString, positions: &[usize], on: bool, t: &Theme) -> StyledText {
+    let mut runs = vec![];
+    for (start, ch) in label.char_indices() {
+        let hit = positions.contains(&start);
+        let mut f = font(t.font);
+        if hit {
+            f.weight = FontWeight::SEMIBOLD;
+        }
+        runs.push(TextRun {
+            len: ch.len_utf8(),
+            font: f,
+            color: if hit { t.colors.brand_on_tint } else if on { t.colors.text } else { t.colors.text_body },
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        });
+    }
+    StyledText::new(label.clone()).with_runs(runs)
+}
+
+/// A shortcut as key caps: "Ctrl Shift N" is three.
+fn keys(t: &Theme, text: &str) -> gpui::Div {
+    div().flex().flex_none().gap(px(3.)).children(text.split_whitespace().map(|k| {
+        let k = if cfg!(target_os = "macos") && k == "Ctrl" { "⌘" } else { k };
+        div()
+            .flex()
+            .items_center()
+            .h(px(18.))
+            .px(px(5.))
+            .rounded(px(4.))
+            .border_1()
+            .border_b_2()
+            .border_color(t.colors.border)
+            .bg(t.colors.surface_sunk)
+            .text_size(t.text.micro)
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(t.colors.text_muted)
+            .child(k.to_string())
+    }))
 }
 
 impl Folio {
-    pub fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens the search with `prefix` typed (a scope, or a query).
+    pub fn open_palette_with(&mut self, prefix: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_edit(cx);
         self.menu = None;
+        self.drawer = false;
         self.palette = true;
         self.palette_ix = 0;
-        self.palette_input.update(cx, |i, cx| i.set_value("", window, cx));
-        let input = self.palette_input.clone();
-        window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+        self.palette_opened += 1;
+        let value = prefix.to_string();
+        self.palette_input.update(cx, |i, cx| {
+            i.set_value(value, window, cx);
+            i.focus(window, cx);
+        });
         cx.notify();
+    }
+
+    pub fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette {
+            self.close_palette(window, cx);
+        } else {
+            self.open_palette_with("", window, cx);
+        }
     }
 
     pub fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -80,52 +270,253 @@ impl Folio {
         cx.notify();
     }
 
-    fn palette_items(&self, cx: &gpui::App) -> Vec<(Item, String, String, &'static str)> {
-        let q = self.palette_input.read(cx).value().trim().to_lowercase();
-        let words: Vec<&str> = q.split_whitespace().collect();
-        let fits = |s: &str| {
-            let s = s.to_lowercase();
-            words.iter().all(|w| s.contains(w))
-        };
-        let mut out = Vec::new();
-        for (c, label, key, path) in CMDS {
-            if fits(label) {
-                out.push((Item::Cmd(c), label.to_string(), key.to_string(), path));
-            }
-        }
+    fn rows_all(&self) -> Vec<Row> {
+        let mut out: Vec<Row> = CMDS
+            .iter()
+            .filter(|(c, ..)| *c != Cmd::Rename || self.screen == Screen::Sheet)
+            .map(|&(c, label, key, path)| Row {
+                label: label.into(),
+                group: "Commands",
+                icon: path,
+                hint: (!key.is_empty()).then(|| key.into()),
+                detail: None,
+                emoji: None,
+                target: Target::Cmd(c),
+            })
+            .collect();
         for ix in self.board.ordered() {
             let c = &self.board.categories[ix];
-            if fits(&c.name) {
-                let label = if c.icon.is_empty() { c.name.clone() } else { format!("{} {}", c.icon, c.name) };
-                out.push((Item::Sheet(ix), label, format!("{} notes", c.stickers.len()), "icons/layout-grid.svg"));
-            }
-        }
-        if !q.is_empty() {
-            for h in self.board.search(&q).into_iter().take(12) {
-                let c = &self.board.categories[h.sheet];
-                if let Some(s) = c.sticker(h.note) {
-                    out.push((Item::Note(h.note), first_line(s), c.name.clone(), "icons/sticky-note.svg"));
-                }
-            }
-        }
-        if q.is_empty() {
-            out.truncate(14);
+            let n = c.stickers.len();
+            out.push(Row {
+                label: c.name.clone().into(),
+                group: "Sheets",
+                icon: "icons/layers.svg",
+                hint: None,
+                detail: Some(format!("{n} note{}", if n == 1 { "" } else { "s" }).into()),
+                emoji: (!c.icon.is_empty()).then(|| c.icon.clone().into()),
+                target: Target::Sheet(c.id),
+            });
         }
         out
     }
 
+    /// Notes for the query: by tag or colour with `#`/`paper:`, else by
+    /// their first line (fuzzy) or anywhere in their text.
+    fn note_rows(&self, q: &str) -> Vec<(i32, Row, Vec<usize>)> {
+        let mut out = Vec::new();
+        let ql = q.to_lowercase();
+        let semantic = ql.starts_with('#') || ql.starts_with("paper:");
+        let mut notes: Vec<(&crate::model::Category, &crate::model::Sticker)> =
+            self.board.categories.iter().flat_map(|c| c.stickers.iter().map(move |s| (c, s))).collect();
+        if q.is_empty() {
+            // Nothing typed: the latest edited first.
+            notes.sort_by(|a, b| b.1.edited.cmp(&a.1.edited));
+        }
+        for (c, s) in notes {
+            let line: SharedString = first_line(s).into();
+            let found = if q.is_empty() {
+                Some((0, vec![]))
+            } else if semantic {
+                s.matches(&ql).then(|| (1, vec![]))
+            } else {
+                fuzzy(q, &line).or_else(|| s.matches(&ql).then(|| (1, substring_hits(&line, &ql))))
+            };
+            if let Some((score, pos)) = found {
+                let snippet = (!q.is_empty() && !semantic && pos.is_empty()).then(|| super::home::snippet_of(s, &ql)).filter(|x| !x.is_empty());
+                let detail = match snippet {
+                    Some(sn) => format!("{} · {sn}", c.name),
+                    None => c.name.clone(),
+                };
+                out.push((
+                    score,
+                    Row { label: line, group: "Notes", icon: "icons/sticky-note.svg", hint: None, detail: Some(detail.into()), emoji: None, target: Target::Note(s.id) },
+                    pos,
+                ));
+            }
+            if out.len() >= MAX_NOTES * 4 {
+                break;
+            }
+        }
+        out
+    }
+
+    fn search(&self, cx: &gpui::App) -> Found {
+        let raw = self.palette_input.read(cx).value().to_string();
+        let (scope, q) = scope(&raw);
+        let q = q.trim();
+        let mut scored: Vec<(i32, Row, Vec<usize>)> =
+            self.rows_all().into_iter().filter_map(|r| fuzzy(q, &r.label).map(|(s, p)| (s, r, p))).collect();
+        if !q.is_empty() || scope == Scope::Notes {
+            let mut notes = self.note_rows(q);
+            if !q.is_empty() {
+                notes.sort_by(|a, b| b.0.cmp(&a.0));
+            }
+            notes.truncate(MAX_NOTES);
+            scored.extend(notes);
+        }
+        let mut counts = [0; 4];
+        for (_, r, _) in &scored {
+            counts[Scope::of(r.group).index()] += 1;
+        }
+        counts[0] = counts.iter().sum();
+        scored.retain(|(_, r, _)| scope == Scope::All || Scope::of(r.group) == scope);
+
+        if !q.is_empty() {
+            // Groups together, best group first; within one, best first.
+            let mut best: std::collections::HashMap<&'static str, i32> = Default::default();
+            for (score, r, _) in &scored {
+                let b = best.entry(r.group).or_insert(i32::MIN);
+                *b = (*b).max(*score);
+            }
+            scored.sort_by(|a, b| best[b.1.group].cmp(&best[a.1.group]).then(a.1.group.cmp(b.1.group)).then(b.0.cmp(&a.0)));
+        } else if scope == Scope::All && !self.palette_recent.is_empty() {
+            // Nothing typed: what you ran lately comes first.
+            let mut recent = vec![];
+            for label in &self.palette_recent {
+                if let Some(i) = scored.iter().position(|(_, r, _)| &r.label == label) {
+                    let (s, mut r, p) = scored.remove(i);
+                    r.group = "Recently used";
+                    recent.push((s, r, p));
+                }
+            }
+            recent.append(&mut scored);
+            scored = recent;
+        }
+
+        let mut cut = vec![];
+        if scope == Scope::All {
+            let mut seen: Vec<(&'static str, usize)> = vec![];
+            scored.retain(|(_, r, _)| {
+                if r.group == "Recently used" {
+                    return true;
+                }
+                match seen.iter_mut().find(|(g, _)| *g == r.group) {
+                    Some((_, n)) => {
+                        *n += 1;
+                        *n <= PER_GROUP
+                    }
+                    None => {
+                        seen.push((r.group, 1));
+                        true
+                    }
+                }
+            });
+            cut = seen.into_iter().filter(|(_, n)| *n > PER_GROUP).collect();
+        }
+
+        if scored.is_empty() && !q.is_empty() && matches!(scope, Scope::All | Scope::Notes | Scope::Sheets) {
+            let in_sheet = if self.screen == Screen::Sheet { self.sheet().name.clone() } else { "your Inbox".into() };
+            if scope != Scope::Sheets {
+                scored.push((
+                    0,
+                    Row {
+                        label: format!("New note: {q}").into(),
+                        group: "Nothing matches",
+                        icon: "icons/sticky-note.svg",
+                        hint: Some("Enter".into()),
+                        detail: Some(format!("in {in_sheet}").into()),
+                        emoji: None,
+                        target: Target::NoteOf(q.to_string()),
+                    },
+                    vec![],
+                ));
+            }
+            scored.push((
+                0,
+                Row {
+                    label: format!("New sheet: {q}").into(),
+                    group: "Nothing matches",
+                    icon: "icons/layers.svg",
+                    hint: None,
+                    detail: None,
+                    emoji: None,
+                    target: Target::SheetOf(q.to_string()),
+                },
+                vec![],
+            ));
+        }
+        Found { scope, typed: !q.is_empty(), rows: scored.into_iter().map(|(_, r, p)| (r, p)).take(80).collect(), counts, cut }
+    }
+
+    /// Switch tab: the query keeps its words under the new scope's prefix.
+    fn set_scope(&mut self, to: Scope, window: &mut Window, cx: &mut Context<Self>) {
+        let raw = self.palette_input.read(cx).value().to_string();
+        let words = scope(&raw).1.to_string();
+        let value = format!("{}{}", to.prefix(), words);
+        self.palette_input.update(cx, |i, cx| {
+            i.set_value(value, window, cx);
+            i.focus(window, cx);
+        });
+        self.palette_ix = 0;
+        cx.notify();
+    }
+
+    pub fn palette_step(&mut self, by: isize, cx: &mut Context<Self>) {
+        let n = self.search(cx).rows.len();
+        if n > 0 {
+            self.palette_ix = (self.palette_ix as isize + by).rem_euclid(n as isize) as usize;
+            self.palette_reveal = true;
+        }
+        cx.notify();
+    }
+
+    pub fn palette_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let raw = self.palette_input.read(cx).value().to_string();
+        let at = scope(&raw).0.index();
+        let n = Scope::TABS.len();
+        let to = if forward { (at + 1) % n } else { (at + n - 1) % n };
+        self.set_scope(Scope::TABS[to], window, cx);
+    }
+
     pub fn palette_run(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let items = self.palette_items(cx);
-        let Some((item, ..)) = items.get(ix).cloned() else { return };
+        let mut rows = self.search(cx).rows;
+        if rows.is_empty() {
+            return;
+        }
+        let (row, _) = rows.swap_remove(ix.min(rows.len() - 1));
+        if matches!(row.target, Target::Cmd(_) | Target::Sheet(_)) {
+            self.palette_recent.retain(|l| *l != row.label);
+            self.palette_recent.insert(0, row.label.clone());
+            self.palette_recent.truncate(MAX_RECENT);
+        }
         self.palette = false;
         window.focus(&self.focus, cx);
-        match item {
-            Item::Sheet(i) => self.open_sheet(i, window, cx),
-            Item::Note(id) => self.reveal_note(id, window, cx),
-            Item::Cmd(c) => match c {
+        match row.target {
+            Target::Sheet(id) => {
+                if let Some(i) = self.board.categories.iter().position(|c| c.id == id) {
+                    self.open_sheet(i, window, cx);
+                }
+            }
+            Target::Note(id) => self.reveal_note(id, window, cx),
+            Target::NoteOf(text) => {
+                if self.screen == Screen::Sheet {
+                    let (w, h) = self.viewport_size();
+                    let at = self.sheet().camera.to_world(crate::model::v2(w / 2., h / 2.));
+                    self.new_note_at(at, window, cx);
+                    let (title, body) = match text.split_once('\n') {
+                        Some((a, b)) => (a.to_string(), b.to_string()),
+                        None => (text.clone(), String::new()),
+                    };
+                    self.title_input.update(cx, |i, cx| i.set_value(title, window, cx));
+                    self.body_input.update(cx, |i, cx| i.set_value(body, window, cx));
+                } else {
+                    self.quick_note(&text, cx);
+                }
+            }
+            Target::SheetOf(name) => {
+                let n = self.board.categories.len();
+                self.change(cx, |b| {
+                    b.add_sheet(&name);
+                    b.sheet_mut().icon = super::emoji::default_icon(n).into();
+                });
+                let ix = self.board.active;
+                self.open_sheet(ix, window, cx);
+            }
+            Target::Cmd(c) => match c {
                 Cmd::NewNote => self.new_note(window, cx),
                 Cmd::NewSheet => self.new_sheet_dialog(window, cx),
                 Cmd::QuickNote => crate::desktop::open_quick_note(cx.entity(), cx),
+                Cmd::Rename => self.start_naming(window, cx),
                 Cmd::Home => self.go_home(cx),
                 Cmd::Drawer => self.drawer = true,
                 Cmd::Settings => self.open_settings(cx),
@@ -161,86 +552,312 @@ impl Folio {
         cx.notify();
     }
 
-    pub(super) fn render_palette(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The title bar's search field. Closed, it says what it searches and
+    /// opens on a click; open, you type in it and the results drop below.
+    pub(super) fn palette_field(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = theme(cx).clone();
-        let items = self.palette_items(cx);
-        let sel = self.palette_ix.min(items.len().saturating_sub(1));
-        let rows = items.into_iter().enumerate().map(|(i, (item, label, hint, path))| {
-            let on = i == sel;
-            let kind = match item {
-                Item::Cmd(_) => "",
-                Item::Sheet(_) => "Sheet",
-                Item::Note(_) => "Note",
-            };
-            div()
-                .id(("p-row", i))
-                .h(px(38.))
-                .px(t.space.md)
+        let open = self.palette;
+        let field = div()
+            .id("palette-field")
+            .occlude()
+            .relative()
+            .flex()
+            .items_center()
+            .gap(t.space.sm)
+            .h(t.size.bar_control)
+            .pl(t.space.sm)
+            .pr(px(4.))
+            .rounded(t.radius.button)
+            .border_1()
+            .child(icon("icons/search.svg", t.size.icon_sm, if open { t.colors.brand } else { t.colors.text_subtle }));
+        if !open {
+            let (edge, ink) = (t.colors.border, t.colors.text_muted);
+            return field
+                .w(px(380.))
+                .bg(t.colors.surface_sunk)
+                .border_color(t.colors.border)
+                .cursor(CursorStyle::IBeam)
+                .text_color(t.colors.text_subtle)
+                .hover(move |d| d.border_color(edge).text_color(ink).bg(t.colors.surface))
+                .child(div().flex_1().min_w_0().truncate().text_size(t.text.caption).child("Search sheets, notes and commands"))
+                .child(keys(&t, "Ctrl K"))
+                .on_click(cx.listener(|this, _, window, cx| this.open_palette_with("", window, cx)))
+                .into_any_element();
+        }
+        let dropdown = self.palette_dropdown(window, cx);
+        field
+            .w(px(500.))
+            .bg(t.colors.surface)
+            .border_color(t.colors.brand)
+            .shadow(vec![gpui::BoxShadow {
+                color: t.colors.brand.opacity(0.18),
+                offset: gpui::point(px(0.), px(0.)),
+                blur_radius: px(0.),
+                spread_radius: px(3.),
+                inset: false,
+            }])
+            .key_context("Palette")
+            .on_action(cx.listener(|this, _: &PaletteUp, _, cx| this.palette_step(-1, cx)))
+            .on_action(cx.listener(|this, _: &PaletteDown, _, cx| this.palette_step(1, cx)))
+            .on_action(cx.listener(|this, _: &PaletteTab, window, cx| this.palette_tab(true, window, cx)))
+            .on_action(cx.listener(|this, _: &PaletteBackTab, window, cx| this.palette_tab(false, window, cx)))
+            .text_size(t.text.body)
+            .child(div().flex_1().min_w_0().child(Input::new(&self.palette_input).appearance(false).small()))
+            .child(keys(&t, "Esc"))
+            .child(gpui::deferred(dropdown).with_priority(2))
+            .into_any_element()
+    }
+
+    /// The tabs, the results and the keys, hung below the field.
+    fn palette_dropdown(&mut self, _: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = theme(cx).clone();
+        let found = self.search(cx);
+        let count = found.rows.len();
+        let selected = self.palette_ix.min(count.saturating_sub(1));
+        let opened = self.palette_opened;
+
+        let mut tabs = div().flex().items_end().gap(px(2.)).px(t.space.sm).pt(t.space.xs).border_b_1().border_color(t.colors.border);
+        for (i, tab) in Scope::TABS.into_iter().enumerate() {
+            let on = tab == found.scope;
+            tabs = tabs.child(
+                div()
+                    .id(("palette-tab", i))
+                    .flex()
+                    .items_center()
+                    .gap(t.space.xs)
+                    .px(t.space.md)
+                    .py(t.space.sm)
+                    .border_b_2()
+                    .border_color(if on { t.colors.brand } else { gpui::transparent_black() })
+                    .text_size(t.text.caption)
+                    .cursor_pointer()
+                    .map(|d| {
+                        if on {
+                            d.font_weight(FontWeight::SEMIBOLD).text_color(t.colors.text)
+                        } else {
+                            let ink = t.colors.text;
+                            d.text_color(t.colors.text_muted).hover(move |s| s.text_color(ink))
+                        }
+                    })
+                    .children(tab.icon().map(|p| icon(p, px(12.), if on { t.colors.brand } else { t.colors.text_subtle })))
+                    .child(tab.label())
+                    .when(found.typed, |d| {
+                        d.child(
+                            div()
+                                .font_weight(FontWeight::NORMAL)
+                                .text_color(if on { t.colors.brand_on_tint } else { t.colors.text_subtle })
+                                .child(found.counts[i].to_string()),
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| this.set_scope(tab, window, cx))),
+            );
+        }
+
+        let mut list = div()
+            .id("palette-list")
+            .track_scroll(&self.palette_scroll)
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .max_h(px(400.))
+            .p(t.space.xs);
+        let mut last_group = "";
+        // The list's children count group labels too.
+        let mut child = 0;
+        let mut selected_child = 0;
+        for (i, (row, pos)) in found.rows.iter().enumerate() {
+            if row.group != last_group {
+                last_group = row.group;
+                child += 1;
+                let more = found.cut.iter().find(|(g, _)| *g == row.group).map(|(_, n)| *n);
+                let to = Scope::of(row.group);
+                list = list.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px(t.space.md)
+                        .pt(t.space.sm)
+                        .pb(t.space.xs)
+                        .text_size(t.text.micro)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(t.colors.text_subtle)
+                        .child(row.group.to_uppercase())
+                        .children(more.map(|n| {
+                            let ink = t.colors.text;
+                            div()
+                                .id(("palette-more", i))
+                                .cursor_pointer()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(t.colors.brand_on_tint)
+                                .hover(move |s| s.text_color(ink))
+                                .child(format!("All {n} ›"))
+                                .on_click(cx.listener(move |this, _, window, cx| this.set_scope(to, window, cx)))
+                        })),
+                );
+            }
+            let on = i == selected;
+            if on {
+                selected_child = child;
+            }
+            child += 1;
+            let row_el = div()
+                .id(("palette-row", i))
                 .flex()
                 .items_center()
                 .gap(t.space.md)
+                .h(px(36.))
+                .px(t.space.md)
                 .rounded(t.radius.button)
                 .cursor_pointer()
-                .when(on, |d| d.bg(t.colors.brand_tint))
-                .child(icon(path, t.size.icon, if on { t.colors.brand_on_tint } else { t.colors.text_muted }))
-                .child(div().flex_1().min_w_0().truncate().when(on, |d| d.text_color(t.colors.brand_on_tint)).child(label))
-                .when(!kind.is_empty(), |d| d.child(div().text_size(t.text.micro).text_color(t.colors.text_subtle).child(SharedString::from(kind))))
-                .when(!hint.is_empty(), |d| d.child(kbd(hint, &t)))
+                .map(|d| if on { d.bg(t.colors.brand_tint) } else { d.hover(|s| s.bg(t.colors.hover)) })
+                .child(
+                    div()
+                        .size(px(24.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.small)
+                        .bg(if on { t.colors.surface } else { t.colors.surface_sunk })
+                        .border_1()
+                        .border_color(t.colors.border)
+                        .map(|d| match row.emoji.clone() {
+                            Some(e) => d.text_size(px(13.)).child(e),
+                            None => d.child(icon(row.icon, px(13.), if on { t.colors.brand } else { t.colors.text_muted })),
+                        }),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_baseline()
+                        .gap(t.space.sm)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(div().flex_none().max_w(px(300.)).truncate().text_size(t.text.body).child(highlighted(&row.label, pos, on, &t)))
+                        .children(row.detail.clone().map(|d| div().flex_1().min_w_0().truncate().text_size(t.text.caption).text_color(t.colors.text_subtle).child(d))),
+                )
+                .children(row.hint.as_ref().map(|h| keys(&t, h)))
+                .when(on, |d| d.child(icon("icons/corner-down-left.svg", px(12.), t.colors.brand_on_tint)))
                 .on_mouse_move(cx.listener(move |this, _, _, cx| {
                     if this.palette_ix != i {
                         this.palette_ix = i;
                         cx.notify();
                     }
                 }))
-                .on_click(cx.listener(move |this, _, window, cx| this.palette_run(i, window, cx)))
-        });
-        div()
-            .id("palette-scrim")
-            .key_context("Palette")
-            .absolute()
-            .inset_0()
-            .bg(t.colors.scrim)
+                .on_click(cx.listener(move |this, _, window, cx| this.palette_run(i, window, cx)));
+            list = list.child(motion::row_in(row_el, ("palette-in", opened * 1000 + i), i, &t));
+        }
+        if std::mem::take(&mut self.palette_reveal) {
+            self.palette_scroll.scroll_to_item(selected_child);
+        }
+        if count == 0 {
+            list = list.child(div().px(t.space.md).py(t.space.lg).text_color(t.colors.text_subtle).child(if found.scope == Scope::Notes {
+                "No notes yet: double-click a sheet to write one."
+            } else {
+                "Nothing matches."
+            }));
+        }
+
+        let hint = |k: gpui::Div, what: &'static str| div().flex().items_center().gap(t.space.xs).child(k).child(what);
+        let footer = div()
             .flex()
-            .justify_center()
-            .pt(px(110.))
-            .on_action(cx.listener(|this, _: &PaletteUp, _, cx| {
-                this.palette_ix = this.palette_ix.saturating_sub(1);
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &PaletteDown, _, cx| {
-                this.palette_ix += 1;
-                let n = this.palette_items(cx).len();
-                this.palette_ix = this.palette_ix.min(n.saturating_sub(1));
-                cx.notify();
-            }))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.close_palette(window, cx)))
-            .child(
+            .items_center()
+            .gap(t.space.lg)
+            .px(t.space.md)
+            .py(t.space.sm)
+            .border_t_1()
+            .border_color(t.colors.border)
+            .bg(t.colors.surface_sunk)
+            .text_size(t.text.micro)
+            .text_color(t.colors.text_subtle)
+            .child(hint(keys(&t, "↑ ↓"), "move"))
+            .child(hint(keys(&t, "Enter"), "open"))
+            .child(hint(keys(&t, "Esc"), "close"))
+            .child(div().flex_1())
+            .child(hint(keys(&t, "Tab"), "next scope"))
+            .child(div().child("> commands · / sheets · @ notes"));
+
+        div()
+            .absolute()
+            .top(t.size.bar_control + px(8.))
+            .left(px(-1.))
+            .right(px(-1.))
+            .child(motion::edge_draw(
                 div()
                     .id("palette")
-                    .w(px(600.))
-                    .max_h(px(520.))
+                    .relative()
+                    .occlude()
                     .flex()
                     .flex_col()
-                    .rounded(t.radius.dialog)
+                    .overflow_hidden()
+                    .rounded(t.radius.card)
                     .bg(t.colors.surface)
                     .border_1()
                     .border_color(t.colors.border)
                     .shadow(t.shadow_float())
+                    .cursor(CursorStyle::Arrow)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(t.space.sm)
-                            .px(t.space.lg)
-                            .h(px(54.))
-                            .border_b_1()
-                            .border_color(t.colors.border)
-                            .child(icon("icons/search.svg", t.size.icon, t.colors.text_subtle))
-                            .child(div().flex_1().child(Input::new(&self.palette_input).appearance(false)))
-                            .child(kbd("Esc", &t)),
-                    )
-                    .child(div().id("palette-list").flex_1().min_h_0().overflow_y_scroll().p(t.space.sm).flex().flex_col().children(rows)),
-            )
+                    .child(tabs)
+                    .child(list)
+                    .child(footer),
+                ("palette-open", opened),
+                t.colors.brand,
+                &t,
+            ))
+            .into_any_element()
+    }
+
+    /// Behind the open search: the window under the title bar, dimmed. A
+    /// click on it closes the search.
+    pub(super) fn render_palette_scrim(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme(cx).clone();
+        motion::scrim(
+            div()
+                .id("palette-scrim")
+                .absolute()
+                .top(t.size.topbar)
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.close_palette(window, cx))),
+            ("palette-scrim", self.palette_opened),
+            t.colors.scrim,
+            &t,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fuzzy_matches_in_order_and_prefers_word_starts() {
+        assert!(fuzzy("ns", "New sheet").is_some());
+        assert!(fuzzy("sn", "New sheet").is_none());
+        let (a, _) = fuzzy("set", "Settings").unwrap();
+        let (b, _) = fuzzy("set", "Reset the theme").unwrap();
+        assert!(a > b, "a word start and a run beat letters scattered");
+        assert_eq!(fuzzy("bk", "Back up now").unwrap().1, vec![0, 3]);
+    }
+
+    #[test]
+    fn a_first_character_picks_the_scope() {
+        assert_eq!(scope(">sync"), (Scope::Commands, "sync"));
+        assert_eq!(scope("/trip"), (Scope::Sheets, "trip"));
+        assert_eq!(scope("@#design"), (Scope::Notes, "#design"));
+        assert_eq!(scope("#design"), (Scope::All, "#design"), "a tag isn't a scope");
+        for s in Scope::TABS {
+            assert_eq!(scope(&format!("{}x", s.prefix())).0, s);
+        }
+    }
+
+    #[test]
+    fn a_plain_word_lights_up_where_it_is() {
+        assert_eq!(substring_hits("Buy Milk", "milk"), vec![4, 5, 6, 7]);
+        assert!(substring_hits("Buy", "x").is_empty());
     }
 }

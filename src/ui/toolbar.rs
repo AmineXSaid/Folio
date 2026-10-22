@@ -23,19 +23,34 @@ impl Folio {
                 .rounded(t.radius.button)
                 .cursor_pointer()
                 .when(active, |d| d.bg(t.colors.primary_tint))
-                .when(!active, |d| d.hover(|d| d.bg(t.colors.hover)))
+                .when(!active, |d| d.hover(|d| d.bg(t.colors.hover)).active(|d| d.bg(t.colors.border)))
                 .child(icon(tool.icon(), t.size.icon, if active { t.colors.primary_on_tint } else { t.colors.text_muted }))
-                .on_click(cx.listener(move |this, _, _, cx| this.set_tool(tool, cx)))
+                // The tool in use, clicked again, goes back to Select: no
+                // tool ever stays stuck on.
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let to = if this.tool == tool { Tool::Select } else { tool };
+                    this.set_tool(to, cx)
+                }))
         });
+        // The inks float in their own pill beside the dock, so the tools
+        // never move under the pointer when they appear.
         let swatches = self.tool.uses_ink().then(|| {
+            super::motion::rise_in(
             div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_full()
+                .ml(t.space.sm)
                 .flex()
                 .items_center()
                 .gap(t.space.xs)
-                .pl(t.space.sm)
-                .ml(t.space.xs)
-                .border_l_1()
+                .px(t.space.sm)
+                .rounded(t.radius.card)
+                .bg(t.colors.surface)
+                .border_1()
                 .border_color(t.colors.border)
+                .shadow(t.shadow_float())
                 .children(Ink::ALL.iter().map(|&ink| {
                     let on = self.ink == ink;
                     div()
@@ -52,7 +67,11 @@ impl Folio {
                             this.ink = ink;
                             cx.notify();
                         }))
-                }))
+                })),
+                "inks-in",
+                4.,
+                &t,
+            )
         });
         let hint = format!("{} · {}", self.tool.name(), self.tool.key());
         div()
@@ -66,6 +85,7 @@ impl Folio {
             .gap(t.space.sm)
             .child(
                 div()
+                    .relative()
                     .flex()
                     .items_center()
                     .gap(t.space.xxs)

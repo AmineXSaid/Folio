@@ -129,18 +129,16 @@ fn stat(value: String, what: &'static str, t: &Theme) -> gpui::Div {
 
 impl Folio {
     pub fn open_transfer(&mut self, cx: &mut Context<Self>) {
-        self.finish_edit(cx);
-        self.screen = Screen::Transfer;
-        self.drawer = false;
-        self.menu = None;
-        cx.notify();
+        self.open_side(Screen::Transfer, cx);
     }
 
     /// The Sync & export screen with only sheet `ix` chosen for export.
     pub fn export_sheet(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(id) = self.board.categories.get(ix).map(|c| c.id) else { return };
         self.export.skip = self.board.categories.iter().map(|c| c.id).filter(|&c| c != id).collect();
-        self.open_transfer(cx);
+        if self.screen != Screen::Transfer {
+            self.open_transfer(cx);
+        }
     }
 
     fn chosen_sheets(&self) -> Vec<&Category> {

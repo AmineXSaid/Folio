@@ -250,7 +250,10 @@ impl Folio {
                 .child(secondary_button("d-cancel", "Cancel", &t).on_click(cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx))))
                 .child(primary_button("d-ok", ok, &t).on_click(cx.listener(|this, _, window, cx| this.dialog_ok(window, cx))))
         };
-        div()
+        // Each kind of dialog arrives on its own: the backdrop dims in, the
+        // dialog rises into place.
+        let key = format!("dialog-{:?}", std::mem::discriminant(&d));
+        let scrim = div()
             .id("scrim")
             .key_context("Dialog")
             .absolute()
@@ -261,7 +264,7 @@ impl Folio {
             .bg(t.colors.scrim)
             .on_action(cx.listener(|this, _: &SaveNote, window, cx| this.dialog_ok(window, cx)))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx)))
-            .child(
+            .child(super::motion::rise_in(
                 div()
                     .id("dialog")
                     .w(if wide { px(520.) } else { t.size.dialog_w })
@@ -275,7 +278,10 @@ impl Folio {
                     .child(div().pb(t.space.lg).text_size(px(18.)).font_weight(gpui::FontWeight::SEMIBOLD).child(heading))
                     .child(body)
                     .child(footer),
-            )
-            .into_any_element()
+                gpui::ElementId::Name(format!("{key}-box").into()),
+                10.,
+                &t,
+            ));
+        super::motion::scrim(scrim, gpui::ElementId::Name(key.into()), t.colors.scrim, &t)
     }
 }

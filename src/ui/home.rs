@@ -54,6 +54,13 @@ impl Folio {
                     .child(div().text_size(px(28.)).font_weight(gpui::FontWeight::SEMIBOLD).child(title))
                     .child(div().text_color(t.colors.text_muted).child(sub)),
             )
+            // A colour or a tag picked: a way back to all sheets.
+            .when(!q.is_empty(), |d| {
+                d.child(secondary_button("clear-filter", "Clear", &t).on_click(cx.listener(|this, _, window, cx| {
+                    this.search_input.update(cx, |i, cx| i.set_value("", window, cx));
+                    cx.notify();
+                })))
+            })
             .when(q.is_empty(), |d| {
                 d.child(segmented(
                     "sort",
@@ -142,7 +149,15 @@ impl Folio {
                     (!c.inbox, !c.pinned, std::cmp::Reverse(c.opened.max(c.edited)))
                 });
             }
-            let cards: Vec<_> = order.iter().map(|&i| self.sheet_card(i, card_w, &t, cx).into_any_element()).collect();
+            // The cards arrive one after another.
+            let cards: Vec<_> = order
+                .iter()
+                .enumerate()
+                .map(|(n, &i)| {
+                    let id = self.board.categories[i].id;
+                    super::motion::card_in(self.sheet_card(i, card_w, &t, cx), ("card-in", id as usize), n, &t)
+                })
+                .collect();
             body = body.child(
                 div()
                     .flex()
@@ -466,6 +481,11 @@ pub fn first_line(s: &Sticker) -> String {
 }
 
 /// The part of the body around the first match.
+/// A few words of a note around where `q` is.
+pub fn snippet_of(s: &Sticker, q: &str) -> String {
+    snippet(s, q)
+}
+
 fn snippet(s: &Sticker, q: &str) -> String {
     let body = s.body.replace('\n', " · ");
     if q.starts_with('#') {
@@ -522,6 +542,12 @@ pub fn segmented(
 
 impl Folio {
     pub fn open_menu(&mut self, at: gpui::Point<gpui::Pixels>, kind: MenuKind, cx: &mut Context<Self>) {
+        // A card's "…" clicked again closes its menu.
+        if matches!(kind, MenuKind::Card(_)) && self.menu.as_ref().is_some_and(|m| m.kind == kind) {
+            self.menu = None;
+            cx.notify();
+            return;
+        }
         self.menu = Some(super::app::Menu { at, kind, page: MenuPage::Main });
         cx.notify();
     }

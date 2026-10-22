@@ -9,6 +9,7 @@ mod emoji;
 mod home;
 mod intro;
 mod menu;
+mod motion;
 mod mini;
 mod palette;
 pub mod popout;
@@ -59,6 +60,8 @@ gpui::actions!(
         StepDown,
         PaletteUp,
         PaletteDown,
+        PaletteTab,
+        PaletteBackTab,
         ToolSelect,
         ToolHand,
         ToolPen,
@@ -96,6 +99,7 @@ pub fn icon_button(id: impl Into<gpui::ElementId>, path: &'static str, t: &Theme
         .rounded(t.radius.button)
         .cursor_pointer()
         .hover(|d| d.bg(t.colors.hover))
+        .active(|d| d.bg(t.colors.border))
         .child(icon(path, t.size.icon, t.colors.text_muted))
 }
 
@@ -111,7 +115,9 @@ pub fn primary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedStr
         .gap(t.space.xs)
         .rounded(t.radius.button)
         .bg(bg)
+        .shadow(t.shadow_primary())
         .hover(move |d| d.bg(hover))
+        .active(move |d| d.bg(hover).opacity(0.9))
         .text_color(fg)
         .text_size(t.text.caption)
         .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -127,9 +133,13 @@ pub fn secondary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedS
         .flex()
         .items_center()
         .rounded(t.radius.button)
-        .bg(t.colors.hover)
-        .hover(|d| d.bg(t.colors.border))
-        .text_color(t.colors.text_muted)
+        .bg(t.colors.surface)
+        .border_1()
+        .border_color(t.colors.border)
+        .shadow(t.shadow_raised())
+        .hover(|d| d.bg(t.colors.surface_sunk).text_color(t.colors.text))
+        .active(|d| d.bg(t.colors.hover))
+        .text_color(t.colors.text_body)
         .text_size(t.text.caption)
         .font_weight(gpui::FontWeight::MEDIUM)
         .cursor_pointer()
@@ -169,18 +179,26 @@ pub fn kbd(text: impl Into<SharedString>, t: &Theme) -> gpui::Div {
 }
 
 pub fn toast(t: &Theme, msg: SharedString) -> impl IntoElement {
-    div()
-        .absolute()
-        .bottom(t.space.xl)
-        .right(t.space.xl)
-        .px(t.space.lg)
-        .py(t.space.sm + t.space.xxs)
-        .rounded(t.radius.button)
-        .bg(t.colors.toast)
-        .text_color(t.colors.toast_fg)
-        .text_size(t.text.caption)
-        .shadow(t.shadow_float())
-        .child(msg)
+    let id = gpui::ElementId::Name(format!("toast-{msg}").into());
+    div().absolute().bottom(t.space.xl).right(t.space.xl).child(motion::rise_in(
+        div()
+            .flex()
+            .items_center()
+            .gap(t.space.sm)
+            .px(t.space.lg)
+            .py(t.space.sm + t.space.xxs)
+            .rounded(t.radius.card)
+            .bg(t.colors.toast)
+            .text_color(t.colors.toast_fg)
+            .text_size(t.text.caption)
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .shadow(t.shadow_float())
+            .child(div().size(px(6.)).rounded(t.radius.full).bg(t.colors.brand))
+            .child(msg),
+        id,
+        10.,
+        t,
+    ))
 }
 
 /// Keeps gpui-component's inputs and markdown in Folio's colours and type.

@@ -44,11 +44,23 @@ with sample sheets; the ones left untouched are removed on update, edited
 ones stay. `FOLIO_DEMO=1` with a new data folder opens on the samples
 (for screenshots and demos).
 
-**Font.** Folio draws its interface in **Anthropic Sans** when it's on the
-computer: installed in the system, or its `.ttf`/`.otf` files put in a
-`fonts` folder inside the data folder. Those files are read at start and
-never ship inside Folio, which bundles only openly licensed fonts; without
-them it uses Hanken Grotesk.
+**Font.** Folio draws its interface in **Anthropic Sans** when it has it:
+built into the .exe from `assets/fonts/extra/` (git-ignored; only fonts
+you're licensed to redistribute, see the README there), installed in the
+system, or as `.ttf`/`.otf` files in a `fonts` folder inside the data
+folder. Otherwise it uses Hanken Grotesk.
+
+**Search** is the field in the title bar, which is also the command palette
+(Ctrl+K; Ctrl+F opens it on notes). Results drop below it under tabs with
+counts: All, Commands (`>`), Sheets (`/`) and Notes (`@`, where `#tag` and
+`paper:sage` work). Matching is fuzzy with the matched letters marked,
+Tab changes scope, recently used things come first, and with nothing found
+Enter makes a note (or a sheet) of what you typed.
+
+**Renaming** a sheet: click its title on the sheet, type, Enter.
+
+**Tools** go back to Select when you click the one in use again (or press
+Esc). Settings, Trash and Sync & export close the same way, or with Esc.
 
 **Notes** resize from any edge or corner: hover a selected note's border
 and the pointer shows which way it will go.
@@ -130,7 +142,8 @@ set to its address.
 | Ctrl+wheel | Zoom |
 | `V H P M T C F E` | Select, pan, pen, marker, text, connect, area, eraser |
 | Arrows | Move between notes |
-| Ctrl+K | Commands, sheets and notes |
+| Ctrl+K | Search: commands, sheets and notes |
+| Ctrl+F | Search notes |
 | Ctrl+Alt+N | Quick note from any app |
 | Ctrl+N / Ctrl+Shift+N | New note / new sheet |
 | Ctrl+B | The sheets drawer |

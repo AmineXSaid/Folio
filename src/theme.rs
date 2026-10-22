@@ -91,6 +91,21 @@ pub struct Sizes {
     pub dot_grid: f32,     // 22: world units between canvas dots
 }
 
+/// How long things take to move, in milliseconds.
+#[derive(Clone, Copy)]
+pub struct Motion {
+    /// A popover, menu, dialog or page arriving.
+    pub pop_in: u64,
+    /// Between one row and the next as a list opens.
+    pub stagger: u64,
+    /// The accent line drawing down a popover's edge as it opens.
+    pub edge_draw: u64,
+    /// The accent line's width, px.
+    pub edge_bar: f32,
+}
+
+const MOTION: Motion = Motion { pop_in: 180, stagger: 22, edge_draw: 160, edge_bar: 3. };
+
 #[derive(Clone)]
 pub struct Theme {
     pub is_dark: bool,
@@ -99,6 +114,7 @@ pub struct Theme {
     pub space: Space,
     pub radius: Radius,
     pub size: Sizes,
+    pub motion: Motion,
     pub font: &'static str,
     pub high_contrast: bool,
     /// The interface size it was made at.
@@ -190,6 +206,7 @@ impl Theme {
             space: SPACE,
             radius: RADIUS,
             size: SIZE,
+            motion: MOTION,
             font: crate::fonts::sans(),
             high_contrast: false,
             scale: 1.0,
@@ -231,6 +248,7 @@ impl Theme {
             space: SPACE,
             radius: RADIUS,
             size: SIZE,
+            motion: MOTION,
             font: crate::fonts::sans(),
             high_contrast: false,
             scale: 1.0,
@@ -303,16 +321,40 @@ impl Theme {
         }]
     }
 
-    /// Menus, toolbars and dialogs.
+    /// Menus, toolbars, popovers and dialogs: a contact shadow tight under
+    /// the edge, a key shadow below, and a wide ambient one, so a surface
+    /// sits clearly above what's under it.
     pub fn shadow_float(&self) -> Vec<BoxShadow> {
-        let a = if self.is_dark { 0.5 } else { 0.12 };
-        vec![BoxShadow {
-            color: hsla(150. / 360., 0.2, 0.1, a),
-            offset: point(px(0.), px(12.)),
-            blur_radius: px(32.),
-            spread_radius: px(0.),
+        let a = if self.is_dark { 0.55 } else { 0.10 };
+        let tint = |k: f32| hsla(150. / 360., 0.18, 0.08, a * k);
+        let s = |y: f32, blur: f32, spread: f32, k: f32| BoxShadow {
+            color: tint(k),
+            offset: point(px(0.), px(y)),
+            blur_radius: px(blur),
+            spread_radius: px(spread),
             inset: false,
-        }]
+        };
+        vec![s(1., 2., 0., 0.9), s(8., 20., -4., 1.), s(24., 48., -8., 1.1)]
+    }
+
+    /// Buttons and small raised things: a hairline of shadow under them.
+    pub fn shadow_raised(&self) -> Vec<BoxShadow> {
+        let a = if self.is_dark { 0.5 } else { 0.07 };
+        vec![
+            BoxShadow { color: hsla(150. / 360., 0.18, 0.08, a), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(150. / 360., 0.18, 0.08, a * 0.6), offset: point(px(0.), px(2.)), blur_radius: px(6.), spread_radius: px(-2.), inset: false },
+        ]
+    }
+
+    /// The main action: lifted by a shadow in its own colour, with a light
+    /// line along its top like a lit edge.
+    pub fn shadow_primary(&self) -> Vec<BoxShadow> {
+        let glow = self.colors.primary;
+        vec![
+            BoxShadow { color: hsla(0., 0., 1., if self.is_dark { 0.14 } else { 0.22 }), offset: point(px(0.), px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: true },
+            BoxShadow { color: Hsla { a: 0.28, ..glow }, offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: Hsla { a: 0.22, ..glow }, offset: point(px(0.), px(4.)), blur_radius: px(10.), spread_radius: px(-3.), inset: false },
+        ]
     }
 }
 
