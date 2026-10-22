@@ -75,7 +75,8 @@ pub struct Radius {
 #[derive(Clone, Copy)]
 pub struct Sizes {
     pub sidebar: Pixels,   // 236
-    pub topbar: Pixels,    // 60
+    pub topbar: Pixels,    // 40: the top bar, which is the title bar
+    pub bar_control: Pixels, // 28: buttons and the search field in it
     pub control: Pixels,   // 32: buttons and inputs
     pub icon_sm: Pixels,   // 14
     pub icon: Pixels,      // 16
@@ -137,7 +138,8 @@ const RADIUS: Radius = Radius {
 };
 const SIZE: Sizes = Sizes {
     sidebar: px(236.),
-    topbar: px(60.),
+    topbar: px(40.),
+    bar_control: px(28.),
     control: px(32.),
     icon_sm: px(14.),
     icon: px(16.),
@@ -188,7 +190,7 @@ impl Theme {
             space: SPACE,
             radius: RADIUS,
             size: SIZE,
-            font: "Hanken Grotesk",
+            font: crate::fonts::sans(),
             high_contrast: false,
             scale: 1.0,
         }
@@ -229,7 +231,7 @@ impl Theme {
             space: SPACE,
             radius: RADIUS,
             size: SIZE,
-            font: "Hanken Grotesk",
+            font: crate::fonts::sans(),
             high_contrast: false,
             scale: 1.0,
         }

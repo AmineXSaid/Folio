@@ -64,6 +64,51 @@ impl Rect {
             h: (self.y + self.h).max(o.y + o.h) - y,
         }
     }
+
+    /// Which edges of this rectangle `p` is on, within `reach` either side
+    /// of each (a corner is two edges). None away from the edges.
+    pub fn grip_at(&self, p: Vec2, reach: f32) -> Option<Grip> {
+        let (x1, y1) = (self.x + self.w, self.y + self.h);
+        let within_x = p.x >= self.x - reach && p.x <= x1 + reach;
+        let within_y = p.y >= self.y - reach && p.y <= y1 + reach;
+        if !within_x || !within_y {
+            return None;
+        }
+        // On a small rectangle the reaches overlap: the nearer edge wins.
+        let near = |a: f32, b: f32, v: f32| ((v - a).abs() <= reach && (v - a).abs() <= (v - b).abs(), (v - b).abs() <= reach && (v - b).abs() < (v - a).abs());
+        let (left, right) = near(self.x, x1, p.x);
+        let (top, bottom) = near(self.y, y1, p.y);
+        let g = Grip { left, right, top, bottom };
+        (left || right || top || bottom).then_some(g)
+    }
+
+    /// This rectangle with the gripped edges moved by (dx, dy), no smaller
+    /// than (min_w, min_h); the opposite edges stay put.
+    pub fn resized(&self, g: Grip, dx: f32, dy: f32, min_w: f32, min_h: f32) -> Rect {
+        let mut r = *self;
+        if g.right {
+            r.w = (self.w + dx).max(min_w);
+        } else if g.left {
+            r.w = (self.w - dx).max(min_w);
+            r.x = self.x + self.w - r.w;
+        }
+        if g.bottom {
+            r.h = (self.h + dy).max(min_h);
+        } else if g.top {
+            r.h = (self.h - dy).max(min_h);
+            r.y = self.y + self.h - r.h;
+        }
+        r
+    }
+}
+
+/// The edges a resize holds: one for a side, two for a corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Grip {
+    pub left: bool,
+    pub right: bool,
+    pub top: bool,
+    pub bottom: bool,
 }
 
 /// A sticker's paper. Each has a light and a dark rendering in the theme.
@@ -1430,6 +1475,26 @@ mod tests {
         assert_eq!(toggle_task(&t, 1), "Intro\n- [x] one\n- [ ] two\n* [ ] three");
         assert_eq!(task_line("- [ ]"), Some((false, "")));
         assert_eq!(task_line("- plain"), None);
+    }
+
+    #[test]
+    fn notes_resize_from_any_edge_or_corner() {
+        let r = Rect { x: 100., y: 100., w: 200., h: 100. };
+        let g = |x, y| r.grip_at(v2(x, y), 8.);
+        assert_eq!(g(100., 100.), Some(Grip { left: true, top: true, ..Default::default() }));
+        assert_eq!(g(305., 150.), Some(Grip { right: true, ..Default::default() }));
+        assert_eq!(g(200., 96.), Some(Grip { top: true, ..Default::default() }));
+        assert_eq!(g(98., 203.), Some(Grip { left: true, bottom: true, ..Default::default() }));
+        assert_eq!(g(200., 150.), None, "the middle moves, it doesn't resize");
+        assert_eq!(g(330., 150.), None);
+
+        let left_top = Grip { left: true, top: true, ..Default::default() };
+        let out = r.resized(left_top, -20., 30., 50., 40.);
+        assert_eq!(out, Rect { x: 80., y: 130., w: 220., h: 70. }, "right and bottom stay put");
+        let tiny = r.resized(left_top, 500., 500., 50., 40.);
+        assert_eq!((tiny.x + tiny.w, tiny.w, tiny.y + tiny.h, tiny.h), (300., 50., 200., 40.));
+        let right = r.resized(Grip { right: true, ..Default::default() }, 10., 99., 50., 40.);
+        assert_eq!(right, Rect { w: 210., ..r });
     }
 
     #[test]

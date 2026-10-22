@@ -101,8 +101,9 @@ pub enum Gesture {
     Pan { start: Vec2, pan: Vec2 },
     /// Moving the selection; each item with where it started.
     Move { items: Vec<(Selection, Vec2)>, start: Vec2, moved: bool },
-    Resize { id: Id, start: Vec2, size: (f32, f32) },
-    ResizeFrame { id: Id, start: Vec2, size: (f32, f32) },
+    /// Resizing a note from `grip`'s edges; `rect` as it was at the press.
+    Resize { id: Id, start: Vec2, rect: Rect, grip: Grip },
+    ResizeFrame { id: Id, start: Vec2, rect: Rect, grip: Grip },
     Marquee { start: Vec2, now: Vec2, additive: bool },
     Draw(Stroke),
     Erase { erased: bool },

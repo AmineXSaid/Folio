@@ -44,6 +44,15 @@ with sample sheets; the ones left untouched are removed on update, edited
 ones stay. `FOLIO_DEMO=1` with a new data folder opens on the samples
 (for screenshots and demos).
 
+**Font.** Folio draws its interface in **Anthropic Sans** when it's on the
+computer: installed in the system, or its `.ttf`/`.otf` files put in a
+`fonts` folder inside the data folder. Those files are read at start and
+never ship inside Folio, which bundles only openly licensed fonts; without
+them it uses Hanken Grotesk.
+
+**Notes** resize from any edge or corner: hover a selected note's border
+and the pointer shows which way it will go.
+
 The window has no system title bar: Folio's top bar is the title bar.
 Drag it to move the window (on Windows, with snapping), double-click it
 to maximize, and use the minimize / maximize / close buttons at its right
@@ -116,6 +125,7 @@ set to its address.
 | Double-click the sheet | A new note, ready to type into |
 | Double-click a note, or Enter | Type into it; Esc or Done to finish |
 | Right-click | A note's, the sheet's, an area's or a card's menu |
+| Drag a note's edge or corner | Resize it from that side |
 | Drag the empty sheet | Select a group; Space+drag, middle-drag or the wheel pans |
 | Ctrl+wheel | Zoom |
 | `V H P M T C F E` | Select, pan, pen, marker, text, connect, area, eraser |

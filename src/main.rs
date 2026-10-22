@@ -4,6 +4,7 @@ mod assets;
 mod cloud;
 mod demo;
 mod export;
+mod fonts;
 mod desktop;
 mod links;
 mod merge;
@@ -85,6 +86,7 @@ fn main() {
     gpui::application().with_assets(assets::Assets).run(move |cx: &mut App| {
         gpui::init(cx);
         assets::load_fonts(cx);
+        fonts::choose(cx);
         theme::set(false, false, 1.0, cx);
         bind_keys(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());

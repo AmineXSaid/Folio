@@ -21,8 +21,9 @@ use super::*;
 use crate::model::*;
 use crate::theme::{theme, Theme};
 
-/// How close, in screen pixels, a press must be to a corner to resize.
-const GRIP_REACH: f32 = 16.;
+/// How close, in screen pixels, a press must be to an edge or corner to
+/// resize (either side of it).
+const GRIP_REACH: f32 = 7.;
 /// How close, in screen pixels, edges must come to snap together.
 const SNAP: f32 = 6.;
 /// An area's title bar, in world units: press there to move the area.
@@ -229,7 +230,11 @@ impl Folio {
             Tool::Text => gpui::CursorStyle::IBeam,
             Tool::Select => match (&self.gesture, self.hovered) {
                 (Gesture::Pan { .. }, _) => gpui::CursorStyle::ClosedHand,
-                (Gesture::Resize { .. } | Gesture::ResizeFrame { .. }, _) => gpui::CursorStyle::ResizeUpLeftDownRight,
+                (Gesture::Resize { grip, .. } | Gesture::ResizeFrame { grip, .. }, _) => resize_cursor(*grip),
+                (Gesture::None, _) if self.grip_at(self.cursor).is_some() || self.frame_grip_at(self.cursor).is_some() => {
+                    let grip = self.grip_at(self.cursor).or(self.frame_grip_at(self.cursor)).map(|(_, g)| g).unwrap_or_default();
+                    resize_cursor(grip)
+                }
                 (_, Some(_)) => gpui::CursorStyle::PointingHand,
                 _ => gpui::CursorStyle::Arrow,
             },
@@ -732,13 +737,13 @@ impl Folio {
         match self.tool {
             Tool::Hand => self.gesture = pan,
             Tool::Select => {
-                if let Some(id) = self.grip_at(at) {
-                    let r = self.sheet().sticker(id).map(|s| self.note_rect(s)).unwrap();
+                if let Some((id, grip)) = self.grip_at(at) {
+                    let rect = self.sheet().sticker(id).map(|s| self.note_rect(s)).unwrap();
                     self.select(Selection::Sticker(id));
-                    self.gesture = Gesture::Resize { id, start: world, size: (r.w, r.h) };
-                } else if let Some(id) = self.frame_grip_at(at) {
-                    let r = self.sheet().frames.iter().find(|f| f.id == id).map(|f| f.rect).unwrap();
-                    self.gesture = Gesture::ResizeFrame { id, start: world, size: (r.w, r.h) };
+                    self.gesture = Gesture::Resize { id, start: world, rect, grip };
+                } else if let Some((id, grip)) = self.frame_grip_at(at) {
+                    let rect = self.sheet().frames.iter().find(|f| f.id == id).map(|f| f.rect).unwrap();
+                    self.gesture = Gesture::ResizeFrame { id, start: world, rect, grip };
                 } else if let Some(id) = self.note_at(world) {
                     let sel = Selection::Sticker(id);
                     if double {
@@ -886,18 +891,21 @@ impl Folio {
                     }
                 }
             }
-            Gesture::Resize { id, start, size } => {
-                let (id, start, size) = (*id, *start, *size);
+            Gesture::Resize { id, start, rect, grip } => {
+                let (id, grip, rect, start) = (*id, *grip, *rect, *start);
+                // A note that grows with its text is never shorter than it.
+                let grows = self.sheet().sticker(id).is_some_and(|s| !s.fixed);
+                let text_h = if grows { self.heights.borrow().get(&id).copied().unwrap_or(0.) } else { 0. };
+                let r = rect.resized(grip, world.x - start.x, world.y - start.y, MIN_STICKER.0, (MIN_STICKER.1 * 0.6).max(text_h));
                 if let Some(s) = self.board.sheet_mut().sticker_mut(id) {
-                    s.rect.w = (size.0 + world.x - start.x).max(MIN_STICKER.0);
-                    s.rect.h = (size.1 + world.y - start.y).max(MIN_STICKER.1 * 0.6);
+                    s.rect = r;
                 }
             }
-            Gesture::ResizeFrame { id, start, size } => {
-                let (id, start, size) = (*id, *start, *size);
+            Gesture::ResizeFrame { id, start, rect, grip } => {
+                let (id, grip) = (*id, *grip);
+                let r = rect.resized(grip, world.x - start.x, world.y - start.y, 160., 120.);
                 if let Some(f) = self.board.sheet_mut().frames.iter_mut().find(|f| f.id == id) {
-                    f.rect.w = (size.0 + world.x - start.x).max(160.);
-                    f.rect.h = (size.1 + world.y - start.y).max(120.);
+                    f.rect = r;
                 }
             }
             Gesture::Marquee { start, now, additive } => {
@@ -1196,27 +1204,40 @@ impl Folio {
         cx.notify();
     }
 
-    /// The note whose resize corner is under `at` (screen): the selected or
-    /// hovered one, so corners don't catch presses on notes at rest.
-    fn grip_at(&self, at: Vec2) -> Option<Id> {
+    /// The note whose edge or corner is under `at` (screen), and which:
+    /// the selected or hovered one, so edges don't catch presses on notes
+    /// at rest.
+    pub(super) fn grip_at(&self, at: Vec2) -> Option<(Id, Grip)> {
         let cam = self.sheet().camera;
         let mut candidates: Vec<Id> = self.selected_notes();
         candidates.extend(self.hovered);
-        candidates.into_iter().find(|id| {
-            self.sheet().sticker(*id).is_some_and(|s| {
-                let r = self.note_rect(s);
-                let corner = cam.to_screen(v2(r.x + r.w, r.y + r.h));
-                !s.locked && (corner.x - at.x).abs() <= GRIP_REACH && (corner.y - at.y).abs() <= GRIP_REACH
-            })
+        candidates.into_iter().find_map(|id| {
+            let s = self.sheet().sticker(id).filter(|s| !s.locked)?;
+            let r = self.note_rect(s);
+            let a = cam.to_screen(v2(r.x, r.y));
+            let b = cam.to_screen(v2(r.x + r.w, r.y + r.h));
+            Rect { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y }.grip_at(at, GRIP_REACH).map(|g| (id, g))
         })
     }
 
-    fn frame_grip_at(&self, at: Vec2) -> Option<Id> {
+    pub(super) fn frame_grip_at(&self, at: Vec2) -> Option<(Id, Grip)> {
         let cam = self.sheet().camera;
         self.sheet().frames.iter().filter(|f| self.is_selected(Selection::Frame(f.id))).find_map(|f| {
-            let corner = cam.to_screen(v2(f.rect.x + f.rect.w, f.rect.y + f.rect.h));
-            ((corner.x - at.x).abs() <= GRIP_REACH && (corner.y - at.y).abs() <= GRIP_REACH).then_some(f.id)
+            let a = cam.to_screen(v2(f.rect.x, f.rect.y));
+            let b = cam.to_screen(v2(f.rect.x + f.rect.w, f.rect.y + f.rect.h));
+            Rect { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y }.grip_at(at, GRIP_REACH).map(|g| (f.id, g))
         })
+    }
+}
+
+/// The pointer for resizing from these edges.
+fn resize_cursor(g: Grip) -> gpui::CursorStyle {
+    use gpui::CursorStyle as C;
+    match (g.left || g.right, g.top || g.bottom) {
+        (true, true) if (g.left && g.top) || (g.right && g.bottom) => C::ResizeUpLeftDownRight,
+        (true, true) => C::ResizeUpRightDownLeft,
+        (true, false) => C::ResizeLeftRight,
+        _ => C::ResizeUpDown,
     }
 }
 

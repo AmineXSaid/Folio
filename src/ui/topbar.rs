@@ -9,7 +9,7 @@
 //! Everything clickable in the bar blocks the drag area under it.
 
 use gpui::component::input::Input;
-use gpui::component::InteractiveElementExt;
+use gpui::component::{InteractiveElementExt, Sizable};
 use gpui::{div, prelude::*, px, Context, MouseButton, Window, WindowControlArea};
 
 use super::app::{Folio, Screen};
@@ -40,15 +40,29 @@ impl Folio {
                 S::Error(_) => ("icons/cloud-off.svg", Some(t.colors.danger)),
             }
         };
-        let sync_button = icon_button("sync", sync_icon, &t)
-            .occlude()
+        // Everything in the bar is small and quiet: 28px controls, 14px icons.
+        let bar_button = |id: &'static str, path: &'static str| {
+            div()
+                .id(id)
+                .occlude()
+                .size(t.size.bar_control)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(t.radius.small)
+                .cursor_pointer()
+                .hover(|d| d.bg(t.colors.hover))
+                .child(icon(path, t.size.icon_sm, t.colors.text_muted))
+        };
+        let sync_button = bar_button("sync", sync_icon)
             .relative()
             .children(sync_dot.map(|c| {
                 div()
                     .absolute()
-                    .top(px(6.))
-                    .right(px(6.))
-                    .size(t.size.dot)
+                    .top(px(5.))
+                    .right(px(5.))
+                    .size(px(6.))
                     .rounded(t.radius.full)
                     .bg(c)
                     .border_1()
@@ -61,26 +75,24 @@ impl Folio {
         let left = div()
             .flex()
             .items_center()
-            .gap(t.space.sm)
+            .gap(t.space.xs)
             .min_w_0()
             .child(
-                // Opens the sheets drawer: a stack of sheets and a label.
+                // Opens the sheets drawer.
                 div()
                     .id("drawer")
                     .occlude()
-                    .h(t.size.control)
-                    .pl(t.space.sm)
-                    .pr(t.space.md)
+                    .h(t.size.bar_control)
+                    .px(t.space.sm)
                     .flex()
                     .items_center()
                     .gap(t.space.sm)
-                    .rounded(t.radius.button)
-                    .border_1()
-                    .border_color(t.colors.border)
-                    .bg(t.colors.surface_sunk)
+                    .rounded(t.radius.small)
+                    .text_color(t.colors.text_muted)
                     .cursor_pointer()
-                    .hover(|d| d.bg(t.colors.hover).border_color(t.colors.text_subtle))
-                    .child(icon("icons/layers.svg", t.size.icon, t.colors.text))
+                    .hover(|d| d.bg(t.colors.hover).text_color(t.colors.text))
+                    .when(self.drawer, |d| d.bg(t.colors.hover))
+                    .child(icon("icons/layers.svg", t.size.icon_sm, t.colors.text_muted))
                     .child(div().text_size(t.text.caption).font_weight(gpui::FontWeight::MEDIUM).child("Sheets"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.finish_edit(cx);
@@ -88,22 +100,19 @@ impl Folio {
                         cx.notify();
                     })),
             )
+            .child(div().w(px(1.)).h(px(16.)).mx(t.space.xs).bg(t.colors.border))
             .child(
                 div()
                     .id("home-mark")
                     .occlude()
+                    .px(t.space.xs)
                     .flex()
                     .items_center()
-                    .gap(t.space.sm)
                     .cursor_pointer()
-                    .child(
-                        div()
-                            .flex()
-                            .text_size(t.text.brand)
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child("folio")
-                            .child(div().text_color(t.colors.brand).child(".")),
-                    )
+                    .text_size(px(15.))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child("folio")
+                    .child(div().text_color(t.colors.brand).child("."))
                     .on_click(cx.listener(|this, _, _, cx| this.go_home(cx))),
             )
             .children(here.map(|name| {
@@ -112,9 +121,9 @@ impl Folio {
                     .items_center()
                     .gap(t.space.sm)
                     .min_w_0()
-                    .text_size(t.text.body)
-                    .child(div().text_color(t.colors.border).child("/"))
-                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).truncate().child(name))
+                    .text_size(t.text.caption)
+                    .child(div().text_color(t.colors.text_subtle).child("/"))
+                    .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(t.colors.text_body).truncate().child(name))
             }));
 
         let search = div()
@@ -130,46 +139,60 @@ impl Folio {
                 div()
                     .id("search")
                     .occlude()
-                    .w(px(480.))
-                    .h(px(38.))
+                    .w(px(400.))
+                    .h(t.size.bar_control)
                     .flex()
                     .items_center()
                     .gap(t.space.sm)
-                    .pl(t.space.md)
-                    .pr(t.space.xs)
-                    .rounded(t.radius.card)
+                    .pl(t.space.sm)
+                    .pr(px(3.))
+                    .rounded(t.radius.button)
                     .border_1()
                     .border_color(t.colors.border)
                     .bg(t.colors.surface_sunk)
+                    .text_size(t.text.caption)
                     .child(icon("icons/search.svg", t.size.icon_sm, t.colors.text_subtle))
-                    .child(div().flex_1().child(Input::new(&self.search_input).appearance(false).cleanable(true)))
+                    .child(div().flex_1().child(Input::new(&self.search_input).appearance(false).cleanable(true).small()))
                     .child(kbd(shortcut("F"), &t)),
             );
 
+        let new_button = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .occlude()
+                .h(px(26.))
+                .px(t.space.md)
+                .ml(t.space.xs)
+                .flex()
+                .items_center()
+                .gap(t.space.xs)
+                .rounded(t.radius.small)
+                .bg(t.colors.primary)
+                .hover(|d| d.bg(t.colors.primary_hover))
+                .text_color(t.colors.primary_fg)
+                .text_size(t.text.caption)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .cursor_pointer()
+                .child(icon("icons/plus.svg", px(12.), t.colors.primary_fg))
+                .child(label)
+        };
         let right = div()
             .id("bar-actions")
-            .occlude()
             .flex()
             .items_center()
-            .gap(t.space.xs)
+            .gap(px(2.))
             .when(on_sheet, |d| {
-                d.child(icon_button("undo", "icons/undo-2.svg", &t).on_click(cx.listener(|this, _, _, cx| this.undo(cx))))
-                    .child(icon_button("redo", "icons/redo-2.svg", &t).on_click(cx.listener(|this, _, _, cx| this.redo(cx))))
+                d.child(bar_button("undo", "icons/undo-2.svg").on_click(cx.listener(|this, _, _, cx| this.undo(cx))))
+                    .child(bar_button("redo", "icons/redo-2.svg").on_click(cx.listener(|this, _, _, cx| this.redo(cx))))
+                    .child(div().w(px(1.)).h(px(16.)).mx(t.space.xs).bg(t.colors.border))
             })
             .child(sync_button)
-            .child(
-                icon_button("palette", "icons/command.svg", &t)
-                    .on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))),
-            )
-            .child(icon_button("theme", theme_icon, &t).on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx))))
+            .child(bar_button("palette", "icons/command.svg").on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))))
+            .child(bar_button("theme", theme_icon).on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx))))
             .child(if on_sheet {
-                primary_button("new-note", "New note", &t)
-                    .on_click(cx.listener(|this, _, window, cx| this.new_note(window, cx)))
-                    .into_any_element()
+                new_button("new-note", "Note").on_click(cx.listener(|this, _, window, cx| this.new_note(window, cx))).into_any_element()
             } else {
-                primary_button("new-sheet", "New sheet", &t)
-                    .on_click(cx.listener(|this, _, window, cx| this.new_sheet_dialog(window, cx)))
-                    .into_any_element()
+                new_button("new-sheet", "Sheet").on_click(cx.listener(|this, _, window, cx| this.new_sheet_dialog(window, cx))).into_any_element()
             });
 
         let controls = window_controls(window, &t);
@@ -181,8 +204,8 @@ impl Folio {
             .relative()
             .flex()
             .items_center()
-            .pl(if cfg!(target_os = "macos") { px(84.) } else { t.space.lg })
-            .when(!has_controls, |d| d.pr(t.space.lg))
+            .pl(if cfg!(target_os = "macos") { px(80.) } else { t.space.sm })
+            .when(!has_controls, |d| d.pr(t.space.md))
             .bg(t.colors.surface)
             .border_b_1()
             .border_color(t.colors.border)
@@ -222,7 +245,7 @@ fn window_controls(window: &Window, t: &crate::theme::Theme) -> Option<gpui::Div
             .id(id)
             .group(id)
             .occlude()
-            .w(px(46.))
+            .w(px(44.))
             .h_full()
             .flex()
             .items_center()
@@ -245,7 +268,8 @@ fn window_controls(window: &Window, t: &crate::theme::Theme) -> Option<gpui::Div
         div()
             .h_full()
             .flex()
-            .ml(t.space.sm)
+            .items_center()
+            .child(div().w(px(1.)).h(px(16.)).mx(t.space.sm).bg(t.colors.border))
             .child(button("win-min", "icons/caption-minimize.svg", WindowControlArea::Min))
             .child(button(
                 "win-max",
@@ -257,5 +281,5 @@ fn window_controls(window: &Window, t: &crate::theme::Theme) -> Option<gpui::Div
 }
 
 fn svg_glyph(path: &'static str, t: &crate::theme::Theme) -> gpui::Svg {
-    icon(path, t.size.icon, t.colors.text_muted)
+    icon(path, t.size.icon_sm, t.colors.text_muted)
 }
