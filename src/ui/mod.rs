@@ -17,6 +17,7 @@ mod settings;
 mod sticker;
 mod sync;
 mod toolbar;
+mod transfer;
 mod topbar;
 
 use gpui::{div, prelude::*, px, svg, App, Hsla, Pixels, SharedString, Svg};
@@ -99,7 +100,7 @@ pub fn icon_button(id: impl Into<gpui::ElementId>, path: &'static str, t: &Theme
 }
 
 /// The filled button for a view's one main action.
-pub fn primary_button(id: impl Into<gpui::ElementId>, label: &'static str, t: &Theme) -> gpui::Stateful<gpui::Div> {
+pub fn primary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>, t: &Theme) -> gpui::Stateful<gpui::Div> {
     let (bg, hover, fg) = (t.colors.primary, t.colors.primary_hover, t.colors.primary_fg);
     div()
         .id(id)
@@ -115,10 +116,10 @@ pub fn primary_button(id: impl Into<gpui::ElementId>, label: &'static str, t: &T
         .text_size(t.text.caption)
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .cursor_pointer()
-        .child(label)
+        .child(label.into())
 }
 
-pub fn secondary_button(id: impl Into<gpui::ElementId>, label: &'static str, t: &Theme) -> gpui::Stateful<gpui::Div> {
+pub fn secondary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>, t: &Theme) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .h(t.size.control)
@@ -132,7 +133,7 @@ pub fn secondary_button(id: impl Into<gpui::ElementId>, label: &'static str, t: 
         .text_size(t.text.caption)
         .font_weight(gpui::FontWeight::MEDIUM)
         .cursor_pointer()
-        .child(label)
+        .child(label.into())
 }
 
 /// A sheet's badge: its emoji (or its first letter) on a quiet tile.

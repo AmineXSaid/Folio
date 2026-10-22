@@ -98,6 +98,8 @@ pub struct Link {
     pub synced_hash: Option<String>,
     /// When the last sync finished (Unix seconds).
     pub synced_at: Option<u64>,
+    /// What happened lately, for the Sync screen: (Unix seconds, what).
+    pub log: Vec<(u64, String)>,
 }
 
 pub fn link_file(dir: &Path) -> PathBuf {
@@ -501,7 +503,7 @@ pub enum Outcome {
     Both(String),
 }
 
-/// Which side wins when both changed.
+/// Which side wins, when the person picks one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Keep {
     ThisComputer,
@@ -533,12 +535,12 @@ impl Drive {
         self.link.file_id = remote.as_ref().map(|f| f.id.clone());
         let local_hash = hash(board);
         let mut what = plan(remote.as_ref().and_then(|f| f.rev.as_deref()), &local_hash, &self.link);
-        if what == Plan::Both {
-            match force {
-                Some(Keep::ThisComputer) => what = Plan::Push,
-                Some(Keep::Drive) => what = Plan::Pull,
-                None => {}
-            }
+        // A side picked by the person goes whichever way it says.
+        match (force, &what) {
+            (_, Plan::Nothing) | (None, _) => {}
+            (Some(Keep::ThisComputer), _) => what = Plan::Push,
+            (Some(Keep::Drive), _) if remote.is_some() => what = Plan::Pull,
+            (Some(Keep::Drive), _) => what = Plan::Nothing,
         }
         self.sync_media(media, &media_folder)?;
         let outcome = match what {

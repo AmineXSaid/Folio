@@ -3,8 +3,10 @@
 mod assets;
 mod cloud;
 mod demo;
+mod export;
 mod desktop;
 mod links;
+mod merge;
 mod model;
 mod store;
 mod theme;

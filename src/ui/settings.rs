@@ -181,22 +181,15 @@ impl Folio {
 
         let dir = self.dir.clone();
         let days = store::backups(&self.dir).len();
-        let drive = {
-            use super::sync::DriveState as S;
-            let row = div().flex().gap(t.space.sm);
-            let row = match self.sync.state {
-                S::Off => row.child(primary_button("s-google", "Sign in with Google", &t).on_click(cx.listener(|this, _, _, cx| this.sign_in_google(cx)))),
-                S::SigningIn => row.child(secondary_button("s-google-cancel", "Cancel", &t).on_click(cx.listener(|this, _, _, cx| this.cancel_sign_in(cx)))),
-                S::Choice => row.child(primary_button("s-google-choose", "Choose…", &t).on_click(cx.listener(|this, _, _, cx| this.drive_show_choice(cx)))),
-                S::Syncing | S::Idle | S::Error(_) => row.child(secondary_button("s-google-sync", "Sync now", &t).on_click(cx.listener(|this, _, _, cx| this.drive_sync(None, cx)))),
-            };
-            let row = if self.sync.signed_in() {
-                row.child(secondary_button("s-google-out", "Sign out", &t).on_click(cx.listener(|this, _, _, cx| this.sign_out_google(cx))))
-            } else {
-                row
-            };
-            setting("Google Drive", self.drive_status(), row, &t)
-        };
+        let drive = setting(
+            "Google Drive & export",
+            match self.sync.email.clone() {
+                Some(email) => format!("{email} · {}", self.drive_status().to_lowercase()),
+                None => "Sync your sheets to Google Drive, or export them as files".into(),
+            },
+            secondary_button("s-transfer", "Open Sync & export", &t).on_click(cx.listener(|this, _, _, cx| this.open_transfer(cx))),
+            &t,
+        );
         let data = card("Your data", &t)
             .child(drive)
             .child(setting(

@@ -36,6 +36,8 @@ pub struct Colors {
     pub brand_on_tint: Hsla,
     /// Overdue reminders.
     pub alert: Hsla,
+    /// All's well: synced, done.
+    pub ok: Hsla,
 }
 
 #[derive(Clone, Copy)]
@@ -177,6 +179,7 @@ impl Theme {
                 brand_tint: c(0xfdeaf0),
                 brand_on_tint: c(0xb8285a),
                 alert: c(0xd03b3b),
+                ok: c(0x2f8f5b),
             },
             text: TEXT,
             space: SPACE,
@@ -216,6 +219,7 @@ impl Theme {
                 brand_tint: c(0x3a1a26),
                 brand_on_tint: c(0xff8fb3),
                 alert: c(0xff7b6e),
+                ok: c(0x5cc98a),
             },
             text: TEXT,
             space: SPACE,

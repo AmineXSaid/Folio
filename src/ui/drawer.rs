@@ -82,6 +82,9 @@ impl Folio {
             .child(nav("nav-bin", "icons/archive.svg", "Trash & archive", screen == Screen::Bin).on_click(
                 cx.listener(|this, _, _, cx| this.open_bin(BinTab::Trash, cx)),
             ))
+            .child(nav("nav-transfer", "icons/cloud.svg", "Sync & export", screen == Screen::Transfer).on_click(
+                cx.listener(|this, _, _, cx| this.open_transfer(cx)),
+            ))
             .child(nav("nav-settings", "icons/settings.svg", "Settings", screen == Screen::Settings).on_click(
                 cx.listener(|this, _, _, cx| this.open_settings(cx)),
             ))

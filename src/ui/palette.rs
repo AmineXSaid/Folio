@@ -30,9 +30,11 @@ enum Cmd {
     Map,
     Intro,
     Drive,
+    Transfer,
+    Import,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 16] = [
+const CMDS: [(Cmd, &str, &str, &str); 18] = [
     (Cmd::NewNote, "New note", "Ctrl+N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl+Shift+N", "icons/plus.svg"),
     (Cmd::QuickNote, "Quick note to Inbox", "Ctrl+Alt+N", "icons/inbox.svg"),
@@ -43,7 +45,9 @@ const CMDS: [(Cmd, &str, &str, &str); 16] = [
     (Cmd::Archive, "Open the Archive", "", "icons/archive.svg"),
     (Cmd::Backups, "Restore a backup", "", "icons/rotate-ccw.svg"),
     (Cmd::BackUpNow, "Back up now", "", "icons/hard-drive-download.svg"),
-    (Cmd::Drive, "Sync with Google Drive", "", "icons/cloud.svg"),
+    (Cmd::Drive, "Sync with Google Drive", "", "icons/refresh-cw.svg"),
+    (Cmd::Transfer, "Sync & export: Google Drive, files", "", "icons/cloud.svg"),
+    (Cmd::Import, "Import a Folio file…", "", "icons/upload.svg"),
     (Cmd::Theme, "Switch light / dark", "Ctrl+Shift+L", "icons/moon.svg"),
     (Cmd::Fit, "Zoom to fit", "Ctrl+0", "icons/scan.svg"),
     (Cmd::Tidy, "Tidy up the sheet", "", "icons/wand-sparkles.svg"),
@@ -137,6 +141,8 @@ impl Folio {
                     }
                 }
                 Cmd::Drive => self.sign_in_google(cx),
+                Cmd::Transfer => self.open_transfer(cx),
+                Cmd::Import => self.import_file(cx),
                 Cmd::Theme => self.toggle_theme(cx),
                 Cmd::Fit | Cmd::Tidy | Cmd::Map => {
                     if self.screen != Screen::Sheet {

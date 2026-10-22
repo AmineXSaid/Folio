@@ -20,7 +20,33 @@ impl Folio {
             }
             Screen::Settings => Some("Settings".into()),
             Screen::Bin => Some("Trash & archive".into()),
+            Screen::Transfer => Some("Sync & export".into()),
         };
+        // Where Google Drive sync is at, at a glance; opens Sync & export.
+        let (sync_icon, sync_dot) = {
+            use super::sync::DriveState as S;
+            match self.sync.state {
+                S::Off | S::SigningIn => ("icons/cloud.svg", None),
+                S::Idle => ("icons/cloud.svg", Some(t.colors.ok)),
+                S::Syncing => ("icons/refresh-cw.svg", Some(t.colors.brand)),
+                S::Choice => ("icons/cloud.svg", Some(t.colors.alert)),
+                S::Error(_) => ("icons/cloud-off.svg", Some(t.colors.danger)),
+            }
+        };
+        let sync_button = icon_button("sync", sync_icon, &t)
+            .relative()
+            .children(sync_dot.map(|c| {
+                div()
+                    .absolute()
+                    .top(px(6.))
+                    .right(px(6.))
+                    .size(t.size.dot)
+                    .rounded(t.radius.full)
+                    .bg(c)
+                    .border_1()
+                    .border_color(t.colors.surface)
+            }))
+            .on_click(cx.listener(|this, _, _, cx| this.open_transfer(cx)));
         let on_sheet = self.screen == Screen::Sheet;
         let theme_icon = if t.is_dark { "icons/sun.svg" } else { "icons/moon.svg" };
 
@@ -117,6 +143,7 @@ impl Folio {
                 d.child(icon_button("undo", "icons/undo-2.svg", &t).on_click(cx.listener(|this, _, _, cx| this.undo(cx))))
                     .child(icon_button("redo", "icons/redo-2.svg", &t).on_click(cx.listener(|this, _, _, cx| this.redo(cx))))
             })
+            .child(sync_button)
             .child(
                 icon_button("palette", "icons/command.svg", &t)
                     .on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))),

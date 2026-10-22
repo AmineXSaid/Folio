@@ -28,7 +28,8 @@ and what is still to come.
 | Search | ✅ every note on every sheet, by text, `#tag` or note colour (`paper:sage`, or the colour dots on the home screen); jumps to the note; Ctrl+K palette for commands, sheets and notes | |
 | Right-click menus | ✅ note, empty sheet, area, label, sheet card; Move to sheet | |
 | Safety | ✅ undo (100 steps; the last 30 survive a restart), Trash (30 days), Archive, a daily backup (14 kept) restorable whole or one sheet at a time; "untouched for weeks" hint with keep-fresh or snooze for a week | |
-| Google Drive | ✅ optional sign-in with Google (browser, PKCE, `drive.file` only); board and pictures kept in a Folio folder in Drive, synced after changes, every minute, at start-up and quit; when both sides changed, the person picks and the other side goes to Backups (`src/cloud.rs`, `src/ui/sync.rs`) | merge per sheet instead of choosing a side; verified Google app (needed beyond 100 test users) |
+| Google Drive | ✅ optional sign-in with Google (browser, PKCE, `drive.file` only); board and pictures kept in a Folio folder in Drive, synced after changes, every minute, at start-up and quit; three-way merge per item from the last shared version, ids renumbered where two computers collide; first sync asks merge / keep mine / use Drive's; start over either way (`src/cloud.rs`, `src/merge.rs`, `src/ui/sync.rs`) | merge inside a note's text (today the newest edit wins); verified Google app (needed beyond 100 test users) |
+| Export & import | ✅ chosen sheets to Markdown (a folder, one `.md` per sheet, pictures alongside) or a `.folio` file (pictures inside); import a `.folio` as new sheets, from the screen or by dropping it (`src/export.rs`, `src/ui/transfer.rs`) | PNG/PDF of a sheet |
 | Settings | ✅ theme (light/dark/follow Windows), interface size, high contrast, reduce motion, default paper and font, guides, map, open on home/last sheet, start with Windows, quick-note shortcut, data folder, backups | |
 | Opening | ✅ animated logo intro, played in full at every launch and not skippable, with the credit "Created and designed by M. Amine Said" | |
 
@@ -300,8 +301,8 @@ any board size. It is also the foundation for sync (§6).
 | v0.1 | One JSON file + `media/` | Transparent, easy to back up, trivially correct with atomic rename. |
 | v0.3 | **SQLite** (`rusqlite`, bundled; WAL) with one row per item and a `sheets` table | Incremental saves, crash safety, fast search with FTS5 across all sheets. JSON stays as export/import. |
 | v1.0 | Daily rotating backups (`backups/YYYY-MM-DD.json.gz`, keep 14), export a sheet to PNG/PDF/Markdown | Peace of mind and sharing. |
-| v0.2 | Optional Google Drive sync: the whole board.json by Drive revision, a choice when both changed | Multi-device with the account people already have. |
-| Later | Per-item merge for sync (Drive or a folder such as OneDrive/Syncthing) using the command log, last-writer-wins per item | No choice to make when two computers changed different sheets. |
+| v0.2 | Optional Google Drive sync: board.json by Drive revision, merged per item (three-way, from `sync-base.json`) when both changed | Multi-device with the account people already have, without overwriting anyone's work. |
+| Later | The same merge over a plain folder (OneDrive/Syncthing); merging inside a note's text | No account needed; two edits to one note both survive. |
 
 ---
 
@@ -346,7 +347,8 @@ menus, multi-select and guides, areas and templates, reminders and Today,
 search across sheets and tags, Ctrl+K, quick notes from anywhere, notes on
 the desktop, tray and start-up, Trash/Archive/backups, Settings, link
 cards, the handwritten font, high contrast and interface size, and
-optional Google Drive sync.
+optional Google Drive sync with merging, and export to Markdown or a
+Folio file.
 
 **v0.3: data and scale.** SQLite store with full-text search; R-tree;
 cached ink tessellation; picture mipmaps; command-based undo; reorder

@@ -91,6 +91,8 @@ pub enum Screen {
     Sheet,
     Settings,
     Bin,
+    /// Sync & export.
+    Transfer,
 }
 
 /// What the pointer is doing between press and release.
@@ -149,8 +151,10 @@ pub enum Dialog {
     RenameSheet(Id),
     Label { id: Id, is_new: bool, ink: Ink },
     RenameFrame(Id),
-    /// Notes changed here and in Google Drive: which to keep.
-    DriveChoice,
+    /// The first sync, and both sides have notes: merge, or keep one.
+    DriveChoice(super::sync::Pick),
+    /// Confirming "replace Drive with this computer's" (or the reverse).
+    DriveReplace(crate::cloud::Keep),
 }
 
 pub struct Intro {
@@ -229,6 +233,7 @@ pub struct Folio {
     pub dialog_body: Entity<TextareaState>,
     pub desktop: crate::desktop::Desktop,
     pub sync: super::sync::DriveSync,
+    pub export: super::transfer::ExportChoice,
     toast_task: Option<Task<()>>,
     save_task: Option<Task<()>>,
     _ticker: Task<()>,
@@ -347,6 +352,7 @@ impl Folio {
             dialog_body,
             desktop: crate::desktop::Desktop::default(),
             sync: Default::default(),
+            export: Default::default(),
             toast_task: None,
             save_task: None,
             _ticker: ticker,
@@ -687,7 +693,7 @@ impl Folio {
                 self.commit(before, cx);
             }
             // Its own buttons decide; Ctrl+Enter doesn't pick for you.
-            Dialog::DriveChoice => {
+            Dialog::DriveChoice(_) | Dialog::DriveReplace(_) => {
                 self.dialog = Some(d);
                 return;
             }
@@ -1074,8 +1080,17 @@ impl Folio {
     // ---------- Bringing things in ----------
 
     /// Files dropped on the sheet: pictures become picture notes, text and
-    /// Markdown files become notes holding their text.
+    /// Markdown files become notes holding their text, and Folio files add
+    /// their sheets.
     pub fn drop_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let (folio, paths): (Vec<PathBuf>, Vec<PathBuf>) =
+            paths.into_iter().partition(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("folio")));
+        for p in &folio {
+            self.import_path(p, cx);
+        }
+        if paths.is_empty() {
+            return;
+        }
         let before = self.board.clone();
         let mut at = self.sheet().camera.to_world(self.cursor);
         let mut added = 0;
@@ -1123,7 +1138,7 @@ impl Folio {
                     let before = self.board.clone();
                     let id = self.board.fresh_id();
                     let media = store::media_dir(&self.dir);
-                    let file = format!("{id}.{}", img.format.extension());
+                    let file = store::media_name(id, img.format.extension());
                     let written =
                         std::fs::create_dir_all(&media).and_then(|_| std::fs::write(media.join(&file), &img.bytes));
                     if written.is_ok() {
@@ -1194,7 +1209,7 @@ impl Folio {
                 let _ = std::fs::create_dir_all(&media);
                 let save = |this: &mut Folio, file: Option<(Vec<u8>, String)>| {
                     let (bytes, ext) = file?;
-                    let name = format!("{}.{ext}", this.board.fresh_id());
+                    let name = store::media_name(this.board.fresh_id(), &ext);
                     std::fs::write(media.join(&name), bytes).ok()?;
                     Some(name)
                 };
@@ -1417,6 +1432,7 @@ impl Render for Folio {
             Screen::Sheet => self.render_board(window, cx).into_any_element(),
             Screen::Settings => self.render_settings(window, cx).into_any_element(),
             Screen::Bin => self.render_bin(window, cx).into_any_element(),
+            Screen::Transfer => self.render_transfer(window, cx).into_any_element(),
         };
         div()
             .id("folio")

@@ -24,6 +24,14 @@ pub fn today() -> String {
     Local::now().format("%Y-%m-%d").to_string()
 }
 
+/// A moment as a reader would write it: "Mon 3 Nov 2026, 09:00".
+pub fn date_time(t: u64) -> String {
+    match Local.timestamp_opt(t as i64, 0).single() {
+        Some(d) => d.format("%a %-d %b %Y, %H:%M").to_string(),
+        None => String::new(),
+    }
+}
+
 /// The local time as `HHMM`, for a backup's name.
 pub fn hhmm() -> String {
     Local::now().format("%H%M").to_string()

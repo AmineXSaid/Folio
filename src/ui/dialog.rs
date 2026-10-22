@@ -5,6 +5,7 @@ use gpui::component::input::{Input, Textarea};
 use gpui::{div, prelude::*, px, Context, MouseButton, Window};
 
 use super::app::{Dialog, Folio};
+use super::sync::Pick;
 use crate::cloud::Keep;
 use super::*;
 use crate::model::*;
@@ -35,8 +36,9 @@ impl Folio {
             Dialog::RenameFrame(_) => ("Name this area", "Save"),
             Dialog::Label { is_new: true, .. } => ("Write on the sheet", "Add"),
             Dialog::Label { .. } => ("Edit text", "Save"),
-            Dialog::DriveChoice if self.sync.first => ("Google Drive already has Folio notes", ""),
-            Dialog::DriveChoice => ("Your notes changed in two places", ""),
+            Dialog::DriveChoice(_) => ("Google Drive already has Folio notes", "Continue"),
+            Dialog::DriveReplace(Keep::ThisComputer) => ("Replace Google Drive's notes?", "Replace Drive's"),
+            Dialog::DriveReplace(Keep::Drive) => ("Replace this computer's notes?", "Replace mine"),
         };
         let mut body = div().flex().flex_col().gap(t.space.lg);
         match d {
@@ -85,16 +87,124 @@ impl Folio {
                         ),
                     );
             }
-            Dialog::DriveChoice => {
-                let why = if self.sync.first {
-                    "Your Google Drive has notes from another computer, and this computer has its own."
-                } else {
-                    "Since the last sync, notes were changed both on this computer and in Google Drive."
+            Dialog::DriveChoice(chosen) => {
+                let option = |pick: Pick, icon_path: &'static str, name: &'static str, help: &'static str, cx: &mut Context<Self>| {
+                    let on = pick == chosen;
+                    div()
+                        .id(("d-pick", pick as usize))
+                        .p(t.space.md)
+                        .flex()
+                        .gap(t.space.md)
+                        .rounded(t.radius.card)
+                        .border_1()
+                        .border_color(if on { t.colors.brand } else { t.colors.border })
+                        .when(on, |d| d.bg(t.colors.brand_tint))
+                        .hover(|d| d.border_color(t.colors.brand))
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .size(t.size.control)
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(t.radius.button)
+                                .bg(if on { t.colors.brand } else { t.colors.hover })
+                                .child(icon(icon_path, t.size.icon, if on { t.colors.primary_fg } else { t.colors.text_muted })),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(t.space.sm)
+                                        .child(div().text_size(t.text.body).font_weight(gpui::FontWeight::SEMIBOLD).child(name))
+                                        .when(pick == Pick::Merge, |d| {
+                                            d.child(
+                                                div()
+                                                    .px(t.space.sm)
+                                                    .rounded(t.radius.full)
+                                                    .bg(t.colors.surface)
+                                                    .border_1()
+                                                    .border_color(t.colors.brand)
+                                                    .text_color(t.colors.brand_on_tint)
+                                                    .text_size(t.text.micro)
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .child("Recommended"),
+                                            )
+                                        }),
+                                )
+                                .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(help)),
+                        )
+                        .child(
+                            div()
+                                .size(px(18.))
+                                .flex_none()
+                                .mt(px(2.))
+                                .rounded(t.radius.full)
+                                .border_2()
+                                .border_color(if on { t.colors.brand } else { t.colors.border })
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .when(on, |d| d.child(div().size(px(8.)).rounded(t.radius.full).bg(t.colors.brand))),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.dialog = Some(Dialog::DriveChoice(pick));
+                            cx.notify();
+                        }))
                 };
                 body = body
-                    .child(div().text_size(t.text.body).child(why))
-                    .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(
-                        "Choose which to keep. The other ones aren't lost: they go to Backups, where you can bring back any sheet.",
+                    .child(div().text_size(t.text.body).text_color(t.colors.text_muted).child(
+                        "Your Drive has notes from another computer, and this computer has its own. How should they come together?",
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(t.space.sm)
+                            .child(option(
+                                Pick::Merge,
+                                "icons/git-merge.svg",
+                                "Merge both",
+                                "Every sheet and note from here and from Drive, together. A note edited in both keeps its newest edit.",
+                                cx,
+                            ))
+                            .child(option(Pick::Mine, "icons/laptop.svg", "Keep this computer's", "Drive's notes are replaced; a copy goes to Backups.", cx))
+                            .child(option(Pick::Drive, "icons/cloud-download.svg", "Use Google Drive's", "This computer's notes are replaced; a copy goes to Backups.", cx)),
+                    );
+            }
+            Dialog::DriveReplace(keep) => {
+                let (what, safe) = match keep {
+                    Keep::ThisComputer => (
+                        "Google Drive will hold exactly what's on this computer. Notes that are only in Drive, from your other computers, will be gone there.",
+                        "Drive keeps its earlier versions for 30 days (right-click board.json in Drive › Manage versions).",
+                    ),
+                    Keep::Drive => (
+                        "This computer will hold exactly what's in Google Drive. Notes that are only here will be replaced.",
+                        "This computer's notes are saved to Backups first, so you can bring any sheet back.",
+                    ),
+                };
+                body = body
+                    .child(div().text_size(t.text.body).child(what))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(t.space.sm)
+                            .p(t.space.md)
+                            .rounded(t.radius.button)
+                            .bg(t.colors.hover)
+                            .child(icon("icons/circle-check.svg", t.size.icon, t.colors.text_muted))
+                            .child(div().flex_1().min_w_0().text_size(t.text.caption).text_color(t.colors.text_muted).child(safe)),
+                    )
+                    .child(div().text_size(t.text.caption).text_color(t.colors.text_subtle).child(
+                        "Usually you don't need this: Folio merges changes from both sides by itself.",
                     ));
             }
             Dialog::RenameSheet(_) | Dialog::RenameFrame(_) => {
@@ -125,13 +235,16 @@ impl Folio {
                 );
             }
         }
-        let wide = matches!(d, Dialog::NewSheet { .. } | Dialog::DriveChoice);
+        let wide = matches!(d, Dialog::NewSheet { .. } | Dialog::DriveChoice(_));
         let footer = div().flex().items_center().gap(t.space.sm).mt(t.space.xl).child(div().flex_1());
-        let footer = if d == Dialog::DriveChoice {
+        let footer = if let Dialog::DriveChoice(pick) = d {
             footer
                 .child(secondary_button("d-later", "Later", &t).on_click(cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx))))
-                .child(secondary_button("d-keep-here", "Keep this computer's", &t).on_click(cx.listener(|this, _, window, cx| this.drive_keep(Keep::ThisComputer, window, cx))))
-                .child(primary_button("d-keep-drive", "Use Google Drive's", &t).on_click(cx.listener(|this, _, window, cx| this.drive_keep(Keep::Drive, window, cx))))
+                .child(primary_button("d-pick-go", ok, &t).on_click(cx.listener(move |this, _, window, cx| this.drive_pick(pick, window, cx))))
+        } else if let Dialog::DriveReplace(keep) = d {
+            footer
+                .child(secondary_button("d-cancel", "Cancel", &t).on_click(cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx))))
+                .child(primary_button("d-replace", ok, &t).on_click(cx.listener(move |this, _, window, cx| this.drive_replace(keep, window, cx))))
         } else {
             footer
                 .child(secondary_button("d-cancel", "Cancel", &t).on_click(cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx))))

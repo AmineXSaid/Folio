@@ -186,6 +186,37 @@ pub fn load_backup(dir: &Path, day: &str) -> Option<Board> {
     Some(b)
 }
 
+/// The board as it was when this computer and Google Drive last matched:
+/// what a merge works out changes from.
+pub fn save_sync_base(dir: &Path, board_text: &str) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("sync-base.tmp"), board_text)?;
+    std::fs::rename(dir.join("sync-base.tmp"), dir.join("sync-base.json"))
+}
+
+pub fn load_sync_base(dir: &Path) -> Option<Board> {
+    let text = std::fs::read_to_string(dir.join("sync-base.json")).ok()?;
+    let mut b: Board = serde_json::from_str(&text).ok()?;
+    b.normalize();
+    Some(b)
+}
+
+pub fn has_sync_base(dir: &Path) -> bool {
+    dir.join("sync-base.json").exists()
+}
+
+pub fn forget_sync_base(dir: &Path) {
+    let _ = std::fs::remove_file(dir.join("sync-base.json"));
+}
+
+/// A new picture's file name: its id and a random tail, so two computers
+/// that sync never give different pictures the same name.
+pub fn media_name(id: u64, ext: &str) -> String {
+    let mut r = [0u8; 3];
+    let _ = getrandom::getrandom(&mut r);
+    format!("{id}-{:02x}{:02x}{:02x}.{ext}", r[0], r[1], r[2])
+}
+
 /// The picture formats a sticker shows.
 pub fn is_image(path: &Path) -> bool {
     matches!(
@@ -200,7 +231,7 @@ pub fn import_image(dir: &Path, src: &Path, id: u64) -> std::io::Result<String> 
     let media = media_dir(dir);
     std::fs::create_dir_all(&media)?;
     let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
-    let name = format!("{id}.{ext}");
+    let name = media_name(id, &ext);
     std::fs::copy(src, media.join(&name))?;
     Ok(name)
 }

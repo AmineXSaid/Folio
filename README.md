@@ -39,17 +39,40 @@ Your workspace is saved in `%APPDATA%\Folio` (Windows),
 (Linux). Set `FOLIO_DATA_DIR` to use another folder. It holds `board.json`
 and a `media/` folder for pictures.
 
-### Google Drive (optional)
+### Sync & export
 
-Settings › Your data › **Sign in with Google** opens Google's sign-in in
-your browser. After that, Folio keeps `board.json` and `media/` in a
+The cloud button in the top bar (or the drawer, or Ctrl+K › *Sync &
+export*) opens one screen for getting sheets in and out.
+
+**Google Drive (optional).** *Sign in with Google* opens Google's sign-in
+in your browser. After that, Folio keeps `board.json` and `media/` in a
 **Folio** folder in your Drive: it syncs a few seconds after each change,
-once a minute, at start-up and on quit. Sign in on another computer and the
-same notes come down. If notes changed on two computers before a sync, you
-choose which to keep; the other side goes to Backups, so nothing is lost.
+once a minute, at start-up and on quit. The cloud button's dot says where
+it's at: green synced, pink syncing, red a problem.
+
+- **Merging.** Work on two computers and both sets of changes are kept:
+  each sheet, note, drawing, text, connector and area is merged on its own
+  from the last version both shared (`sync-base.json`). A note edited in
+  both places keeps its newest edit; something deleted on one side but
+  edited on the other is kept. Two computers that give new things the
+  same number are told apart, and pictures get unique names.
+- **The first sync** on a computer that already has notes asks: *Merge
+  both* (recommended), *Keep this computer's* or *Use Google Drive's*.
+  Whichever side is replaced goes to Backups first.
+- **Start over**: *Send everything from here* makes Drive an exact copy of
+  this computer (Drive keeps earlier versions of board.json for 30 days);
+  *Bring everything from Drive* does the reverse, after a backup.
+
 Folio asks only for `drive.file`, so it sees just the files it made. The
 sign-in is kept in `google.json` in the data folder, never in the board.
-Your theme, start-up and shortcut settings stay per computer.
+Theme, start-up, shortcut, where each sheet is scrolled to and notes on the
+desktop stay per computer.
+
+**Export.** Choose sheets (or *Export…* on a sheet card's menu) and a
+format: **Markdown**, a folder with one `.md` per sheet and its pictures,
+for any notes app; or a **Folio file** (`.folio`), the sheets exactly with
+pictures inside. **Import** a `.folio` file (or drop it on a sheet) and its
+sheets are added beside yours.
 
 Sign-in needs the app's own OAuth client, set when the .exe is built:
 

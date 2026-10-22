@@ -347,6 +347,11 @@ impl Folio {
                         .on_click(cx.listener(move |this, _, _, cx| this.duplicate_sheet(ix, cx)))
                         .into_any_element(),
                 );
+                items.push(
+                    row("m-export-sheet", "icons/file-down.svg", "Export…", None, &t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.export_sheet(ix, cx)))
+                        .into_any_element(),
+                );
                 items.push(sep(&t).into_any_element());
                 items.push(
                     row("m-arch-sheet", "icons/archive.svg", "Archive", None, &t)
