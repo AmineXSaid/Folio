@@ -171,6 +171,8 @@ pub enum Dialog {
     RenameFrame(Id),
     /// The first sync, and both sides have notes: merge, or keep one.
     DriveChoice(super::sync::Pick),
+    /// Setting up Google sign-in: the app's client id and secret.
+    GoogleSetup,
     /// Confirming "replace Drive with this computer's" (or the reverse).
     DriveReplace(crate::cloud::Keep),
 }
@@ -267,6 +269,9 @@ pub struct Folio {
     pub search_input: Entity<InputState>,
     pub palette_input: Entity<InputState>,
     pub dialog_input: Entity<InputState>,
+    /// The Google client id and secret, in its setup.
+    pub client_input: Entity<InputState>,
+    pub secret_input: Entity<InputState>,
     /// The sheet's name while it's being renamed in place.
     pub name_input: Entity<InputState>,
     pub naming: bool,
@@ -300,6 +305,8 @@ impl Folio {
             cx.new(|cx| InputState::new(window, cx).placeholder("Type a command, a sheet or a note…"));
         let dialog_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name this sheet"));
+        let client_input = cx.new(|cx| InputState::new(window, cx).placeholder("1234567890-abc….apps.googleusercontent.com"));
+        let secret_input = cx.new(|cx| InputState::new(window, cx).placeholder("GOCSPX-…").masked(true));
         let welcome_input = cx.new(|cx| InputState::new(window, cx).placeholder("Your name"));
         let label_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 30).placeholder("Write…"));
         let subs = vec![
@@ -432,6 +439,8 @@ impl Folio {
             dialog_input,
             name_input,
             naming: false,
+            client_input,
+            secret_input,
             label_edit: None,
             label_input,
             desktop: crate::desktop::Desktop::default(),
@@ -899,6 +908,19 @@ impl Folio {
                 });
             }
             // Its own buttons decide; Ctrl+Enter doesn't pick for you.
+            Dialog::GoogleSetup => {
+                let id = self.client_input.read(cx).value().trim().to_string();
+                let secret = self.secret_input.read(cx).value().trim().to_string();
+                if !crate::cloud::ClientId::looks_right(&id) {
+                    self.dialog = Some(d);
+                    self.notify("That client ID should end in .apps.googleusercontent.com", cx);
+                    return;
+                }
+                match (crate::cloud::ClientId { id, secret }).save(&self.dir) {
+                    Ok(()) => self.sign_in_google(window, cx),
+                    Err(e) => self.notify(format!("Couldn't keep it: {e}"), cx),
+                }
+            }
             Dialog::DriveChoice(_) | Dialog::DriveReplace(_) => {
                 self.dialog = Some(d);
                 return;

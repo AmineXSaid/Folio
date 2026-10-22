@@ -566,7 +566,7 @@ impl Folio {
                         self.drive_sync(None, cx)
                     }
                 }
-                Cmd::Drive => self.sign_in_google(cx),
+                Cmd::Drive => self.sign_in_google(window, cx),
                 Cmd::Transfer => self.open_transfer(cx),
                 Cmd::Import => self.import_file(cx),
                 Cmd::Theme => self.toggle_theme(cx),
@@ -812,6 +812,9 @@ impl Folio {
             .border_t_1()
             .border_color(t.colors.border)
             .bg(t.colors.surface_sunk)
+            // GPUI clips to a square, not to the panel's rounded corners:
+            // the footer rounds its own, inside the panel's 1px border.
+            .rounded_b(t.radius.card - px(1.))
             .text_size(t.text.micro)
             .text_color(t.colors.text_subtle)
             .child(hint(keys(&t, "↑ ↓"), "move"))

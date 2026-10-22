@@ -208,23 +208,50 @@ pub fn kbd(text: impl Into<SharedString>, t: &Theme) -> gpui::Div {
 
 pub fn toast(t: &Theme, msg: SharedString) -> impl IntoElement {
     let id = gpui::ElementId::Name(format!("toast-{msg}").into());
+    // Crisp rather than soft: small corners, a hairline edge, a lit top
+    // edge and a brand mark, sitting on a tight shadow.
     div().absolute().bottom(t.space.xl).right(t.space.xl).child(motion::rise_in(
         div()
             .flex()
             .items_center()
-            .gap(t.space.sm)
-            .px(t.space.lg)
-            .py(t.space.sm + t.space.xxs)
-            .rounded(t.radius.card)
+            .gap(t.space.md)
+            .pl(t.space.sm)
+            .pr(t.space.lg)
+            .py(t.space.sm)
+            .max_w(px(420.))
+            .rounded(t.radius.small)
             .bg(t.colors.toast)
+            .border_1()
+            .border_color(t.colors.toast_fg.opacity(0.1))
             .text_color(t.colors.toast_fg)
             .text_size(t.text.caption)
             .font_weight(gpui::FontWeight::MEDIUM)
-            .shadow(t.shadow_float())
-            .child(div().size(px(6.)).rounded(t.radius.full).bg(t.colors.brand))
-            .child(msg),
+            .shadow({
+                let mut s = t.shadow_float();
+                s.push(gpui::BoxShadow {
+                    color: t.colors.toast_fg.opacity(0.08),
+                    offset: gpui::point(px(0.), px(1.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(0.),
+                    inset: true,
+                });
+                s
+            })
+            .child(
+                div()
+                    .size(px(22.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(t.radius.small)
+                    .bg(t.colors.brand)
+                    .child(icon("icons/bell.svg", px(12.), t.colors.primary_fg)),
+            )
+            .child(div().w(px(1.)).h(px(14.)).bg(t.colors.toast_fg.opacity(0.14)))
+            .child(div().flex_1().min_w_0().child(msg)),
         id,
-        10.,
+        8.,
         t,
     ))
 }

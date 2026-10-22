@@ -35,6 +35,7 @@ impl Folio {
             Dialog::RenameSheet(_) => ("Rename sheet", "Save"),
             Dialog::RenameFrame(_) => ("Name this area", "Save"),
             Dialog::DriveChoice(_) => ("Google Drive already has Folio notes", "Continue"),
+            Dialog::GoogleSetup => ("Connect Folio to Google", "Save and sign in"),
             Dialog::DriveReplace(Keep::ThisComputer) => ("Replace Google Drive's notes?", "Replace Drive's"),
             Dialog::DriveReplace(Keep::Drive) => ("Replace this computer's notes?", "Replace mine"),
         };
@@ -205,11 +206,72 @@ impl Folio {
                         "Usually you don't need this: Folio merges changes from both sides by itself.",
                     ));
             }
+            Dialog::GoogleSetup => {
+                // Folio signs in as your own Google Cloud app, so your notes
+                // only ever go between you and your Drive. Set up once.
+                let step = |n: &'static str, text: &'static str| {
+                    div()
+                        .flex()
+                        .gap(t.space.md)
+                        .child(
+                            div()
+                                .size(px(20.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(t.radius.small)
+                                .bg(t.colors.brand_tint)
+                                .text_color(t.colors.brand_on_tint)
+                                .text_size(t.text.micro)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child(n),
+                        )
+                        .child(div().flex_1().min_w_0().text_size(t.text.caption).text_color(t.colors.text_body).child(text))
+                };
+                body = body
+                    .child(div().text_size(t.text.body).text_color(t.colors.text_muted).child(
+                        "Folio signs in through your own Google Cloud app, so your notes only travel between you and your Drive. It takes a few minutes, once.",
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(t.space.sm)
+                            .p(t.space.md)
+                            .rounded(t.radius.button)
+                            .bg(t.colors.surface_sunk)
+                            .border_1()
+                            .border_color(t.colors.border)
+                            .child(step("1", "In Google Cloud Console, create a project and enable the Google Drive API."))
+                            .child(step("2", "OAuth consent screen: External, add the drive.file scope and yourself as a test user."))
+                            .child(step("3", "Credentials › Create credentials › OAuth client ID › Desktop app."))
+                            .child(step("4", "Paste the client ID and secret below."))
+                            .child(
+                                div().flex().child(
+                                    secondary_button("d-console", "Open Google Cloud Console", &t)
+                                        .on_click(|_, _, cx| cx.open_url("https://console.cloud.google.com/apis/credentials")),
+                                ),
+                            ),
+                    )
+                    .child(div().flex().flex_col().gap(t.space.xs).child(label("Client ID", &t)).child(Input::new(&self.client_input)))
+                    .child(div().flex().flex_col().gap(t.space.xs).child(label("Client secret", &t)).child(Input::new(&self.secret_input)))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(t.space.sm)
+                            .text_size(t.text.micro)
+                            .text_color(t.colors.text_subtle)
+                            .child(icon("icons/circle-check.svg", px(12.), t.colors.ok))
+                            .child("Kept on this computer only, in Folio's data folder."),
+                    );
+            }
             Dialog::RenameSheet(_) | Dialog::RenameFrame(_) => {
                 body = body.child(Input::new(&self.dialog_input));
             }
         }
-        let wide = matches!(d, Dialog::NewSheet { .. } | Dialog::DriveChoice(_));
+        let wide = matches!(d, Dialog::NewSheet { .. } | Dialog::DriveChoice(_) | Dialog::GoogleSetup);
         let footer = div().flex().items_center().gap(t.space.sm).mt(t.space.xl).child(div().flex_1());
         let footer = if let Dialog::DriveChoice(pick) = d {
             footer

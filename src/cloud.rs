@@ -40,12 +40,36 @@ pub struct ClientId {
 }
 
 impl ClientId {
+    /// From the environment, the build, or `google-client.json` in the
+    /// data folder (what you pasted into Folio's setup), in that order.
     pub fn configured() -> Option<ClientId> {
         let get = |name: &str, built: Option<&str>| std::env::var(name).ok().or(built.map(String::from)).filter(|v| !v.trim().is_empty());
-        Some(ClientId {
-            id: get("FOLIO_GOOGLE_CLIENT_ID", option_env!("FOLIO_GOOGLE_CLIENT_ID"))?,
-            secret: get("FOLIO_GOOGLE_CLIENT_SECRET", option_env!("FOLIO_GOOGLE_CLIENT_SECRET")).unwrap_or_default(),
-        })
+        if let Some(id) = get("FOLIO_GOOGLE_CLIENT_ID", option_env!("FOLIO_GOOGLE_CLIENT_ID")) {
+            return Some(ClientId { id, secret: get("FOLIO_GOOGLE_CLIENT_SECRET", option_env!("FOLIO_GOOGLE_CLIENT_SECRET")).unwrap_or_default() });
+        }
+        Self::load(&crate::store::data_dir())
+    }
+
+    fn file(dir: &Path) -> PathBuf {
+        dir.join("google-client.json")
+    }
+
+    pub fn load(dir: &Path) -> Option<ClientId> {
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(Self::file(dir)).ok()?).ok()?;
+        let id = v.get("id")?.as_str()?.trim().to_string();
+        let secret = v.get("secret").and_then(|s| s.as_str()).unwrap_or("").trim().to_string();
+        (!id.is_empty()).then_some(ClientId { id, secret })
+    }
+
+    pub fn save(&self, dir: &Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(Self::file(dir), serde_json::json!({ "id": self.id, "secret": self.secret }).to_string())
+    }
+
+    /// Whether `id` looks like a Google OAuth client id.
+    pub fn looks_right(id: &str) -> bool {
+        let id = id.trim();
+        id.ends_with(".apps.googleusercontent.com") && id.len() > 30 && !id.contains(char::is_whitespace)
     }
 }
 
@@ -612,6 +636,19 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn a_pasted_client_is_kept_in_the_data_folder() {
+        let dir = std::env::temp_dir().join(format!("folio-client-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(ClientId::load(&dir).is_none());
+        ClientId { id: "123-abc.apps.googleusercontent.com".into(), secret: "GOCSPX-x".into() }.save(&dir).unwrap();
+        let c = ClientId::load(&dir).unwrap();
+        assert_eq!((c.id.as_str(), c.secret.as_str()), ("123-abc.apps.googleusercontent.com", "GOCSPX-x"));
+        assert!(ClientId::looks_right(" 123-abc.apps.googleusercontent.com "));
+        assert!(!ClientId::looks_right("my client"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn plans_follow_what_changed() {

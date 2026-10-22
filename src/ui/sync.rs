@@ -130,12 +130,18 @@ impl Folio {
         self.drive_sync(None, cx);
     }
 
-    pub fn sign_in_google(&mut self, cx: &mut Context<Self>) {
+    pub fn sign_in_google(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.sync.signed_in() || self.sync.state == DriveState::SigningIn {
             return;
         }
         let Some(client) = ClientId::configured() else {
-            self.notify("Google sign-in isn't set up in this build of Folio", cx);
+            // Not set up yet: the setup, where the app's Google client is pasted.
+            self.dialog = Some(Dialog::GoogleSetup);
+            self.client_input.update(cx, |i, cx| i.set_value("", window, cx));
+            self.secret_input.update(cx, |i, cx| i.set_value("", window, cx));
+            let input = self.client_input.clone();
+            window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+            cx.notify();
             return;
         };
         let ep = Endpoints::default();

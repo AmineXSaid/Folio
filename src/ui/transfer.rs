@@ -264,7 +264,7 @@ impl Folio {
             let button = if waiting {
                 action("t-cancel", "icons/x.svg", "Cancel", false, t).on_click(cx.listener(|this, _, _, cx| this.cancel_sign_in(cx)))
             } else {
-                action("t-google", "icons/cloud.svg", "Sign in with Google", true, t).on_click(cx.listener(|this, _, _, cx| this.sign_in_google(cx)))
+                action("t-google", "icons/cloud.svg", "Sign in with Google", true, t).on_click(cx.listener(|this, _, window, cx| this.sign_in_google(window, cx)))
             };
             return card(t)
                 .child(
