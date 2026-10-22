@@ -4,7 +4,7 @@
 #   scripts/icons.sh
 #
 #   folio-{512,256,128,64}.png   the logo with its shadow (README, sidebar)
-#   assets/folio.ico             16-256 px; the tile fills the square as
+#   assets/folio.ico             16-256 px (21 sizes); the tile fills the square as
 #                                Chrome's and Teams' icons do. 16-32 px use
 #                                folio-icon-small.svg (heavier, fewer lines).
 #
@@ -28,8 +28,11 @@ render() { # svg size out
 
 for n in 512 256 128 64; do render "$B/folio-logo.svg" $n "$B/folio-$n.png"; done
 icons=()
-for n in 256 128 96 64 48 40; do render "$B/folio-icon.svg" $n "$TMP/i$n.png"; icons+=("$TMP/i$n.png"); done
-for n in 32 24 20 16; do render "$B/folio-icon-small.svg" $n "$TMP/i$n.png"; icons+=("$TMP/i$n.png"); done
+# Every size Windows asks for at 100-250% display scaling, each drawn at
+# that size: a missing one gets stretched up from a smaller one, and looks
+# pixelated in Explorer and on the taskbar.
+for n in 256 192 160 144 128 112 96 80 72 64 60 56 48 40 36; do render "$B/folio-icon.svg" $n "$TMP/i$n.png"; icons+=("$TMP/i$n.png"); done
+for n in 32 30 28 24 20 16; do render "$B/folio-icon-small.svg" $n "$TMP/i$n.png"; icons+=("$TMP/i$n.png"); done
 cp "$TMP/i256.png" "$B/folio-icon-256.png"
 cp "$TMP/i32.png" "$B/folio-icon-32.png"
 convert "${icons[@]}" "$PWD/assets/folio.ico"
