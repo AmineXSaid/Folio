@@ -85,6 +85,19 @@ pub enum Selection {
     Frame(Id),
 }
 
+/// Somewhere you can go back to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    Home,
+    Sheet(Id),
+    Settings,
+    Bin(BinTab),
+    Transfer,
+}
+
+/// How many places back and forward remember.
+const NAV_KEPT: usize = 50;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
     Home,
@@ -158,10 +171,6 @@ pub enum Dialog {
     DriveReplace(crate::cloud::Keep),
 }
 
-pub struct Intro {
-    pub start: Instant,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sort {
     Recent,
@@ -185,6 +194,12 @@ pub struct Folio {
     pub screen: Screen,
     /// Where a side screen (Settings, Trash, Sync & export) goes back to.
     pub back_to: Screen,
+    /// Back and forward through the places you were.
+    pub nav_back: Vec<Place>,
+    pub nav_forward: Vec<Place>,
+    last_place: Option<Place>,
+    /// The next place change is a step back or forward, not a new visit.
+    nav_stepping: bool,
     pub drawer: bool,
     pub tool: Tool,
     pub ink: Ink,
@@ -229,7 +244,9 @@ pub struct Folio {
     pub palette_reveal: bool,
     /// The emoji picker's tab.
     pub emoji_tab: usize,
-    pub intro: Option<Intro>,
+    /// The welcome (your name, your avatar), first launch or on request.
+    pub welcome: Option<super::welcome::Welcome>,
+    pub welcome_input: Entity<InputState>,
     pub sort: Sort,
     pub bin_tab: BinTab,
     /// The backup whose sheets are listed: (day, [(id, name, notes, icon)]).
@@ -274,6 +291,7 @@ impl Folio {
             cx.new(|cx| InputState::new(window, cx).placeholder("Type a command, a sheet or a note…"));
         let dialog_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name this sheet"));
+        let welcome_input = cx.new(|cx| InputState::new(window, cx).placeholder("Your name"));
         let dialog_body = cx.new(|cx| TextareaState::new(window, cx).auto_grow(3, 10).placeholder("Write on the sheet…"));
         let subs = vec![
             cx.observe(&search_input, |this, _, cx| {
@@ -301,6 +319,11 @@ impl Folio {
                 InputEvent::Blur => this.finish_naming(true, cx),
                 _ => {}
             }),
+            cx.subscribe_in(&welcome_input, window, |this, _, ev, window, cx| match ev {
+                InputEvent::PressEnter { .. } => this.welcome_next(window, cx),
+                InputEvent::Change => cx.notify(),
+                _ => {}
+            }),
             cx.subscribe_in(&dialog_input, window, |this, _, ev, window, cx| {
                 if let InputEvent::PressEnter { .. } = ev {
                     this.dialog_ok(window, cx);
@@ -316,8 +339,6 @@ impl Folio {
         window.focus(&root_focus, cx);
 
         let s = board.settings.clone();
-        // The opening plays in full at every launch.
-        let intro = Some(Intro { start: Instant::now() });
         let screen = if s.open_on == OpenOn::LastSheet && !board.at_home { Screen::Sheet } else { Screen::Home };
         board.at_home = screen == Screen::Home;
 
@@ -328,6 +349,10 @@ impl Folio {
                 .update(cx, |this, cx| {
                     this.check_reminders(cx);
                     this.drive_tick(cx);
+                    // The home greeting moves on with the clock.
+                    if this.screen == Screen::Home {
+                        cx.notify();
+                    }
                 })
                 .is_err()
             {
@@ -342,6 +367,10 @@ impl Folio {
             root_focus,
             screen,
             back_to: screen,
+            nav_back: Vec::new(),
+            nav_forward: Vec::new(),
+            last_place: None,
+            nav_stepping: false,
             drawer: false,
             tool: Tool::Select,
             ink: Ink::Graphite,
@@ -370,7 +399,8 @@ impl Folio {
             palette_scroll: gpui::ScrollHandle::new(),
             palette_reveal: false,
             emoji_tab: 0,
-            intro,
+            welcome: None,
+            welcome_input,
             sort: Sort::Recent,
             bin_tab: BinTab::Trash,
             backup_open: None,
@@ -396,6 +426,10 @@ impl Folio {
         f.apply_theme(cx);
         f.schedule_save(cx);
         f.drive_start(cx);
+        // First launch: who are you?
+        if f.board.settings.user_name.trim().is_empty() {
+            f.open_welcome(false, window, cx);
+        }
         // However Folio ends (Quit, the tray, the last window closed): the
         // board saved, and a last push to Google Drive.
         f._subs.push(cx.on_app_quit(|this, cx| {
@@ -632,6 +666,83 @@ impl Folio {
         }
         self.screen = to;
         cx.notify();
+    }
+
+    /// Where you are now.
+    pub fn place(&self) -> Place {
+        match self.screen {
+            Screen::Home => Place::Home,
+            Screen::Sheet => Place::Sheet(self.sheet().id),
+            Screen::Settings => Place::Settings,
+            Screen::Bin => Place::Bin(self.bin_tab),
+            Screen::Transfer => Place::Transfer,
+        }
+    }
+
+    /// Notes a move to a new place (each frame; only changes count).
+    fn track_place(&mut self) {
+        let here = self.place();
+        match self.last_place {
+            Some(was) if was != here => {
+                if !std::mem::take(&mut self.nav_stepping) {
+                    self.nav_back.push(was);
+                    if self.nav_back.len() > NAV_KEPT {
+                        self.nav_back.remove(0);
+                    }
+                    self.nav_forward.clear();
+                }
+            }
+            _ => self.nav_stepping = false,
+        }
+        self.last_place = Some(here);
+    }
+
+    fn go_to(&mut self, p: Place, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.finish_edit(cx);
+        self.drawer = false;
+        self.menu = None;
+        match p {
+            Place::Home => self.go_home(cx),
+            Place::Sheet(id) => match self.board.categories.iter().position(|c| c.id == id) {
+                Some(ix) => self.open_sheet(ix, window, cx),
+                // A sheet since deleted: skip it.
+                None => return false,
+            },
+            Place::Settings => self.screen = Screen::Settings,
+            Place::Bin(tab) => {
+                self.bin_tab = tab;
+                self.screen = Screen::Bin;
+            }
+            Place::Transfer => self.screen = Screen::Transfer,
+        }
+        cx.notify();
+        true
+    }
+
+    pub fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let here = self.place();
+        while let Some(p) = self.nav_back.pop() {
+            self.nav_stepping = true;
+            if self.go_to(p, window, cx) {
+                self.nav_forward.push(here);
+                self.last_place = Some(self.place());
+                return;
+            }
+        }
+        self.nav_stepping = false;
+    }
+
+    pub fn go_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let here = self.place();
+        while let Some(p) = self.nav_forward.pop() {
+            self.nav_stepping = true;
+            if self.go_to(p, window, cx) {
+                self.nav_back.push(here);
+                self.last_place = Some(self.place());
+                return;
+            }
+        }
+        self.nav_stepping = false;
     }
 
     /// Back from Settings, Trash or Sync & export to the sheet or home.
@@ -1508,6 +1619,7 @@ impl Folio {
 impl Render for Folio {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
+        self.track_place();
         // Off the sheet, the sheet's focus is stale: keys go to the window.
         if self.screen != Screen::Sheet && self.focus.is_focused(window) {
             window.focus(&self.root_focus, cx);
@@ -1542,6 +1654,8 @@ impl Render for Folio {
             .on_action(cx.listener(|this, _: &NextSheet, window, cx| this.next_sheet(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevSheet, window, cx| this.next_sheet(-1, window, cx)))
             .on_action(cx.listener(|this, _: &GoHome, _, cx| this.go_home(cx)))
+            .on_action(cx.listener(|this, _: &GoBack, window, cx| this.go_back(window, cx)))
+            .on_action(cx.listener(|this, _: &GoForward, window, cx| this.go_forward(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleDrawer, _, cx| {
                 this.drawer = !this.drawer;
                 cx.notify();
@@ -1558,7 +1672,9 @@ impl Render for Folio {
                 cx.quit();
             }))
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
-                if this.naming {
+                if this.welcome.is_some() {
+                    this.welcome_close(cx);
+                } else if this.naming {
                     this.finish_naming(false, cx);
                     window.focus(&this.focus, cx);
                 } else if this.editing.is_some() {
@@ -1591,7 +1707,7 @@ impl Render for Folio {
             .children(self.palette.then(|| self.render_palette_scrim(cx)))
             .children(self.menu.is_some().then(|| self.render_menu(window, cx)))
             .children(self.toast.clone().map(|msg| toast(&t, msg)))
-            .children(self.intro.is_some().then(|| self.render_intro(window, cx)))
+            .children(self.welcome.is_some().then(|| self.render_welcome(window, cx)))
     }
 }
 

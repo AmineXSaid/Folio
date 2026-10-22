@@ -7,13 +7,11 @@
 //! move, Enter runs, Esc closes; with nothing found, Enter makes a note of
 //! what you typed.
 
-use std::time::Instant;
-
 use gpui::component::input::Input;
 use gpui::component::Sizable as _;
 use gpui::{div, font, prelude::*, px, Context, CursorStyle, FontWeight, MouseButton, SharedString, StyledText, TextRun, Window};
 
-use super::app::{BinTab, Folio, Intro, Screen};
+use super::app::{BinTab, Folio, Screen};
 use super::home::first_line;
 use super::*;
 use crate::model::Id;
@@ -35,14 +33,16 @@ enum Cmd {
     Fit,
     Tidy,
     Map,
-    Intro,
+    Profile,
+    Back,
+    Forward,
     Drive,
     Transfer,
     Import,
     Rename,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 19] = [
+const CMDS: [(Cmd, &str, &str, &str); 21] = [
     (Cmd::NewNote, "New note", "Ctrl N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl Shift N", "icons/plus.svg"),
     (Cmd::QuickNote, "Quick note to Inbox", "Ctrl Alt N", "icons/inbox.svg"),
@@ -61,7 +61,9 @@ const CMDS: [(Cmd, &str, &str, &str); 19] = [
     (Cmd::Fit, "Zoom to fit", "Ctrl 0", "icons/scan.svg"),
     (Cmd::Tidy, "Tidy up the sheet", "", "icons/wand-sparkles.svg"),
     (Cmd::Map, "Show / hide the map", "", "icons/map.svg"),
-    (Cmd::Intro, "Play the opening again", "", "icons/play.svg"),
+    (Cmd::Profile, "Change your name and avatar", "", "icons/user-round-pen.svg"),
+    (Cmd::Back, "Go back", "Alt Left", "icons/arrow-left.svg"),
+    (Cmd::Forward, "Go forward", "Alt Right", "icons/arrow-right.svg"),
 ];
 
 /// What a query looks through, from its first character: the tabs.
@@ -97,7 +99,7 @@ impl Scope {
     fn icon(self) -> Option<&'static str> {
         match self {
             Scope::All => None,
-            Scope::Commands => Some("icons/command.svg"),
+            Scope::Commands => Some("icons/zap.svg"),
             Scope::Sheets => Some("icons/layers.svg"),
             Scope::Notes => Some("icons/sticky-note.svg"),
         }
@@ -546,7 +548,9 @@ impl Folio {
                         _ => self.set_setting(cx, |s| s.minimap = !s.minimap),
                     }
                 }
-                Cmd::Intro => self.intro = Some(Intro { start: Instant::now() }),
+                Cmd::Profile => self.open_welcome(false, window, cx),
+                Cmd::Back => self.go_back(window, cx),
+                Cmd::Forward => self.go_forward(window, cx),
             },
         }
         cx.notify();

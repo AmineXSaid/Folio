@@ -1,10 +1,12 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod assets;
+mod avatars;
 mod cloud;
 mod demo;
 mod export;
 mod fonts;
+mod greeting;
 mod desktop;
 mod links;
 mod merge;
@@ -31,6 +33,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-b", ToggleDrawer, None),
         KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("secondary-shift-h", GoHome, None),
+        KeyBinding::new("alt-left", GoBack, None),
+        KeyBinding::new("alt-right", GoForward, None),
         KeyBinding::new("ctrl-pagedown", NextSheet, None),
         KeyBinding::new("ctrl-pageup", PrevSheet, None),
         KeyBinding::new("ctrl-tab", NextSheet, None),

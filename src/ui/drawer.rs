@@ -1,11 +1,11 @@
 //! The sheets drawer (the sidebar): hidden until the top-left button opens
 //! it. A preview card per sheet, plus the way to Home, Trash and Settings.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use gpui::{div, prelude::*, px, Animation, AnimationExt, Context, MouseButton, MouseDownEvent, Window};
+use gpui::{div, img, prelude::*, px, Animation, AnimationExt, Context, Hsla, MouseButton, MouseDownEvent, SharedString, Window};
 
-use super::app::{BinTab, Folio, Intro, MenuKind, Screen};
+use super::app::{BinTab, Folio, MenuKind, Screen};
 use super::mini::miniature;
 use super::*;
 use crate::theme::{theme, Theme};
@@ -23,22 +23,97 @@ impl Folio {
         let active = (self.screen == Screen::Sheet).then_some(self.board.active);
         let cards: Vec<_> = order.into_iter().map(|ix| self.drawer_card(ix, active == Some(ix), &t, cx)).collect();
         let screen = self.screen;
-        let nav = |id: &'static str, path: &'static str, label: &'static str, on: bool| {
+        // Each place has its own tinted tile and something to say on the
+        // right; the one you're on is raised out of the panel.
+        let nav = |id: &'static str, path: &'static str, label: &'static str, on: bool, tint: Hsla, ink: Hsla, right: Option<gpui::AnyElement>| {
             div()
                 .id(id)
-                .h(px(38.))
-                .px(t.space.md)
+                .h(px(36.))
+                .px(t.space.sm)
                 .flex()
                 .items_center()
                 .gap(t.space.md)
                 .rounded(t.radius.button)
                 .cursor_pointer()
                 .text_size(t.text.body)
-                .when(on, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint).font_weight(gpui::FontWeight::SEMIBOLD))
-                .when(!on, |d| d.text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
-                .child(icon(path, t.size.icon, if on { t.colors.brand_on_tint } else { t.colors.text_muted }))
-                .child(label)
+                .when(on, |d| d.bg(t.colors.surface).shadow(t.shadow_raised()).font_weight(gpui::FontWeight::SEMIBOLD).text_color(t.colors.text))
+                .when(!on, |d| d.text_color(t.colors.text_body).hover(|d| d.bg(t.colors.surface)))
+                .active(|d| d.bg(t.colors.hover))
+                .child(
+                    div()
+                        .size(px(26.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.small)
+                        .bg(tint)
+                        .child(icon(path, t.size.icon_sm, ink)),
+                )
+                .child(div().flex_1().child(label))
+                .children(right)
         };
+        let pill = |text: String| {
+            div()
+                .px(px(7.))
+                .h(px(18.))
+                .flex()
+                .items_center()
+                .rounded(t.radius.full)
+                .bg(t.colors.hover)
+                .text_size(t.text.micro)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(t.colors.text_muted)
+                .child(text)
+                .into_any_element()
+        };
+        let trash = self.board.bin.iter().filter(|b| !b.archived).count();
+        let sync_dot = {
+            use super::sync::DriveState as S;
+            match self.sync.state {
+                S::Off | S::SigningIn => None,
+                S::Idle => Some(t.colors.ok),
+                S::Syncing => Some(t.colors.brand),
+                S::Choice => Some(t.colors.alert),
+                S::Error(_) => Some(t.colors.danger),
+            }
+        };
+        let neutral = (t.colors.hover, t.colors.text_muted);
+        let green = (t.colors.ok.opacity(0.16), t.colors.ok);
+        let sheets_n = self.board.categories.len();
+        let nav_group = div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .p(t.space.xs)
+            .rounded(t.radius.card)
+            .bg(t.colors.surface_sunk)
+            .border_1()
+            .border_color(t.colors.border)
+            .child(
+                nav("nav-home", "icons/layout-grid.svg", "All sheets", screen == Screen::Home, t.colors.brand, t.colors.primary_fg, Some(pill(sheets_n.to_string())))
+                    .on_click(cx.listener(|this, _, _, cx| this.go_home(cx))),
+            )
+            .child(
+                nav("nav-bin", "icons/archive.svg", "Trash & archive", screen == Screen::Bin, neutral.0, neutral.1, (trash > 0).then(|| pill(trash.to_string())))
+                    .on_click(cx.listener(|this, _, _, cx| this.open_bin(BinTab::Trash, cx))),
+            )
+            .child(
+                nav(
+                    "nav-transfer",
+                    "icons/cloud.svg",
+                    "Sync & export",
+                    screen == Screen::Transfer,
+                    green.0,
+                    green.1,
+                    sync_dot.map(|c| div().size(px(7.)).mr(px(5.)).rounded(t.radius.full).bg(c).into_any_element()),
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.open_transfer(cx))),
+            )
+            .child(
+                nav("nav-settings", "icons/settings.svg", "Settings", screen == Screen::Settings, neutral.0, neutral.1, Some(kbd(shortcut(","), &t).into_any_element()))
+                    .on_click(cx.listener(|this, _, _, cx| this.open_settings(cx))),
+            );
         let panel = div()
             .id("drawer-panel")
             .absolute()
@@ -75,18 +150,7 @@ impl Folio {
                         cx.notify();
                     }))),
             )
-            .child(nav("nav-home", "icons/layout-grid.svg", "All sheets", screen == Screen::Home).on_click(
-                cx.listener(|this, _, _, cx| this.go_home(cx)),
-            ))
-            .child(nav("nav-bin", "icons/archive.svg", "Trash & archive", screen == Screen::Bin).on_click(
-                cx.listener(|this, _, _, cx| this.open_bin(BinTab::Trash, cx)),
-            ))
-            .child(nav("nav-transfer", "icons/cloud.svg", "Sync & export", screen == Screen::Transfer).on_click(
-                cx.listener(|this, _, _, cx| this.open_transfer(cx)),
-            ))
-            .child(nav("nav-settings", "icons/settings.svg", "Settings", screen == Screen::Settings).on_click(
-                cx.listener(|this, _, _, cx| this.open_settings(cx)),
-            ))
+            .child(nav_group)
             .child(
                 div()
                     .flex()
@@ -127,45 +191,7 @@ impl Folio {
                             .on_click(cx.listener(|this, _, window, cx| this.new_sheet_dialog(window, cx))),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(t.space.sm)
-                    .pt(t.space.md)
-                    .border_t_1()
-                    .border_color(t.colors.border)
-                    .child(
-                        div()
-                            .size(px(32.))
-                            .rounded(t.radius.full)
-                            .bg(t.colors.brand_tint)
-                            .text_color(t.colors.brand_on_tint)
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child("F"),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .child(div().text_size(t.text.caption).child("My workspace"))
-                            .child(
-                                div()
-                                    .text_size(t.text.micro)
-                                    .text_color(t.colors.text_subtle)
-                                    .child(if self.saved { "Saved just now" } else { "Saving…" }),
-                            ),
-                    )
-                    .child(icon_button("replay-intro", "icons/play.svg", &t).on_click(cx.listener(|this, _, _, cx| {
-                        this.drawer = false;
-                        this.intro = Some(Intro { start: Instant::now() });
-                        cx.notify();
-                    }))),
-            );
+            .child(self.drawer_profile(&t, cx));
         let panel = if reduce {
             panel.left_0().into_any_element()
         } else {
@@ -188,6 +214,63 @@ impl Folio {
                 }),
             )
             .child(panel)
+            .into_any_element()
+    }
+
+    /// You, at the foot of the drawer: your avatar and name, whether your
+    /// work is saved (and synced), and Settings. Click it to change your
+    /// avatar.
+    fn drawer_profile(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let s = &self.board.settings;
+        let name = if s.user_name.trim().is_empty() { "You".to_string() } else { s.user_name.clone() };
+        let avatar = crate::avatars::all().find(|a| *a == s.avatar).unwrap_or("bow");
+        let status = match (&self.sync.state, self.saved) {
+            (_, false) => "Saving…".to_string(),
+            (super::sync::DriveState::Idle, true) => "Saved · in Google Drive".to_string(),
+            (super::sync::DriveState::Syncing, true) => "Saved · syncing…".to_string(),
+            _ => "Saved on this computer".to_string(),
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(t.space.sm)
+            .p(t.space.sm)
+            .rounded(t.radius.card)
+            .bg(t.colors.surface_sunk)
+            .border_1()
+            .border_color(t.colors.border)
+            .child(
+                div()
+                    .id("drawer-profile")
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(t.space.sm)
+                    .rounded(t.radius.button)
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .size(px(38.))
+                            .flex_none()
+                            .p(px(2.))
+                            .rounded(t.radius.full)
+                            .border_2()
+                            .border_color(t.colors.brand)
+                            .child(img(SharedString::from(crate::avatars::path(avatar, 30))).size(px(30.)).rounded(t.radius.full)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_size(t.text.body).font_weight(gpui::FontWeight::SEMIBOLD).truncate().child(name))
+                            .child(div().text_size(t.text.micro).text_color(t.colors.text_subtle).truncate().child(status)),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| this.open_welcome(true, window, cx))),
+            )
+            .child(icon_button("drawer-settings", "icons/settings.svg", t).on_click(cx.listener(|this, _, _, cx| this.open_settings(cx))))
             .into_any_element()
     }
 

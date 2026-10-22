@@ -832,6 +832,10 @@ pub struct Settings {
     /// Moved notes land on the dot grid.
     pub grid: bool,
     pub minimap: bool,
+    /// What Folio calls you (asked on the welcome screen).
+    pub user_name: String,
+    /// Your avatar, by name (`avatars.rs`).
+    pub avatar: String,
 }
 
 impl Default for Settings {
@@ -849,6 +853,8 @@ impl Default for Settings {
             snap: true,
             grid: false,
             minimap: true,
+            user_name: String::new(),
+            avatar: String::new(),
         }
     }
 }

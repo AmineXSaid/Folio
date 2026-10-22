@@ -13,6 +13,10 @@ pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if path.starts_with("avatars/") {
+            // Sized to the pixels they're drawn at (`avatars.rs`).
+            return Ok(crate::avatars::load(path).map(Cow::Owned));
+        }
         Ok(FILES
             .iter()
             .find(|(p, _)| *p == path)

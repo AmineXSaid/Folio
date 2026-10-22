@@ -23,15 +23,16 @@ impl Folio {
         let cols = ((width + gap) / (min + gap)).floor().max(1.) as usize;
         let card_w = ((width - gap * (cols as f32 - 1.)) / cols as f32).max(150.);
 
-        let hour = chrono::Timelike::hour(&chrono::Local::now());
-        let greet = match hour {
-            5..=11 => "Good morning",
-            12..=17 => "Good afternoon",
-            _ => "Good evening",
-        };
+        // Greets you by name, by the time of day, and moves on to another
+        // line every five minutes.
+        let hour = crate::greeting::hour_now();
+        let greet = crate::greeting::pick(&self.board.settings.user_name, hour, now() / 300);
         let (title, sub) = if q.is_empty() {
             let count = |n: usize, one: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {one}s") };
-            (greet.to_string(), format!("{} · {}", count(self.board.categories.len(), "sheet"), count(n_notes, "note")))
+            (
+                greet,
+                format!("{} · {} · {}", crate::greeting::sub(hour), count(self.board.categories.len(), "sheet"), count(n_notes, "note")),
+            )
         } else {
             let hits = self.board.search(&q).len();
             let what = match q.strip_prefix("paper:") {
@@ -389,7 +390,7 @@ impl Folio {
                         .bg(t.colors.hover)
                         .text_size(t.text.micro)
                         .text_color(t.colors.text_muted)
-                        .when(!c.icon.is_empty(), |d| d.child(c.icon.clone()))
+                        .when(!c.icon.is_empty(), |d| d.child(mark(&c.icon, 18., &t)))
                         .child(c.name.clone()),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| this.reveal_note(id, window, cx)))

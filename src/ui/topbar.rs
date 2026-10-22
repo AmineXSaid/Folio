@@ -20,10 +20,7 @@ impl Folio {
         let t = theme(cx).clone();
         let here: Option<String> = match self.screen {
             Screen::Home => None,
-            Screen::Sheet => {
-                let c = self.sheet();
-                Some(if c.icon.is_empty() { c.name.clone() } else { format!("{} {}", c.icon, c.name) })
-            }
+            Screen::Sheet => Some(self.sheet().name.clone()),
             Screen::Settings => Some("Settings".into()),
             Screen::Bin => Some("Trash & archive".into()),
             Screen::Transfer => Some("Sync & export".into()),
@@ -100,6 +97,20 @@ impl Folio {
                         cx.notify();
                     })),
             )
+            // Back and forward through where you were, dimmed when there's
+            // nowhere to go.
+            .child({
+                let can = !self.nav_back.is_empty();
+                bar_button("go-back", "icons/arrow-left.svg")
+                    .when(!can, |d| d.opacity(0.35).cursor_default())
+                    .on_click(cx.listener(|this, _, window, cx| this.go_back(window, cx)))
+            })
+            .child({
+                let can = !self.nav_forward.is_empty();
+                bar_button("go-forward", "icons/arrow-right.svg")
+                    .when(!can, |d| d.opacity(0.35).cursor_default())
+                    .on_click(cx.listener(|this, _, window, cx| this.go_forward(window, cx)))
+            })
             .child(div().w(px(1.)).h(px(16.)).mx(t.space.xs).bg(t.colors.border))
             .child(
                 div()
@@ -116,6 +127,7 @@ impl Folio {
                     .on_click(cx.listener(|this, _, _, cx| this.go_home(cx))),
             )
             .children(here.map(|name| {
+                let icon_text = (self.screen == Screen::Sheet).then(|| self.sheet().icon.clone()).filter(|i| !i.is_empty());
                 div()
                     .flex()
                     .items_center()
@@ -123,6 +135,7 @@ impl Folio {
                     .min_w_0()
                     .text_size(t.text.caption)
                     .child(div().text_color(t.colors.text_subtle).child("/"))
+                    .children(icon_text.map(|i| mark(&i, 18., &t)))
                     .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(t.colors.text_body).truncate().child(name))
             }));
 
@@ -171,7 +184,6 @@ impl Folio {
                     .child(div().w(px(1.)).h(px(16.)).mx(t.space.xs).bg(t.colors.border))
             })
             .child(sync_button)
-            .child(bar_button("palette", "icons/command.svg").on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))))
             .child(bar_button("theme", theme_icon).on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx))))
             .child(if on_sheet {
                 new_button("new-note", "Note").on_click(cx.listener(|this, _, window, cx| this.new_note(window, cx))).into_any_element()

@@ -7,7 +7,6 @@ mod dialog;
 mod drawer;
 mod emoji;
 mod home;
-mod intro;
 mod menu;
 mod motion;
 mod mini;
@@ -19,6 +18,7 @@ mod sticker;
 mod sync;
 mod toolbar;
 mod transfer;
+mod welcome;
 mod topbar;
 
 use gpui::{div, prelude::*, px, svg, App, Hsla, Pixels, SharedString, Svg};
@@ -61,6 +61,8 @@ gpui::actions!(
         PaletteUp,
         PaletteDown,
         PaletteTab,
+        GoBack,
+        GoForward,
         PaletteBackTab,
         ToolSelect,
         ToolHand,
@@ -148,6 +150,21 @@ pub fn secondary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedS
 
 /// A sheet's badge: its emoji (or its first letter) on a quiet tile.
 pub fn sheet_badge(c: &crate::model::Category, size: f32, t: &Theme) -> gpui::Div {
+    if c.icon.is_empty() {
+        let letter: String = c.name.chars().find(|ch| ch.is_alphanumeric()).unwrap_or('•').to_uppercase().collect();
+        return mark(&letter, size, t);
+    }
+    mark(&c.icon, size, t)
+}
+
+/// A mark in letters rather than a picture: "CAN", "RS", "BMW".
+pub fn is_monogram(icon: &str) -> bool {
+    !icon.is_empty() && icon.chars().all(|c| c.is_ascii_graphic())
+}
+
+/// A sheet's mark on a tile `size` across: an emoji, or a monogram set in
+/// bold on Folio's pink wash, smaller the longer it is.
+pub fn mark(icon: &str, size: f32, t: &Theme) -> gpui::Div {
     let tile = div()
         .size(px(size))
         .flex_none()
@@ -155,14 +172,24 @@ pub fn sheet_badge(c: &crate::model::Category, size: f32, t: &Theme) -> gpui::Di
         .items_center()
         .justify_center()
         .rounded(px(size * 0.3))
-        .bg(t.colors.hover)
-        .border_1()
-        .border_color(t.colors.border);
-    if c.icon.is_empty() {
-        let letter: String = c.name.chars().find(|ch| ch.is_alphanumeric()).unwrap_or('•').to_uppercase().collect();
-        tile.text_size(px(size * 0.5)).font_weight(gpui::FontWeight::BOLD).text_color(t.colors.text_muted).child(letter)
+        .border_1();
+    if is_monogram(icon) {
+        let n = icon.chars().count();
+        let k = match n {
+            1 => 0.5,
+            2 => 0.42,
+            3 => 0.33,
+            4 => 0.27,
+            _ => 0.23,
+        };
+        tile.bg(t.colors.brand_tint)
+            .border_color(t.colors.brand.opacity(0.25))
+            .text_size(px(size * k))
+            .font_weight(gpui::FontWeight::BOLD)
+            .text_color(t.colors.brand_on_tint)
+            .child(icon.to_string())
     } else {
-        tile.text_size(px(size * 0.56)).child(c.icon.clone())
+        tile.bg(t.colors.hover).border_color(t.colors.border).text_size(px(size * 0.56)).child(icon.to_string())
     }
 }
 
@@ -233,4 +260,74 @@ pub fn sync_component_theme(cx: &mut App) {
         c.table_even = gpui::transparent_black();
         c.table_row_border = t.colors.border;
     });
+}
+
+/// Lays out and paints `child` with the rem at `rem`: a text field sized
+/// in rems (its height, its line) grows with it, so it can be typed into
+/// at a heading's size.
+pub struct RemScaled {
+    rem: Pixels,
+    child: gpui::AnyElement,
+}
+
+pub fn rem_scaled(rem: Pixels, child: impl IntoElement) -> RemScaled {
+    RemScaled { rem, child: child.into_any_element() }
+}
+
+impl IntoElement for RemScaled {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for RemScaled {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, ()) {
+        let child = &mut self.child;
+        (window.with_rem_size(Some(self.rem), |w| child.request_layout(w, cx)), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<Pixels>,
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut App,
+    ) {
+        let child = &mut self.child;
+        window.with_rem_size(Some(self.rem), |w| child.prepaint(w, cx));
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut App,
+    ) {
+        let child = &mut self.child;
+        window.with_rem_size(Some(self.rem), |w| child.paint(w, cx));
+    }
 }

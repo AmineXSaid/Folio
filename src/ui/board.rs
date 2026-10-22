@@ -8,6 +8,7 @@
 //! fields aren't inside the sheet's single-letter shortcuts.
 
 use gpui::component::input::{Input, Textarea};
+use gpui::component::Sizable as _;
 use gpui::{
     canvas, div, point, prelude::*, px, Context, Hsla, KeyDownEvent, KeyUpEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, PathBuilder, Pixels, ScrollWheelEvent, Window,
@@ -381,32 +382,27 @@ impl Folio {
         let icon_text = sheet.icon.clone();
         // The name: click it to rename the sheet right there.
         let title = if self.naming {
+            // Typed into in place: same size, same weight, no box; only the
+            // caret says it's being edited.
             div()
                 .id("sheet-name")
                 .key_context("SheetName")
-                .min_w(px(280.))
-                .px(t.space.sm)
-                .ml(px(-9.))
-                .rounded(t.radius.button)
-                .border_1()
-                .border_color(t.colors.brand)
-                .bg(t.colors.surface)
-                .shadow(t.shadow_card(1.))
-                .text_size(t.text.heading)
+                .w(px(560.))
+                .h(px(34.))
+                .ml(px(-8.))
+                .flex()
+                .items_center()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child(Input::new(&self.name_input).appearance(false))
+                .text_color(t.colors.text)
+                // The field's small text is 0.875rem: a rem that makes it
+                // the heading's size.
+                .child(rem_scaled(t.text.heading / 0.875, Input::new(&self.name_input).appearance(false).small()))
                 .into_any_element()
         } else {
             div()
                 .id("sheet-name")
                 .occlude()
-                .px(t.space.sm)
-                .ml(px(-9.))
-                .rounded(t.radius.button)
-                .border_1()
-                .border_color(gpui::transparent_black())
                 .cursor(gpui::CursorStyle::IBeam)
-                .hover(|d| d.bg(t.colors.hover).border_color(t.colors.border))
                 .text_size(t.text.heading)
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(t.colors.text)
@@ -426,7 +422,14 @@ impl Folio {
                     .flex()
                     .items_center()
                     .gap(t.space.xs)
-                    .when(!icon_text.is_empty(), |d| d.child(div().text_size(t.text.heading).child(icon_text)))
+                    .gap(t.space.sm)
+                    .when(!icon_text.is_empty(), |d| {
+                        d.child(if is_monogram(&icon_text) {
+                            mark(&icon_text, 34., t).into_any_element()
+                        } else {
+                            div().text_size(t.text.heading).child(icon_text).into_any_element()
+                        })
+                    })
                     .child(title),
             )
             .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(meta))
