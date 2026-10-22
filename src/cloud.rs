@@ -211,12 +211,28 @@ pub fn parse_callback(request_line: &str) -> Option<Vec<(String, String)>> {
     )
 }
 
-const PAGE: &str = "<!doctype html><meta charset=utf-8><title>Folio</title>\
-<body style=\"font:16px system-ui,sans-serif;background:#f6f4ef;color:#1d1b20;display:grid;place-items:center;height:90vh\">\
-<div style=\"text-align:center\"><h2 style=\"margin:0 0 8px\">{H}</h2><p style=\"color:#6b6870\">{P}</p></div>";
+/// The page the browser lands on after Google: Folio's own, light or dark
+/// like the system, with a mark ({M}: a tick or a cross).
+const PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Folio</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><style>
+:root{--bg:#f6f4ef;--card:#fff;--ink:#1d1b20;--muted:#6b6870;--line:#e6e2da;--pink:#e5487f;--ok:#2f9e6b}
+@media (prefers-color-scheme:dark){:root{--bg:#141316;--card:#1d1c20;--ink:#f2f0f4;--muted:#a19ea8;--line:#2e2c33}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);
+font:15px/1.5 "Hanken Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;padding:16px}
+.card{width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:40px 32px;text-align:center;
+box-shadow:0 1px 2px rgba(0,0,0,.06),0 12px 32px -8px rgba(0,0,0,.14);animation:in .4s cubic-bezier(.22,1,.36,1)}
+@keyframes in{from{opacity:0;transform:translateY(8px)}}
+.word{font-weight:700;font-size:28px;letter-spacing:-.02em}.word b{color:var(--pink)}
+.mark{width:48px;height:48px;border-radius:50%;margin:24px auto 16px;display:grid;place-items:center;color:#fff;background:{C}}
+h1{font-size:19px;margin:0 0 6px}p{margin:0;color:var(--muted)}
+</style></head><body><div class="card"><div class="word">folio<b>.</b></div>
+<div class="mark"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">{M}</svg></div>
+<h1>{H}</h1><p>{P}</p></div></body></html>"#;
 
 fn answer(stream: &mut std::net::TcpStream, heading: &str, text: &str) {
-    let body = PAGE.replace("{H}", heading).replace("{P}", text);
+    let ok = heading.contains("signed in") && !heading.starts_with("Not");
+    let (mark, colour) = if ok { ("<path d='M5 12.5l4.5 4.5L19 7.5'/>", "var(--ok)") } else { ("<path d='M7 7l10 10M17 7L7 17'/>", "var(--muted)") };
+    let body = PAGE.replace("{M}", mark).replace("{C}", colour).replace("{H}", heading).replace("{P}", text);
     let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
 }
 
@@ -252,7 +268,7 @@ pub fn finish_sign_in(s: SignIn, client: &ClientId, ep: &Endpoints, cancel: &dyn
             return Err("Sign-in didn't match · try again".into());
         }
         if let Some(code) = get("code") {
-            answer(&mut stream, "You're signed in", "Folio will keep your notes in Google Drive. You can close this tab.");
+            answer(&mut stream, "You're signed in", "Folio is keeping your notes in Google Drive. You can close this tab and go back to Folio.");
             break code;
         }
         answer(&mut stream, "Not signed in", "Google sign-in was cancelled. You can close this tab.");

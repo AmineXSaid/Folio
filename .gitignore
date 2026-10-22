@@ -3,3 +3,5 @@ dist/
 # Fonts licensed to whoever builds, embedded by build.rs, never committed.
 assets/fonts/extra/*
 !assets/fonts/extra/README.md
+# Folio's Google sign-in client, built in by build.rs, never committed.
+google-client.env

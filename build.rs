@@ -4,6 +4,9 @@
 //! - Embeds any .ttf/.otf in `assets/fonts/extra` (git-ignored): fonts you
 //!   hold a licence to ship, such as Anthropic Sans, go in the .exe from
 //!   there and never into the repository.
+//! - Builds in Folio's Google sign-in (its OAuth client) from
+//!   `google-client.env` (git-ignored), unless the environment already
+//!   sets `FOLIO_GOOGLE_CLIENT_ID`. With it, signing in is one click.
 //! - On Windows, embeds the Folio logo as the .exe's icon (resource 1, which
 //!   the window and the taskbar load too): `assets/folio.rc`. A build
 //!   without a resource compiler fails here rather than ship a blank icon.
@@ -19,6 +22,7 @@ fn main() {
             .manifest_required()
             .expect("the app icon (assets/folio.rc) could not be compiled");
     }
+    google_client();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
     let mut files = Vec::new();
     for (dir, ext) in [("icons", "svg"), ("brand", "png")] {
@@ -60,4 +64,26 @@ fn main() {
     code.push_str("];\n");
     let out = Path::new(&std::env::var("OUT_DIR").unwrap()).join("assets.rs");
     std::fs::write(out, code).unwrap();
+}
+
+/// `google-client.env` holds `FOLIO_GOOGLE_CLIENT_ID=…` and
+/// `FOLIO_GOOGLE_CLIENT_SECRET=…`; each becomes a compile-time variable
+/// (read by `option_env!` in cloud.rs) unless the environment has it.
+fn google_client() {
+    println!("cargo:rerun-if-changed=google-client.env");
+    for key in ["FOLIO_GOOGLE_CLIENT_ID", "FOLIO_GOOGLE_CLIENT_SECRET"] {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("google-client.env");
+    let Ok(text) = std::fs::read_to_string(file) else { return };
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let (key, value) = (key.trim(), value.trim().trim_matches('"'));
+        if matches!(key, "FOLIO_GOOGLE_CLIENT_ID" | "FOLIO_GOOGLE_CLIENT_SECRET")
+            && !value.is_empty()
+            && std::env::var_os(key).is_none()
+        {
+            println!("cargo:rustc-env={key}={value}");
+        }
+    }
 }

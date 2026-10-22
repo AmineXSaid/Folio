@@ -149,6 +149,47 @@ pub fn secondary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedS
         .child(label.into())
 }
 
+/// Google's "G", in its own colours: four tinted pieces laid on each other.
+pub fn google_g(size: Pixels, t: &Theme) -> gpui::Div {
+    let piece = |name: &'static str, c: Hsla| icon(name, size, c).absolute().top_0().left_0();
+    let [blue, green, yellow, red] = t.colors.google;
+    div()
+        .relative()
+        .size(size)
+        .flex_none()
+        .child(piece("icons/google-g-red.svg", red))
+        .child(piece("icons/google-g-yellow.svg", yellow))
+        .child(piece("icons/google-g-green.svg", green))
+        .child(piece("icons/google-g-blue.svg", blue))
+}
+
+/// "Continue with Google", the way Google's sign-in buttons look: the G on
+/// a plain surface.
+pub fn google_button(id: impl Into<gpui::ElementId>, t: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .h(t.size.control)
+        .pl(t.space.md)
+        .pr(t.space.lg)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(t.space.sm)
+        .rounded(t.radius.button)
+        .bg(t.colors.surface)
+        .border_1()
+        .border_color(t.colors.border)
+        .shadow(t.shadow_raised())
+        .hover(|d| d.bg(t.colors.surface_sunk))
+        .active(|d| d.bg(t.colors.hover))
+        .text_color(t.colors.text)
+        .text_size(t.text.caption)
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .cursor_pointer()
+        .child(google_g(t.size.icon, t))
+        .child("Continue with Google")
+}
+
 /// A sheet's badge: its emoji (or its first letter) on a quiet tile.
 pub fn sheet_badge(c: &crate::model::Category, size: f32, t: &Theme) -> gpui::Div {
     if c.icon.is_empty() {

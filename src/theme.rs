@@ -39,6 +39,9 @@ pub struct Colors {
     pub ok: Hsla,
     /// The window's close button under the pointer (as Windows draws it).
     pub window_close: Hsla,
+    /// Google's four colours, for its "G" on the sign-in button (blue,
+    /// green, yellow, red), as its brand rules ask: never recoloured.
+    pub google: [Hsla; 4],
 }
 
 #[derive(Clone, Copy)]
@@ -199,6 +202,7 @@ impl Theme {
                 alert: c(0xd03b3b),
                 ok: c(0x2f8f5b),
                 window_close: c(0xc42b1c),
+                google: [c(0x4285f4), c(0x34a853), c(0xfbbc05), c(0xea4335)],
             },
             text: TEXT,
             space: SPACE,
@@ -240,6 +244,7 @@ impl Theme {
                 alert: c(0xff7b6e),
                 ok: c(0x5cc98a),
                 window_close: c(0xc42b1c),
+                google: [c(0x4285f4), c(0x34a853), c(0xfbbc05), c(0xea4335)],
             },
             text: TEXT,
             space: SPACE,
