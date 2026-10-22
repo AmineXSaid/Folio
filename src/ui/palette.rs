@@ -29,9 +29,10 @@ enum Cmd {
     Tidy,
     Map,
     Intro,
+    Drive,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 15] = [
+const CMDS: [(Cmd, &str, &str, &str); 16] = [
     (Cmd::NewNote, "New note", "Ctrl+N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl+Shift+N", "icons/plus.svg"),
     (Cmd::QuickNote, "Quick note to Inbox", "Ctrl+Alt+N", "icons/inbox.svg"),
@@ -42,6 +43,7 @@ const CMDS: [(Cmd, &str, &str, &str); 15] = [
     (Cmd::Archive, "Open the Archive", "", "icons/archive.svg"),
     (Cmd::Backups, "Restore a backup", "", "icons/rotate-ccw.svg"),
     (Cmd::BackUpNow, "Back up now", "", "icons/hard-drive-download.svg"),
+    (Cmd::Drive, "Sync with Google Drive", "", "icons/cloud.svg"),
     (Cmd::Theme, "Switch light / dark", "Ctrl+Shift+L", "icons/moon.svg"),
     (Cmd::Fit, "Zoom to fit", "Ctrl+0", "icons/scan.svg"),
     (Cmd::Tidy, "Tidy up the sheet", "", "icons/wand-sparkles.svg"),
@@ -127,6 +129,14 @@ impl Folio {
                 Cmd::Archive => self.open_bin(BinTab::Archive, cx),
                 Cmd::Backups => self.open_bin(BinTab::Backups, cx),
                 Cmd::BackUpNow => self.back_up_now(cx),
+                Cmd::Drive if self.sync.signed_in() => {
+                    if self.sync.state == super::sync::DriveState::Choice {
+                        self.drive_show_choice(cx)
+                    } else {
+                        self.drive_sync(None, cx)
+                    }
+                }
+                Cmd::Drive => self.sign_in_google(cx),
                 Cmd::Theme => self.toggle_theme(cx),
                 Cmd::Fit | Cmd::Tidy | Cmd::Map => {
                     if self.screen != Screen::Sheet {

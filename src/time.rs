@@ -24,6 +24,11 @@ pub fn today() -> String {
     Local::now().format("%Y-%m-%d").to_string()
 }
 
+/// The local time as `HHMM`, for a backup's name.
+pub fn hhmm() -> String {
+    Local::now().format("%H%M").to_string()
+}
+
 /// How long ago `t` was: "just now", "12 min ago", "3 h ago", "Yesterday",
 /// "4 days ago", "12 Oct".
 pub fn ago(t: u64, now: u64) -> String {

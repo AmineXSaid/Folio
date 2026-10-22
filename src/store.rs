@@ -121,13 +121,57 @@ pub fn backup_daily(dir: &Path, board: &Board, day: &str) -> std::io::Result<boo
     Ok(true)
 }
 
-/// The days there are backups for, newest first.
+/// Whose copy a sync kept aside, when notes changed in two places.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    ThisComputer,
+    Drive,
+}
+
+impl Side {
+    fn tag(self) -> &'static str {
+        match self {
+            Side::ThisComputer => "computer",
+            Side::Drive => "drive",
+        }
+    }
+}
+
+/// Keeps the side a sync didn't use as a backup, `YYYY-MM-DD_HHMM_<side>`,
+/// listed and restorable like the daily ones. Returns its name.
+pub fn save_copy(dir: &Path, board_text: &str, day: &str, hhmm: &str, side: Side) -> std::io::Result<String> {
+    let b = backup_dir(dir);
+    std::fs::create_dir_all(&b)?;
+    let name = format!("{day}_{hhmm}_{}", side.tag());
+    std::fs::write(b.join("copy.tmp"), board_text)?;
+    std::fs::rename(b.join("copy.tmp"), b.join(format!("{name}.json")))?;
+    Ok(name)
+}
+
+/// What a backup is called in the list.
+pub fn backup_title(name: &str) -> String {
+    let mut parts = name.splitn(3, '_');
+    let (day, hhmm, side) = (parts.next().unwrap_or(name), parts.next(), parts.next());
+    let at = |t: &str| if t.len() == 4 { format!("{day} {}:{}", &t[..2], &t[2..]) } else { day.to_string() };
+    match (hhmm, side) {
+        (Some(t), Some("drive")) => format!("Google Drive's copy · {}", at(t)),
+        (Some(t), Some("computer")) => format!("This computer's copy · {}", at(t)),
+        _ => format!("Backup of {day}"),
+    }
+}
+
+fn is_backup_name(n: &str) -> bool {
+    let day = n.get(..10).unwrap_or("");
+    day.len() == 10 && day.as_bytes()[4] == b'-' && (n.len() == 10 || n[10..].starts_with('_'))
+}
+
+/// The backups there are (days, and copies kept by a sync), newest first.
 pub fn backups(dir: &Path) -> Vec<String> {
     let mut days: Vec<String> = std::fs::read_dir(backup_dir(dir))
         .map(|r| {
             r.flatten()
                 .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".json")).map(String::from))
-                .filter(|n| n.len() == 10)
+                .filter(|n| is_backup_name(n))
                 .collect()
         })
         .unwrap_or_default();
@@ -210,6 +254,21 @@ mod tests {
         assert_eq!(days.len(), BACKUPS_KEPT);
         assert_eq!(days[0], "2026-10-16");
         assert_eq!(load_backup(&dir, "2026-10-10"), Some(board));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copies_kept_by_a_sync_are_backups_too() {
+        let dir = temp_dir("copies");
+        let board = demo::board();
+        backup_daily(&dir, &board, "2026-10-21").unwrap();
+        let text = serde_json::to_string(&board).unwrap();
+        let name = save_copy(&dir, &text, "2026-10-22", "0941", Side::Drive).unwrap();
+        assert_eq!(backups(&dir), vec![name.clone(), "2026-10-21".to_string()]);
+        assert_eq!(load_backup(&dir, &name), Some(board));
+        assert_eq!(backup_title(&name), "Google Drive's copy · 2026-10-22 09:41");
+        assert_eq!(backup_title("2026-10-22_1200_computer"), "This computer's copy · 2026-10-22 12:00");
+        assert_eq!(backup_title("2026-10-21"), "Backup of 2026-10-21");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

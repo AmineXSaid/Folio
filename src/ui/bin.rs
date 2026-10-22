@@ -136,7 +136,7 @@ impl Folio {
                             .border_1()
                             .border_color(t.colors.border)
                             .child(icon("icons/hard-drive-download.svg", t.size.icon, t.colors.text_muted))
-                            .child(div().flex_1().child(format!("Backup of {day}")))
+                            .child(div().flex_1().child(store::backup_title(&day)))
                             .child(
                                 secondary_button(
                                     gpui::ElementId::Name(format!("sheets-{day}").into()),

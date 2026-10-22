@@ -18,6 +18,13 @@ chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
 ureq = { version = "=2.12.1", default-features = false, features = ["tls"] }
 # Ctrl+Alt+N from any app opens a quick note. Apache-2.0/MIT.
 global-hotkey = "=0.9.0"
+# Google Drive sync (src/cloud.rs): PKCE and the board's fingerprint,
+# tokens' base64url, the sign-in's random values, and URL encoding. All
+# MIT/Apache-2.0, all already in GPUI's tree at these versions.
+sha2 = "=0.10.9"
+base64 = "=0.22.1"
+getrandom = "=0.2.17"
+percent-encoding = "=2.3.2"
 
 # Windows: the tray icon and its menu, and reminder notifications.
 [target.'cfg(windows)'.dependencies]

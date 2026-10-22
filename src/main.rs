@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod assets;
+mod cloud;
 mod demo;
 mod desktop;
 mod links;

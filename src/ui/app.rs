@@ -149,6 +149,8 @@ pub enum Dialog {
     RenameSheet(Id),
     Label { id: Id, is_new: bool, ink: Ink },
     RenameFrame(Id),
+    /// Notes changed here and in Google Drive: which to keep.
+    DriveChoice,
 }
 
 pub struct Intro {
@@ -226,6 +228,7 @@ pub struct Folio {
     pub dialog_input: Entity<InputState>,
     pub dialog_body: Entity<TextareaState>,
     pub desktop: crate::desktop::Desktop,
+    pub sync: super::sync::DriveSync,
     toast_task: Option<Task<()>>,
     save_task: Option<Task<()>>,
     _ticker: Task<()>,
@@ -289,7 +292,13 @@ impl Folio {
         // Reminders: checked every 15 seconds.
         let ticker = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_secs(15)).await;
-            if this.update(cx, |this, cx| this.check_reminders(cx)).is_err() {
+            if this
+                .update(cx, |this, cx| {
+                    this.check_reminders(cx);
+                    this.drive_tick(cx);
+                })
+                .is_err()
+            {
                 return;
             }
         });
@@ -337,6 +346,7 @@ impl Folio {
             dialog_input,
             dialog_body,
             desktop: crate::desktop::Desktop::default(),
+            sync: Default::default(),
             toast_task: None,
             save_task: None,
             _ticker: ticker,
@@ -344,6 +354,14 @@ impl Folio {
         };
         f.apply_theme(cx);
         f.schedule_save(cx);
+        f.drive_start(cx);
+        // However Folio ends (Quit, the tray, the last window closed): the
+        // board saved, and a last push to Google Drive.
+        f._subs.push(cx.on_app_quit(|this, cx| {
+            this.save_now(cx);
+            this.drive_flush();
+            async {}
+        }));
         f
     }
 
@@ -504,7 +522,10 @@ impl Folio {
         self.save_task = None;
         let _ = store::save_history(&self.dir, &self.undo);
         match store::save(&self.dir, &self.board) {
-            Ok(()) => self.saved = true,
+            Ok(()) => {
+                self.saved = true;
+                self.drive_after_save(cx);
+            }
             Err(e) => self.notify(format!("Couldn't save: {e}"), cx),
         }
         cx.notify();
@@ -664,6 +685,11 @@ impl Folio {
                     l.ink = ink;
                 }
                 self.commit(before, cx);
+            }
+            // Its own buttons decide; Ctrl+Enter doesn't pick for you.
+            Dialog::DriveChoice => {
+                self.dialog = Some(d);
+                return;
             }
         }
         window.focus(&self.focus, cx);

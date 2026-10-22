@@ -15,6 +15,7 @@ pub mod popout;
 pub mod quick;
 mod settings;
 mod sticker;
+mod sync;
 mod toolbar;
 mod topbar;
 

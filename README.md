@@ -39,6 +39,43 @@ Your workspace is saved in `%APPDATA%\Folio` (Windows),
 (Linux). Set `FOLIO_DATA_DIR` to use another folder. It holds `board.json`
 and a `media/` folder for pictures.
 
+### Google Drive (optional)
+
+Settings › Your data › **Sign in with Google** opens Google's sign-in in
+your browser. After that, Folio keeps `board.json` and `media/` in a
+**Folio** folder in your Drive: it syncs a few seconds after each change,
+once a minute, at start-up and on quit. Sign in on another computer and the
+same notes come down. If notes changed on two computers before a sync, you
+choose which to keep; the other side goes to Backups, so nothing is lost.
+Folio asks only for `drive.file`, so it sees just the files it made. The
+sign-in is kept in `google.json` in the data folder, never in the board.
+Your theme, start-up and shortcut settings stay per computer.
+
+Sign-in needs the app's own OAuth client, set when the .exe is built:
+
+1. In [Google Cloud console](https://console.cloud.google.com/), make a
+   project and enable the **Google Drive API**.
+2. *Google Auth Platform › Branding*: an app name (Folio) and your email.
+   *Audience*: External; while it's in Testing, add the Google accounts
+   that may sign in as test users. *Data access*: add the
+   `.../auth/drive.file` scope.
+3. *Clients › Create client*: type **Desktop app**. Copy its ID and secret.
+4. Build with them:
+
+   ```sh
+   FOLIO_GOOGLE_CLIENT_ID=….apps.googleusercontent.com \
+   FOLIO_GOOGLE_CLIENT_SECRET=GOCSPX-… \
+   cargo build --release --target x86_64-pc-windows-gnu
+   ```
+
+   The same two variables also work at run time. Google doesn't treat a
+   desktop app's secret as secret; PKCE protects each sign-in.
+
+Without a client the button says sign-in isn't set up in this build, and
+everything else works as before. To try the whole flow without an account,
+a debug build talks to a local fake of Google when `FOLIO_GOOGLE_FAKE` is
+set to its address.
+
 ## Use it
 
 | | |

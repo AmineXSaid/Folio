@@ -5,6 +5,7 @@ use gpui::component::input::{Input, Textarea};
 use gpui::{div, prelude::*, px, Context, MouseButton, Window};
 
 use super::app::{Dialog, Folio};
+use crate::cloud::Keep;
 use super::*;
 use crate::model::*;
 use crate::theme::{theme, Theme};
@@ -34,6 +35,8 @@ impl Folio {
             Dialog::RenameFrame(_) => ("Name this area", "Save"),
             Dialog::Label { is_new: true, .. } => ("Write on the sheet", "Add"),
             Dialog::Label { .. } => ("Edit text", "Save"),
+            Dialog::DriveChoice if self.sync.first => ("Google Drive already has Folio notes", ""),
+            Dialog::DriveChoice => ("Your notes changed in two places", ""),
         };
         let mut body = div().flex().flex_col().gap(t.space.lg);
         match d {
@@ -82,6 +85,18 @@ impl Folio {
                         ),
                     );
             }
+            Dialog::DriveChoice => {
+                let why = if self.sync.first {
+                    "Your Google Drive has notes from another computer, and this computer has its own."
+                } else {
+                    "Since the last sync, notes were changed both on this computer and in Google Drive."
+                };
+                body = body
+                    .child(div().text_size(t.text.body).child(why))
+                    .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(
+                        "Choose which to keep. The other ones aren't lost: they go to Backups, where you can bring back any sheet.",
+                    ));
+            }
             Dialog::RenameSheet(_) | Dialog::RenameFrame(_) => {
                 body = body.child(Input::new(&self.dialog_input));
             }
@@ -110,7 +125,18 @@ impl Folio {
                 );
             }
         }
-        let wide = matches!(d, Dialog::NewSheet { .. });
+        let wide = matches!(d, Dialog::NewSheet { .. } | Dialog::DriveChoice);
+        let footer = div().flex().items_center().gap(t.space.sm).mt(t.space.xl).child(div().flex_1());
+        let footer = if d == Dialog::DriveChoice {
+            footer
+                .child(secondary_button("d-later", "Later", &t).on_click(cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx))))
+                .child(secondary_button("d-keep-here", "Keep this computer's", &t).on_click(cx.listener(|this, _, window, cx| this.drive_keep(Keep::ThisComputer, window, cx))))
+                .child(primary_button("d-keep-drive", "Use Google Drive's", &t).on_click(cx.listener(|this, _, window, cx| this.drive_keep(Keep::Drive, window, cx))))
+        } else {
+            footer
+                .child(secondary_button("d-cancel", "Cancel", &t).on_click(cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx))))
+                .child(primary_button("d-ok", ok, &t).on_click(cx.listener(|this, _, window, cx| this.dialog_ok(window, cx))))
+        };
         div()
             .id("scrim")
             .key_context("Dialog")
@@ -135,16 +161,7 @@ impl Folio {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(div().pb(t.space.lg).text_size(px(18.)).font_weight(gpui::FontWeight::SEMIBOLD).child(heading))
                     .child(body)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(t.space.sm)
-                            .mt(t.space.xl)
-                            .child(div().flex_1())
-                            .child(secondary_button("d-cancel", "Cancel", &t).on_click(cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx))))
-                            .child(primary_button("d-ok", ok, &t).on_click(cx.listener(|this, _, window, cx| this.dialog_ok(window, cx)))),
-                    ),
+                    .child(footer),
             )
             .into_any_element()
     }
