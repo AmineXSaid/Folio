@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use gpui::{div, img, prelude::*, px, Animation, AnimationExt, Context, MouseButton, MouseDownEvent, Window};
+use gpui::{div, prelude::*, px, Animation, AnimationExt, Context, MouseButton, MouseDownEvent, Window};
 
 use super::app::{BinTab, Folio, Intro, MenuKind, Screen};
 use super::mini::miniature;
@@ -61,7 +61,6 @@ impl Folio {
                     .gap(t.space.sm)
                     .px(t.space.xs)
                     .pb(t.space.md)
-                    .child(img("brand/folio-64.png").size(px(28.)))
                     .child(
                         div()
                             .flex()

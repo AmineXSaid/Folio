@@ -3,7 +3,7 @@
 //! screen's main action.
 
 use gpui::component::input::Input;
-use gpui::{div, img, prelude::*, px, Context, Window};
+use gpui::{div, prelude::*, px, Context, Window};
 
 use super::app::{Folio, Screen};
 use super::*;
@@ -86,7 +86,6 @@ impl Folio {
                     .items_center()
                     .gap(t.space.sm)
                     .cursor_pointer()
-                    .child(img("brand/folio-64.png").size(px(28.)).flex_none())
                     .child(
                         div()
                             .flex()
