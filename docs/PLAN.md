@@ -34,7 +34,7 @@ and what is still to come.
 | Google Drive | ✅ optional one-click "Continue with Google" (browser, PKCE, `drive.file` only; the client is built in from `google-client.env`, see `docs/GOOGLE_SIGN_IN.md`); board and pictures kept in a Folio folder in Drive, synced after changes, every minute, at start-up and quit; three-way merge per item from the last shared version, ids renumbered where two computers collide; first sync asks merge / keep mine / use Drive's; start over either way (`src/cloud.rs`, `src/merge.rs`, `src/ui/sync.rs`) | merge inside a note's text (today the newest edit wins); verified Google app (needed beyond 100 test users) |
 | Export & import | ✅ chosen sheets to Markdown (a folder, one `.md` per sheet, pictures alongside) or a `.folio` file (pictures inside); import a `.folio` as new sheets, from the screen or by dropping it (`src/export.rs`, `src/ui/transfer.rs`) | PNG/PDF of a sheet |
 | Settings | ✅ theme (light/dark/follow Windows), interface size, high contrast, reduce motion, default paper and font, guides, map, open on home/last sheet, start with Windows, quick-note shortcut, data folder, backups | |
-| Window | ✅ no system title bar: the top bar is the title bar (drag to move, Windows snap, double-click to maximize), with Folio's own minimize / maximize / close; first launch on one empty sheet, no samples | |
+| Window | ✅ no system title bar: the top bar is the title bar (drag to move, Windows snap, double-click to maximize), with Folio's own minimize / maximize / close; first launch on one empty sheet, no samples; on the right, undo/redo and sync/theme in small sunk trays (the key under the pointer rises; sync's tooltip says where it's at, its arrows turn while it syncs) and the screen's coloured main action; the search is a narrow pill (260 px) that widens to 420 px while you type | |
 | Opening | ✅ animated logo intro, played in full at every launch and not skippable, with the credit "Created and designed by M. Amine Said" | |
 
 ### Experience principles
@@ -330,11 +330,14 @@ any board size. It is also the foundation for sync (§6).
   note with a peeled corner and one highlighted line, in a heavy black
   outline on a flat pink (`#E5487A`) tile with a light shadow behind it. It
   follows the style of the reference office icons. `folio-logo.svg` is the
-  padded logo (README, sidebar). `folio-icon.svg` fills its square edge to
-  edge, as Chrome's and Teams' icons do, and `folio-icon-small.svg` redraws
-  it with heavier, fewer lines for 16–32 px. `scripts/icons.sh` renders the
-  PNGs and `assets/folio.ico` (10 sizes, 16–256), which the build embeds
-  in the `.exe`.
+  padded logo (README, sidebar). The app icon's tile fills its square edge
+  to edge, with no shadow, as Chrome's and Teams' icons do:
+  `folio-icon.svg` above 48 px, and `scripts/icon_grid.py` for 16–48 px,
+  which stands the note straight and puts every line on a whole pixel.
+  `scripts/icons.sh` renders the PNGs and `assets/folio.ico` (21 sizes,
+  16–256, each drawn at its size), which the build embeds in the `.exe`.
+  Each window asks Windows for the icon at its own display scale, big and
+  small, so the taskbar never stretches one.
 - **Motion (planned):** stickers ease to their lifted shadow in 120 ms;
   new stickers scale from 96 % with a 160 ms ease-out; sheet switches
   cross-fade in 120 ms. Respect "reduce motion".

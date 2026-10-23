@@ -595,6 +595,7 @@ impl Folio {
     pub(super) fn palette_field(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = theme(cx).clone();
         let open = self.palette;
+        // A pill, quiet while closed; it widens and lights up as you type.
         let field = div()
             .id("palette-field")
             .occlude()
@@ -603,28 +604,29 @@ impl Folio {
             .items_center()
             .gap(t.space.sm)
             .h(t.size.bar_control)
-            .pl(t.space.sm)
+            .pl(px(10.))
             .pr(px(4.))
-            .rounded(t.radius.button)
+            .rounded(t.radius.full)
             .border_1()
             .child(icon("icons/search.svg", t.size.icon_sm, if open { t.colors.brand } else { t.colors.text_subtle }));
         if !open {
             let (edge, ink) = (t.colors.border, t.colors.text_muted);
+            let lift = t.shadow_raised();
             return field
-                .w(px(380.))
+                .w(t.size.search)
                 .bg(t.colors.surface_sunk)
                 .border_color(t.colors.border)
                 .cursor(CursorStyle::IBeam)
                 .text_color(t.colors.text_subtle)
-                .hover(move |d| d.border_color(edge).text_color(ink).bg(t.colors.surface))
-                .child(div().flex_1().min_w_0().truncate().text_size(t.text.caption).child("Search sheets, notes and commands"))
+                .hover(move |d| d.border_color(edge).text_color(ink).bg(t.colors.surface).shadow(lift))
+                .child(div().flex_1().min_w_0().truncate().text_size(t.text.caption).child("Search sheets, notes, commands"))
                 .tooltip(|window, cx| gpui::component::tooltip::Tooltip::new(format!("Search  {}", shortcut("K"))).build(window, cx))
                 .on_click(cx.listener(|this, _, window, cx| this.open_palette_with("", window, cx)))
                 .into_any_element();
         }
         let dropdown = self.palette_dropdown(window, cx);
         field
-            .w(px(500.))
+            .w(t.size.search_open)
             .bg(t.colors.surface)
             .border_color(t.colors.brand)
             .shadow(vec![gpui::BoxShadow {
@@ -646,7 +648,7 @@ impl Folio {
             .into_any_element()
     }
 
-    /// The tabs, the results and the keys, hung below the field.
+    /// The tabs and the results, hung below the field.
     fn palette_dropdown(&mut self, _: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = theme(cx).clone();
         let found = self.search(cx);
@@ -802,34 +804,12 @@ impl Folio {
             }));
         }
 
-        let hint = |k: gpui::Div, what: &'static str| div().flex().items_center().gap(t.space.xs).child(k).child(what);
-        let footer = div()
-            .flex()
-            .items_center()
-            .gap(t.space.lg)
-            .px(t.space.md)
-            .py(t.space.sm)
-            .border_t_1()
-            .border_color(t.colors.border)
-            .bg(t.colors.surface_sunk)
-            // GPUI clips to a square, not to the panel's rounded corners:
-            // the footer rounds its own, inside the panel's 1px border.
-            .rounded_b(t.radius.card - px(1.))
-            .text_size(t.text.micro)
-            .text_color(t.colors.text_subtle)
-            .child(hint(keys(&t, "↑ ↓"), "move"))
-            .child(hint(keys(&t, "Enter"), "open"))
-            .child(hint(keys(&t, "Esc"), "close"))
-            .child(div().flex_1())
-            .child(hint(keys(&t, "Tab"), "next scope"))
-            .child(hint(keys(&t, "> / @"), "narrow"));
-
         div()
             .absolute()
             .top(t.size.bar_control + px(8.))
             // Wider than the field, centred under it, so nothing gets cut.
-            .left(px(-80.))
-            .right(px(-80.))
+            .left(px(-70.))
+            .right(px(-70.))
             .child(motion::edge_draw(
                 div()
                     .id("palette")
@@ -846,8 +826,7 @@ impl Folio {
                     .cursor(CursorStyle::Arrow)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(tabs)
-                    .child(list)
-                    .child(footer),
+                    .child(list),
                 ("palette-open", opened),
                 t.colors.brand,
                 &t,

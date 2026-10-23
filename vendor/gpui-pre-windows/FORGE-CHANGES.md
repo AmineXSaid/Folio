@@ -16,3 +16,9 @@ This is `gpui-pre-windows` 0.3.8 (Apache-2.0, `LICENSE-APACHE`), used through
 - `src/window.rs`, `src/events.rs`: Direct Manipulation (touchpad gestures) is
   optional. Where it can't start, the window opens without it instead of
   failing ("initializing Direct Manipulation").
+- Folio's own, not from forge-gpui: `src/window.rs` (`set_window_icons`),
+  `src/events.rs` (`WM_DPICHANGED`):
+  each window gets the app icon at the exact big and small sizes for its
+  display scale with `WM_SETICON`, again when the scale changes. Upstream
+  only sets the class icon, one size, which Windows stretches for the
+  taskbar and title bar (blurry at 125 % and up).

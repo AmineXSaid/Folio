@@ -573,6 +573,7 @@ impl WindowsWindow {
         register_drag_drop(&this)?;
         set_non_rude_hwnd(hwnd, true);
         configure_dwm_dark_mode(hwnd, appearance);
+        set_window_icons(hwnd);
         this.state.border_offset.update(hwnd)?;
         let placement =
             retrieve_window_placement(hwnd, display, params.bounds, &this.state.border_offset)?;
@@ -1493,6 +1494,31 @@ pub(crate) fn window_from_hwnd(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
         inner.upgrade()
     } else {
         None
+    }
+}
+
+/// Gives the window the app's icon (resource 1) at exactly the sizes its
+/// display scale asks for, big (taskbar, Alt+Tab) and small (title bar),
+/// so Windows never stretches one; called again when the scale changes.
+/// The class icon alone is one size, stretched everywhere else. Does
+/// nothing when the program has no icon.
+pub(crate) fn set_window_icons(hwnd: HWND) {
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let module = get_module_handle();
+    for (which, metric) in [(ICON_BIG, SM_CXICON), (ICON_SMALL, SM_CXSMICON)] {
+        let size = unsafe { GetSystemMetricsForDpi(metric, dpi) };
+        let Ok(icon) = (unsafe {
+            LoadImageW(Some(module.into()), PCWSTR(1 as _), IMAGE_ICON, size, size, LR_DEFAULTCOLOR)
+        }) else {
+            return;
+        };
+        let old = unsafe {
+            SendMessageW(hwnd, WM_SETICON, Some(WPARAM(which as usize)), Some(LPARAM(icon.0 as isize)))
+        };
+        // The one this replaces was loaded here too, and is ours to free.
+        if old.0 != 0 {
+            unsafe { DestroyIcon(HICON(old.0 as _)) }.log_err();
+        }
     }
 }
 

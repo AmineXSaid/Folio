@@ -9,7 +9,7 @@
 //! Everything clickable in the bar blocks the drag area under it.
 
 use gpui::component::InteractiveElementExt;
-use gpui::{div, prelude::*, px, Context, MouseButton, Window, WindowControlArea};
+use gpui::{div, prelude::*, px, AnimationExt as _, Context, MouseButton, Window, WindowControlArea};
 
 use super::app::{Folio, Screen};
 use super::*;
@@ -24,17 +24,6 @@ impl Folio {
             Screen::Settings => Some("Settings".into()),
             Screen::Bin => Some("Trash & archive".into()),
             Screen::Transfer => Some("Sync & export".into()),
-        };
-        // Where Google Drive sync is at, at a glance; opens Sync & export.
-        let (sync_icon, sync_dot) = {
-            use super::sync::DriveState as S;
-            match self.sync.state {
-                S::Off | S::SigningIn => ("icons/cloud.svg", None),
-                S::Idle => ("icons/cloud.svg", Some(t.colors.ok)),
-                S::Syncing => ("icons/refresh-cw.svg", Some(t.colors.brand)),
-                S::Choice => ("icons/cloud.svg", Some(t.colors.alert)),
-                S::Error(_) => ("icons/cloud-off.svg", Some(t.colors.danger)),
-            }
         };
         // Everything in the bar is small and quiet: 28px controls, 14px icons.
         let bar_button = |id: &'static str, path: &'static str| {
@@ -52,18 +41,91 @@ impl Folio {
                 .active(|d| d.bg(t.colors.border))
                 .child(icon(path, t.size.icon_sm, t.colors.text_muted))
         };
-        let sync_button = bar_button("sync", sync_icon)
-            .relative()
+        // Tools that belong together sit in a sunk tray with a hairline
+        // edge; the one under the pointer rises out of it, as a key would.
+        let tray = |id: &'static str| {
+            div()
+                .id(id)
+                .occlude()
+                .h(t.size.bar_control)
+                .p(px(2.))
+                .flex()
+                .items_center()
+                .gap(px(2.))
+                .rounded(t.radius.button)
+                .bg(t.colors.surface_sunk)
+                .border_1()
+                .border_color(t.colors.border)
+        };
+        let glyph = |id: &'static str, path: &'static str| {
+            let ink = t.colors.text;
+            icon(path, t.size.icon_sm, t.colors.text_muted).group_hover(id, move |s| s.text_color(ink))
+        };
+        let key = |id: &'static str, glyph: gpui::AnyElement, tip: String, live: bool| {
+            div()
+                .id(id)
+                .group(id)
+                .relative()
+                .size(t.size.bar_control - px(6.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(t.radius.small)
+                .child(glyph)
+                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                .map(|d| {
+                    if live {
+                        d.cursor_pointer()
+                            .hover(|d| d.bg(t.colors.surface).shadow(t.shadow_raised()))
+                            .active(|d| d.bg(t.colors.hover).shadow(Vec::new()))
+                    } else {
+                        // Nothing to do yet: faded, and the pointer says so.
+                        d.opacity(0.4)
+                    }
+                })
+        };
+
+        // Where Google Drive sync is at, at a glance; opens Sync & export.
+        let (sync_icon, sync_dot, sync_tip) = {
+            use super::sync::DriveState as S;
+            match &self.sync.state {
+                S::Off => ("icons/cloud.svg", None, "Sync with Google Drive".to_string()),
+                S::SigningIn => ("icons/cloud.svg", None, "Signing in to Google…".to_string()),
+                S::Idle => (
+                    "icons/cloud.svg",
+                    Some(t.colors.ok),
+                    match self.sync.synced_at {
+                        Some(at) => format!("Google Drive · synced {}", crate::time::ago(at, crate::time::now()).replace("Yesterday", "yesterday")),
+                        None => "Google Drive · on".to_string(),
+                    },
+                ),
+                S::Syncing => ("icons/refresh-cw.svg", Some(t.colors.brand), "Syncing with Google Drive…".to_string()),
+                S::Choice => ("icons/cloud.svg", Some(t.colors.alert), "Google Drive is waiting for you".to_string()),
+                S::Error(e) => ("icons/cloud-off.svg", Some(t.colors.danger), format!("Sync stopped: {e}")),
+            }
+        };
+        let sync_glyph = glyph("sync", sync_icon);
+        // While it syncs, the arrows go round.
+        let sync_glyph = if self.sync.state == super::sync::DriveState::Syncing && !super::motion::reduced() {
+            sync_glyph
+                .with_animation("sync-spin", gpui::Animation::new(std::time::Duration::from_millis(1100)).repeat(), |s, k| {
+                    s.with_transformation(gpui::Transformation::rotate(gpui::percentage(k)))
+                })
+                .into_any_element()
+        } else {
+            sync_glyph.into_any_element()
+        };
+        let sync_button = key("sync", sync_glyph, sync_tip, true)
             .children(sync_dot.map(|c| {
                 div()
                     .absolute()
-                    .top(px(5.))
-                    .right(px(5.))
-                    .size(px(6.))
+                    .bottom(px(3.))
+                    .right(px(3.))
+                    .size(px(7.))
                     .rounded(t.radius.full)
                     .bg(c)
                     .border_1()
-                    .border_color(t.colors.surface)
+                    .border_color(t.colors.surface_sunk)
             }))
             .on_click(cx.listener(|this, _, _, cx| this.open_transfer(cx)));
         let on_sheet = self.screen == Screen::Sheet;
@@ -163,17 +225,19 @@ impl Folio {
             .justify_center()
             .child(field);
 
-        let new_button = |id: &'static str, label: &'static str| {
+        // The screen's main action: the one coloured thing in the bar.
+        let new_button = |id: &'static str, label: &'static str, tip: String| {
             div()
                 .id(id)
                 .occlude()
-                .h(px(26.))
-                .px(t.space.md)
+                .h(t.size.bar_control)
+                .pl(px(10.))
+                .pr(t.space.md)
                 .ml(t.space.xs)
                 .flex()
                 .items_center()
-                .gap(t.space.xs)
-                .rounded(t.radius.small)
+                .gap(px(6.))
+                .rounded(t.radius.button)
                 .bg(t.colors.primary)
                 .shadow(t.shadow_primary())
                 .hover(|d| d.bg(t.colors.primary_hover))
@@ -182,25 +246,48 @@ impl Folio {
                 .text_size(t.text.caption)
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .cursor_pointer()
-                .child(icon("icons/plus.svg", px(12.), t.colors.primary_fg))
+                .child(icon("icons/plus.svg", px(14.), t.colors.primary_fg))
                 .child(label)
+                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
         };
+        let (can_undo, can_redo) = (!self.undo.is_empty() && self.editing.is_none(), !self.redo.is_empty());
         let right = div()
             .id("bar-actions")
             .flex()
             .items_center()
-            .gap(px(2.))
+            .gap(t.space.sm)
             .when(on_sheet, |d| {
-                d.child(bar_button("undo", "icons/undo-2.svg").on_click(cx.listener(|this, _, _, cx| this.undo(cx))))
-                    .child(bar_button("redo", "icons/redo-2.svg").on_click(cx.listener(|this, _, _, cx| this.redo(cx))))
-                    .child(div().w(px(1.)).h(px(16.)).mx(t.space.xs).bg(t.colors.border))
+                d.child(
+                    tray("history")
+                        .child(
+                            key("undo", glyph("undo", "icons/undo-2.svg").into_any_element(), format!("Undo  {}", shortcut("Z")), can_undo)
+                                .on_click(cx.listener(|this, _, _, cx| this.undo(cx))),
+                        )
+                        .child(
+                            key("redo", glyph("redo", "icons/redo-2.svg").into_any_element(), format!("Redo  {}", shortcut("Y")), can_redo)
+                                .on_click(cx.listener(|this, _, _, cx| this.redo(cx))),
+                        ),
+                )
             })
-            .child(sync_button)
-            .child(bar_button("theme", theme_icon).on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx))))
+            .child(
+                tray("look").child(sync_button).child(
+                    key(
+                        "theme",
+                        glyph("theme", theme_icon).into_any_element(),
+                        format!("{} mode  {}", if t.is_dark { "Light" } else { "Dark" }, shortcut("Shift+L")),
+                        true,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx))),
+                ),
+            )
             .child(if on_sheet {
-                new_button("new-note", "Note").on_click(cx.listener(|this, _, window, cx| this.new_note(window, cx))).into_any_element()
+                new_button("new-note", "Note", "New note  N".into())
+                    .on_click(cx.listener(|this, _, window, cx| this.new_note(window, cx)))
+                    .into_any_element()
             } else {
-                new_button("new-sheet", "Sheet").on_click(cx.listener(|this, _, window, cx| this.new_sheet_dialog(window, cx))).into_any_element()
+                new_button("new-sheet", "Sheet", format!("New sheet  {}", shortcut("Shift+N")))
+                    .on_click(cx.listener(|this, _, window, cx| this.new_sheet_dialog(window, cx)))
+                    .into_any_element()
             });
 
         let controls = window_controls(window, &t);

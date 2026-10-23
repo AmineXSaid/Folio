@@ -887,6 +887,7 @@ impl WindowsWindowInner {
         let new_scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
         self.state.scale_factor.set(new_scale_factor);
         self.state.border_offset.update(handle).log_err();
+        set_window_icons(handle);
 
         if let Some(dm) = &self.state.direct_manipulation {
             dm.set_scale_factor(new_scale_factor);

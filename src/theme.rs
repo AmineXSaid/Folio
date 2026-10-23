@@ -93,6 +93,8 @@ pub struct Sizes {
     pub sidebar: Pixels,   // 236
     pub topbar: Pixels,    // 40: the top bar, which is the title bar
     pub bar_control: Pixels, // 28: buttons and the search field in it
+    pub search: Pixels,    // 260: the title bar's search field, closed
+    pub search_open: Pixels, // 420: and open, while you type
     pub control: Pixels,   // 32: buttons and inputs
     pub icon_sm: Pixels,   // 14
     pub icon: Pixels,      // 16
@@ -172,6 +174,8 @@ const SIZE: Sizes = Sizes {
     sidebar: px(236.),
     topbar: px(40.),
     bar_control: px(28.),
+    search: px(260.),
+    search_open: px(420.),
     control: px(32.),
     icon_sm: px(14.),
     icon: px(16.),
@@ -552,6 +556,7 @@ impl Theme {
         for p in [
             &mut z.sidebar, &mut z.topbar, &mut z.control, &mut z.icon_sm, &mut z.icon, &mut z.icon_lg, &mut z.dot,
             &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.card_min,
+            &mut z.search, &mut z.search_open,
         ] {
             m(p);
         }
