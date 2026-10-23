@@ -125,8 +125,19 @@ impl Folio {
                 &t,
             ))
             .child(setting(
+                "Note type",
+                "A sheet's first note; later ones follow the note you changed last",
+                segmented(
+                    "s-style",
+                    &NoteStyle::ALL.map(|st| (st.label(), s.default_style == st)),
+                    &t,
+                    l(|s, i| s.default_style = NoteStyle::ALL[i]),
+                ),
+                &t,
+            ))
+            .child(setting(
                 "Handwriting",
-                "The typeface new notes are written in",
+                "The typeface of a sheet's first note; later notes follow the last one changed",
                 segmented(
                     "s-font",
                     &[("Sans", s.default_font == NoteFont::Sans), ("Hand", s.default_font == NoteFont::Hand), ("Mono", s.default_font == NoteFont::Mono)],

@@ -31,6 +31,37 @@ fn sep(t: &Theme) -> Div {
     div().h(px(1.)).my(t.space.xs).bg(t.colors.border)
 }
 
+/// A note type to pick: its icon and a short name.
+fn style_chip(id: impl Into<gpui::ElementId>, st: NoteStyle, on: bool, t: &Theme) -> Stateful<Div> {
+    let path = match st {
+        NoteStyle::Card => "icons/note-card.svg",
+        NoteStyle::Taped => "icons/note-taped.svg",
+        NoteStyle::Cheat => "icons/note-cheat.svg",
+        NoteStyle::Index => "icons/note-index.svg",
+    };
+    let short = match st {
+        NoteStyle::Card => "Card",
+        NoteStyle::Taped => "Taped",
+        NoteStyle::Cheat => "Cheat",
+        NoteStyle::Index => "Index",
+    };
+    div()
+        .id(id)
+        .h(px(26.))
+        .px(px(6.))
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .rounded(t.radius.small)
+        .border_1()
+        .border_color(if on { t.colors.brand } else { t.colors.border })
+        .text_size(t.text.caption)
+        .cursor_pointer()
+        .hover(|d| d.bg(t.colors.hover))
+        .child(icon(path, t.size.icon_sm, t.colors.text_muted))
+        .child(short)
+}
+
 fn caption(text: &'static str, t: &Theme) -> Div {
     div().px(t.space.sm).pt(t.space.xs).pb(px(2.)).text_size(t.text.micro).text_color(t.colors.text_subtle).child(text)
 }
@@ -107,8 +138,17 @@ impl Folio {
                         .child(z.label())
                         .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.text_size = z)))
                 })));
+                // The note's type; for every selected note when it's one of them.
+                let targets = if self.is_selected(super::app::Selection::Sticker(id)) { self.selected_notes() } else { vec![id] };
+                let styles = div().flex().gap(px(4.)).px(t.space.sm).pb(t.space.xs).children(NoteStyle::ALL.iter().map(|&st| {
+                    let on = s.style == st;
+                    let targets = targets.clone();
+                    style_chip(("m-style", st as usize), st, on, &t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_style(&targets, st, cx)))
+                }));
                 items.push(papers.into_any_element());
                 items.push(fonts.into_any_element());
+                items.push(styles.into_any_element());
                 items.push(sep(&t).into_any_element());
                 items.push(
                     row("m-edit", "icons/pencil.svg", "Edit", Some("Enter".into()), &t)
@@ -120,6 +160,15 @@ impl Folio {
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.menu = None;
                             this.add_task(id, window, cx)
+                        }))
+                        .into_any_element(),
+                );
+                let targets = if self.is_selected(super::app::Selection::Sticker(id)) { self.selected_notes() } else { vec![id] };
+                items.push(
+                    row("m-markdown", "icons/wand-sparkles.svg", "Turn into Markdown", Some(shortcut("Shift+T")), &t)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.markdown_notes(&targets, cx)
                         }))
                         .into_any_element(),
                 );
@@ -274,6 +323,21 @@ impl Folio {
                         }))
                         .into_any_element(),
                 );
+                // Or a note of a given type, straight away.
+                items.push(
+                    div()
+                        .flex()
+                        .gap(px(4.))
+                        .px(t.space.sm)
+                        .pb(t.space.xs)
+                        .children(NoteStyle::ALL.iter().map(|&st| {
+                            style_chip(("m-new-style", st as usize), st, false, &t).on_click(cx.listener(move |this, _, window, cx| {
+                                this.menu = None;
+                                this.new_note_styled(at_w, st, window, cx)
+                            }))
+                        }))
+                        .into_any_element(),
+                );
                 items.push(
                     row("m-text", "icons/type.svg", "Write on the sheet here", None, &t)
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -295,6 +359,14 @@ impl Folio {
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.menu = None;
                             this.paste(false, cx)
+                        }))
+                        .into_any_element(),
+                );
+                items.push(
+                    row("m-paste-md", "icons/wand-sparkles.svg", "Paste as Markdown", Some(shortcut("Shift+V")), &t)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            this.paste(true, cx)
                         }))
                         .into_any_element(),
                 );

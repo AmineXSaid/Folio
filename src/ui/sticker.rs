@@ -161,14 +161,18 @@ pub fn note_body(
     let mut task = 0usize;
     for block in blocks(&s.body) {
         match block {
-            Block::Text(text) => body.push(
-                div()
-                    .text_size(px(13. * k))
-                    .line_height(px(lh * k))
-                    .text_color(t.colors.text_body)
-                    .child(md_view(next_id(), &text, t))
-                    .into_any_element(),
-            ),
+            Block::Text(text) => {
+                // An index card is one thing per line: lines stay as typed.
+                let text = if s.style == NoteStyle::Index { crate::markdown::keep_lines(&text) } else { text };
+                body.push(
+                    div()
+                        .text_size(px(13. * k))
+                        .line_height(px(lh * k))
+                        .text_color(t.colors.text_body)
+                        .child(md_view(next_id(), &text, t))
+                        .into_any_element(),
+                )
+            }
             Block::Tasks(items) => {
                 let rows = items.into_iter().map(|(done, text)| {
                     let n = task;

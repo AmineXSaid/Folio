@@ -1117,6 +1117,16 @@ impl Folio {
         self.begin_edit(id, true, window, cx);
     }
 
+    /// A new note of type `style` at `at` (world), being typed into.
+    pub fn new_note_styled(&mut self, at: Vec2, style: NoteStyle, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_note_at(at, window, cx);
+        // Part of the new note's undo step.
+        if let Some(s) = self.editing.and_then(|ed| self.board.find_note_mut(ed.id)) {
+            s.style = style;
+        }
+        cx.notify();
+    }
+
     /// A new note in the middle of the view.
     pub fn new_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.screen != Screen::Sheet {

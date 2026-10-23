@@ -66,6 +66,29 @@ pub fn blocks(body: &str) -> Vec<Block> {
     out
 }
 
+/// Each line on a line of its own, as typed (Markdown would run them into
+/// one paragraph): a hard break at the end of every line that another
+/// follows, outside code.
+pub fn keep_lines(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut fence = false;
+    let mut out = String::with_capacity(text.len() + lines.len() * 2);
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim_start().starts_with("```") {
+            fence = !fence;
+        }
+        out.push_str(line);
+        let next = lines.get(i + 1);
+        if !fence && !line.trim().is_empty() && next.is_some_and(|n| !n.trim().is_empty()) && !line.ends_with("  ") {
+            out.push_str("  ");
+        }
+        if next.is_some() {
+            out.push('\n');
+        }
+    }
+    out
+}
+
 fn flush(text: &mut Vec<&str>, out: &mut Vec<Block>) {
     let t = text.join("\n");
     text.clear();
@@ -708,6 +731,13 @@ mod tests {
         assert_eq!(label("> Memory trick: who controls"), (Some("Memory trick".into()), "who controls".into()));
         assert_eq!(label("> **Each step** makes it real"), (None, "**Each step** makes it real".into()));
         assert_eq!(label("> just text"), (None, "just text".into()));
+    }
+
+    #[test]
+    fn lines_stay_as_typed() {
+        assert_eq!(keep_lines("milk\neggs\n\nbread"), "milk  \neggs\n\nbread");
+        assert_eq!(keep_lines("```\na\nb\n```"), "```\na\nb\n```");
+        assert_eq!(keep_lines("one  \ntwo"), "one  \ntwo");
     }
 
     #[test]

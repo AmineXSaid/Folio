@@ -586,16 +586,16 @@ impl Folio {
             .child(write("e-code", "icons/code.svg", "Code", "E", Format::Code))
             .child(write("e-mark", "icons/highlighter.svg", "Highlight", "Shift+M", Format::Highlight))
             .child(divider())
-            .child(write("e-bullets", "icons/list.svg", "Bullets", "Shift+8", Format::Bullets))
-            .child(write("e-numbers", "icons/list-ordered.svg", "Numbers", "Shift+7", Format::Numbers))
-            .child(write("e-task", "icons/list-checks.svg", "Tasks", "Shift+9", Format::Tasks))
+            .child(write("e-bullets", "icons/list.svg", "Bullets", "Shift+B", Format::Bullets))
+            .child(write("e-numbers", "icons/list-ordered.svg", "Numbers", "Shift+O", Format::Numbers))
+            .child(write("e-task", "icons/list-checks.svg", "Tasks", "Shift+C", Format::Tasks))
             .child(divider())
             .child(
                 bar_btn("e-table", "icons/table.svg")
                     .tooltip(tip("A table: | between cells".into()))
                     .on_click(cx.listener(|this, _, window, cx| this.format_editing(Format::Table, window, cx))),
             )
-            .child(write("e-callout", "icons/lightbulb.svg", "Remember box", "Shift+.", Format::Callout))
+            .child(write("e-callout", "icons/lightbulb.svg", "Remember box", "Shift+R", Format::Callout))
             .child(divider())
             .child(
                 div()
