@@ -41,10 +41,22 @@ def svg(s: int) -> str:
         second = f'<rect x="{left + inset}" y="{y2}" width="{round(line_w * 0.6)}" height="{sw}" fill="#111111"/>'
     # Straight edges snap to pixels; the fold's diagonal and the round
     # corners are smoothed.
+    # The same light as folio-icon.svg: the tile and the paper shade from
+    # top to bottom.
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{s}" height="{s}" viewBox="0 0 {s} {s}">
-  <rect width="{s}" height="{s}" rx="{radius}" fill="#E5487A"/>
-  <path d="{outline}" fill="#F1EBDD"/>
-  <path d="{corner}" fill="#DDD5C4"/>
+  <defs>
+    <linearGradient id="tile" x1="0.2" y1="0" x2="0.55" y2="1">
+      <stop offset="0" stop-color="#EF5E8E"/>
+      <stop offset="1" stop-color="#D9386D"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBF7EF"/>
+      <stop offset="1" stop-color="#EDE5D4"/>
+    </linearGradient>
+  </defs>
+  <rect width="{s}" height="{s}" rx="{radius}" fill="url(#tile)"/>
+  <path d="{outline}" fill="url(#paper)"/>
+  <path d="{corner}" fill="#D6CCB8"/>
   <path d="{outline} {crease}" fill="none" stroke="#111111" stroke-width="{sw}" stroke-linejoin="round"/>
   <g shape-rendering="crispEdges">
     <rect x="{left + inset}" y="{bar_y}" width="{span}" height="{bar_h}" fill="#E5487A"/>

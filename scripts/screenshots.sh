@@ -72,7 +72,7 @@ for mode in light dark; do
   xdotool mousemove 640 660 mousedown 1; sleep 0.2; xdotool mousemove 640 400; xdotool mousemove 640 250 mouseup 1; sleep 0.5
   key t; xdotool mousemove 120 360 click 1; sleep 0.8
   xdotool type --delay 15 "Software-Defined Vehicles: the car is a **computer** on wheels, kept up to date over the air."
-  xdotool mousemove 167 311 click 1; shot text; key Escape; key v
+  xdotool mousemove 421 281 click 1; shot text; key Escape; key v
   key ctrl+k; xdotool type --delay 20 "studio"; key Down Return
   shot sheet
   # A note's menu, then typing into it.

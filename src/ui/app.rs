@@ -439,6 +439,8 @@ pub struct Folio {
     pub naming: bool,
     /// Text being written straight on the sheet.
     pub label_edit: Option<Id>,
+    /// Every ink, open under the bar of the text being written.
+    pub label_palette: bool,
     pub label_input: Entity<TextareaState>,
     pub desktop: crate::desktop::Desktop,
     pub sync: super::sync::DriveSync,
@@ -629,6 +631,7 @@ impl Folio {
             client_input,
             secret_input,
             label_edit: None,
+            label_palette: false,
             label_input,
             desktop: crate::desktop::Desktop::default(),
             sync: Default::default(),
@@ -1587,6 +1590,7 @@ impl Folio {
     /// gone if it was left empty.
     pub fn finish_label(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.label_edit.take() else { return };
+        self.label_palette = false;
         let text = self.label_input.read(cx).value().trim_end().to_string();
         let before = self.before.take().unwrap_or_else(|| self.board.clone());
         let sheet = self.board.sheet_mut();

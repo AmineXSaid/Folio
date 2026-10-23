@@ -138,8 +138,9 @@ impl Folio {
         Some(div().absolute().inset_0().child(field).child(bar).into_any_element())
     }
 
-    /// The bar over text being written: marks and lists on the first row
-    /// with the typefaces and sizes, every ink on the second.
+    /// The bar over text being written: marks, lists and the inks at hand
+    /// on the first row (the palette button opens every ink), the
+    /// typefaces and sizes on the second.
     fn label_bar(&self, l: &Label, at: Vec2, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
         let id = l.id;
         let tip = |text: String| move |window: &mut Window, cx: &mut gpui::App| super::tip(text.clone(), window, cx);
@@ -213,6 +214,41 @@ impl Folio {
                 this.finish_label(cx);
                 window.focus(&this.focus, cx);
             }));
+        // The inks at hand, as in the tool dock; the palette button opens
+        // every ink.
+        let swatch = |ink: Ink, d: f32| {
+            let on = l.ink == ink;
+            div()
+                .id(("l-ink", ink as usize))
+                .size(px(d + 8.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(t.radius.full)
+                .cursor_pointer()
+                .border_2()
+                .border_color(if on { t.ink(ink) } else { gpui::transparent_black() })
+                .hover(|d| d.bg(t.colors.hover))
+                .child(div().size(px(d)).rounded(t.radius.full).bg(t.ink(ink)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    // The next text is written in it too.
+                    this.ink = ink;
+                    this.label_palette = false;
+                    this.set_label(id, cx, |l| l.ink = ink);
+                }))
+        };
+        let mut at_hand: Vec<Ink> = Ink::QUICK.to_vec();
+        if !at_hand.contains(&l.ink) {
+            at_hand.push(l.ink);
+        }
+        let open = self.label_palette;
+        let palette = chosen(button("l-palette".into()), open)
+            .child(icon("icons/palette.svg", t.size.icon_sm, if open { t.colors.brand } else { t.colors.text_muted }))
+            .tooltip(tip("Every ink".into()))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.label_palette = !this.label_palette;
+                cx.notify();
+            }));
         let writing = row()
             .child(write("l-bold", "icons/bold.svg", "Bold", "B", Format::Bold))
             .child(write("l-italic", "icons/italic.svg", "Italic", "I", Format::Italic))
@@ -223,32 +259,45 @@ impl Folio {
             .child(write("l-numbers", "icons/list-ordered.svg", "Numbers", "Shift+O", Format::Numbers))
             .child(write("l-task", "icons/list-checks.svg", "Tasks", "Shift+C", Format::Tasks))
             .child(divider())
+            .child(row().gap(px(2.)).children(at_hand.into_iter().map(|ink| swatch(ink, 12.))))
+            .child(palette);
+        let look_row = row()
             .children(fonts)
             .child(slanted)
             .child(divider())
             .children(sizes)
             .child(div().flex_1())
             .child(done);
-        let inks = row().gap(px(4.)).px(px(4.)).children(Ink::ALL.iter().map(|&ink| {
-            let on = l.ink == ink;
-            div()
-                .id(("l-ink", ink as usize))
-                .size(px(20.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(t.radius.full)
-                .cursor_pointer()
-                .border_2()
-                .border_color(if on { t.ink(ink) } else { gpui::transparent_black() })
-                .hover(|d| d.bg(t.colors.hover))
-                .child(div().size(px(12.)).rounded(t.radius.full).bg(t.ink(ink)))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    // The next text is written in it too.
-                    this.ink = ink;
-                    this.set_label(id, cx, |l| l.ink = ink);
-                }))
-        }));
+        // Every ink, in a palette hung under the bar.
+        let every = open.then(|| {
+            super::motion::rise_in(
+                div()
+                    .id("l-every-ink")
+                    .absolute()
+                    .top_full()
+                    .right_0()
+                    .mt(px(6.))
+                    .w(px(196.))
+                    .p(t.space.sm)
+                    .flex()
+                    .flex_col()
+                    .gap(t.space.sm)
+                    .rounded(t.radius.card)
+                    .bg(t.colors.surface)
+                    .border_1()
+                    .border_color(t.colors.border)
+                    .shadow(t.shadow_float())
+                    // Hung outside the bar: it keeps the caret in the text too.
+                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    })
+                    .child(div().text_size(t.text.micro).font_weight(gpui::FontWeight::SEMIBOLD).text_color(t.colors.text_subtle).child("INK"))
+                    .child(div().flex().flex_wrap().gap(px(4.)).children(Ink::ALL.iter().map(|&ink| swatch(ink, 16.)))),
+                "l-every-ink-in",
+                t,
+            )
+        });
         div()
             .absolute()
             .left(px(at.x))
@@ -268,6 +317,7 @@ impl Folio {
                 cx.stop_propagation();
             })
             .child(writing)
-            .child(inks)
+            .child(look_row)
+            .children(every)
     }
 }

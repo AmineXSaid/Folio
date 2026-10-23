@@ -1,20 +1,50 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
   <!-- Folio: a pinned sticky note with a peeled corner and a highlighted
-       line, cream in a heavy ink outline on a flat pink tile, with a light
-       shadow behind the tile. -->
+       line, cream in a heavy ink outline on a pink tile, with a light
+       shadow behind the tile. The padded logo (README, sidebar); the app
+       icon is folio-icon.svg. -->
   <defs>
+    <linearGradient id="tile" x1="0.2" y1="0" x2="0.55" y2="1">
+      <stop offset="0" stop-color="#EF5E8E"/>
+      <stop offset="1" stop-color="#D9386D"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.28" cy="0.06" r="0.8">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBF7EF"/>
+      <stop offset="1" stop-color="#EDE5D4"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E7DECC"/>
+      <stop offset="1" stop-color="#CABFAA"/>
+    </linearGradient>
+    <radialGradient id="pin" cx="0.36" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#4B4B4B"/>
+      <stop offset="0.55" stop-color="#161616"/>
+      <stop offset="1" stop-color="#000000"/>
+    </radialGradient>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
       <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#000000" flood-opacity="0.18"/>
     </filter>
+    <filter id="lift" x="-25%" y="-25%" width="150%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="11" flood-color="#6E0F31" flood-opacity="0.34"/>
+    </filter>
   </defs>
-  <rect x="40" y="36" width="432" height="432" rx="98" fill="#E5487A" filter="url(#shadow)"/>
-  <g>
+  <g filter="url(#shadow)">
+    <rect x="40" y="36" width="432" height="432" rx="98" fill="url(#tile)"/>
+  </g>
+  <rect x="40" y="36" width="432" height="432" rx="98" fill="url(#glow)"/>
+  <rect x="43" y="39" width="426" height="426" rx="95" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="6"/>
+  <g filter="url(#lift)">
     <g transform="rotate(-6 256 256)" stroke="#111111" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
-      <path d="M128 128 H384 V318 L318 384 H128 Z" fill="#F1EBDD"/>
-      <path d="M384 318 H330 Q318 318 318 330 V384 Z" fill="#DDD5C4"/>
+      <path d="M128 128 H384 V318 L318 384 H128 Z" fill="url(#paper)"/>
+      <path d="M384 318 H330 Q318 318 318 330 V384 Z" fill="url(#fold)"/>
       <rect x="160" y="204" width="168" height="34" rx="4" fill="#E5487A" stroke-width="10"/>
       <path d="M168 176 H300 M168 276 H286 M168 322 H248" fill="none"/>
     </g>
-    <circle cx="256" cy="128" r="24" fill="#111111"/>
   </g>
+  <circle cx="256" cy="128" r="24" fill="url(#pin)"/>
+  <circle cx="248.5" cy="119.5" r="6.5" fill="#FFFFFF" fill-opacity="0.5"/>
 </svg>
