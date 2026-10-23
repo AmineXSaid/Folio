@@ -2,7 +2,7 @@
 //! area, a label. Sub-pages (Move to, Remind me, Icon, Colour) open in
 //! place with a way back.
 
-use gpui::{anchored, deferred, div, prelude::*, px, Context, MouseButton, SharedString, Stateful, Div, Window};
+use gpui::{anchored, canvas, deferred, div, prelude::*, px, Context, MouseButton, SharedString, Stateful, Div, Window};
 
 use super::app::{Folio, MenuKind, MenuPage, Screen};
 use super::*;
@@ -314,6 +314,106 @@ impl Folio {
                     );
                 }
             }
+            (MenuKind::Canvas(_), MenuPage::Background) => {
+                let bd = self.sheet().backdrop.clone();
+                items.push(back("Background", cx).into_any_element());
+                items.push(sep(&t).into_any_element());
+                items.push(caption("Pattern", &t).into_any_element());
+                // A sample of each pattern, on this sheet's colour.
+                let paper = t.tint(bd.tint);
+                let (dot, line) = (t.colors.canvas_dot, t.colors.canvas_line);
+                items.push(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(6.))
+                        .px(t.space.sm)
+                        .pb(t.space.sm)
+                        .children(Pattern::ALL.iter().map(|&p| {
+                            let on = bd.pattern == p;
+                            let sample = canvas(
+                                |_, _, _| {},
+                                move |b, _, window, _| super::board::paint_pattern(b, Camera { pan: v2(5., 5.), zoom: 1.75 }, 8., p, dot, line, window),
+                            )
+                            .absolute()
+                            .inset_0();
+                            div()
+                                .id(("m-pattern", p as usize))
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap(px(3.))
+                                .cursor_pointer()
+                                .child(
+                                    div()
+                                        .relative()
+                                        .w(px(70.))
+                                        .h(px(46.))
+                                        .rounded(t.radius.small)
+                                        .overflow_hidden()
+                                        .bg(paper)
+                                        .border_1()
+                                        .border_color(t.colors.border)
+                                        .when(on, |d| d.border_2().border_color(t.colors.brand))
+                                        .hover(|d| d.border_color(t.colors.text_subtle))
+                                        .child(sample),
+                                )
+                                .child(div().text_size(t.text.micro).text_color(if on { t.colors.brand_on_tint } else { t.colors.text_muted }).child(p.label()))
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_backdrop(cx, |b| b.pattern = p)))
+                        }))
+                        .into_any_element(),
+                );
+                items.push(caption("Colour", &t).into_any_element());
+                items.push(
+                    div()
+                        .flex()
+                        .gap(px(6.))
+                        .px(t.space.sm)
+                        .pb(t.space.sm)
+                        .children(Tint::ALL.iter().map(|&tint| {
+                            let on = bd.tint == tint;
+                            div()
+                                .id(("m-tint", tint as usize))
+                                .size(px(24.))
+                                .rounded(t.radius.full)
+                                .bg(t.tint(tint))
+                                .border_1()
+                                .border_color(t.colors.border)
+                                .when(on, |d| d.border_2().border_color(t.colors.brand))
+                                .cursor_pointer()
+                                .hover(|d| d.border_color(t.colors.text_subtle))
+                                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tint.label()).build(window, cx))
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_backdrop(cx, |b| b.tint = tint)))
+                        }))
+                        .into_any_element(),
+                );
+                items.push(sep(&t).into_any_element());
+                let has_picture = bd.image.is_some();
+                items.push(
+                    row("m-bg-pic", "icons/image.svg", if has_picture { "Another picture…" } else { "Picture or SVG from your computer…" }, None, &t)
+                        .on_click(cx.listener(|this, _, _, cx| this.pick_backdrop(cx)))
+                        .into_any_element(),
+                );
+                if has_picture {
+                    let soft = bd.soften;
+                    items.push(
+                        row("m-bg-soften", if soft { "icons/eye-off.svg" } else { "icons/eye.svg" }, "Soften the picture", Some(if soft { "On" } else { "Off" }.into()), &t)
+                            .on_click(cx.listener(move |this, _, _, cx| this.set_backdrop(cx, |b| b.soften = !soft)))
+                            .into_any_element(),
+                    );
+                    items.push(
+                        row("m-bg-nopic", "icons/x.svg", "Remove the picture", None, &t)
+                            .on_click(cx.listener(|this, _, _, cx| this.set_backdrop(cx, |b| b.image = None)))
+                            .into_any_element(),
+                    );
+                }
+                items.push(sep(&t).into_any_element());
+                items.push(
+                    row("m-bg-all", "icons/layers.svg", "Use on every sheet", None, &t)
+                        .on_click(cx.listener(|this, _, _, cx| this.backdrop_everywhere(cx)))
+                        .into_any_element(),
+                );
+            }
             (MenuKind::Canvas(at_w), _) => {
                 items.push(
                     row("m-new", "icons/sticky-note.svg", "New note here", Some("Double-click".into()), &t)
@@ -370,6 +470,7 @@ impl Folio {
                         }))
                         .into_any_element(),
                 );
+                items.push(row("m-bg", "icons/palette.svg", "Background", Some("›".into()), &t).on_click(cx.listener(goto(MenuPage::Background))).into_any_element());
                 items.push(sep(&t).into_any_element());
                 items.push(
                     row("m-tidy", "icons/wand-sparkles.svg", "Tidy up", None, &t)

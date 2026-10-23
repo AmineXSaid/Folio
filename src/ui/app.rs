@@ -269,6 +269,8 @@ pub enum MenuPage {
     Remind,
     Icon,
     Colour,
+    /// The sheet's pattern, colour and picture.
+    Background,
 }
 
 pub struct Menu {
@@ -1520,6 +1522,59 @@ impl Folio {
             });
         })
         .detach();
+    }
+
+    /// Changes what the open sheet is drawn on, as one undoable step.
+    pub fn set_backdrop(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Backdrop)) {
+        let t = now();
+        self.change(cx, |b| {
+            let c = b.sheet_mut();
+            f(&mut c.backdrop);
+            c.edited = t;
+        });
+    }
+
+    /// A picture (or SVG) from this computer behind the open sheet,
+    /// softened to start with.
+    pub fn pick_backdrop(&mut self, cx: &mut Context<Self>) {
+        self.menu = None;
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Background picture".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = rx.await else { return };
+            let Some(path) = paths.into_iter().next() else { return };
+            let _ = this.update(cx, |this, cx| {
+                if !store::is_image(&path) {
+                    this.notify("That file isn't a picture Folio can show (PNG, JPEG, GIF, WebP, SVG)", cx);
+                    return;
+                }
+                let file_id = this.board.fresh_id();
+                match store::import_image(&this.dir, &path, file_id) {
+                    Ok(name) => this.set_backdrop(cx, |b| {
+                        b.image = Some(name);
+                        b.soften = true;
+                    }),
+                    Err(e) => this.notify(format!("Couldn't use the picture: {e}"), cx),
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The open sheet's background on every sheet.
+    pub fn backdrop_everywhere(&mut self, cx: &mut Context<Self>) {
+        self.menu = None;
+        let bd = self.sheet().backdrop.clone();
+        self.change(cx, |b| {
+            for c in &mut b.categories {
+                c.backdrop = bd.clone();
+            }
+        });
+        self.notify(format!("Every sheet has this background · {} to undo", shortcut("Z")), cx);
     }
 
     pub fn image_path(&self, name: &str) -> PathBuf {

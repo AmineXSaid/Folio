@@ -116,13 +116,14 @@ impl Folio {
 
         let link_width = (2. * cam.zoom).max(1.25);
         let dash = 6. * cam.zoom.max(0.6);
-        let dot = t.colors.canvas_dot;
+        let (dot, line) = (t.colors.canvas_dot, t.colors.canvas_line);
         let grid = t.size.dot_grid;
+        let pattern = sheet.backdrop.pattern;
         let bounds_cell = self.viewport.clone();
         let underlay = canvas(
             move |bounds, _, _| bounds_cell.set(bounds),
             move |bounds, _, window, _| {
-                paint_dots(bounds, cam, grid, dot, window);
+                paint_pattern(bounds, cam, grid, pattern, dot, line, window);
                 let o = bounds.origin;
                 for (c, color) in &curves {
                     let mut b = PathBuilder::stroke(px(link_width)).dash_array(&[px(dash), px(dash)]);
@@ -227,6 +228,17 @@ impl Folio {
             .map(|s| self.render_sticker(s, cam, &t, cx))
             .collect();
 
+        // A picture behind the sheet: still while the sheet moves, softened
+        // toward the paper so notes stay easy to read.
+        let picture = sheet.backdrop.image.as_ref().map(|name| {
+            let paper = t.tint(sheet.backdrop.tint);
+            div()
+                .absolute()
+                .inset_0()
+                .child(gpui::img(self.image_path(name)).id("backdrop").size_full().object_fit(gpui::ObjectFit::Cover))
+                .when(sheet.backdrop.soften, |d| d.child(div().absolute().inset_0().bg(paper.opacity(0.55))))
+        });
+
         let empty = sheet.stickers.is_empty() && sheet.strokes.is_empty() && sheet.labels.is_empty() && sheet.frames.is_empty();
         let cursor = match self.tool {
             _ if self.space => gpui::CursorStyle::OpenHand,
@@ -252,7 +264,7 @@ impl Folio {
             .absolute()
             .inset_0()
             .overflow_hidden()
-            .bg(t.colors.canvas)
+            .bg(t.tint(sheet.backdrop.tint))
             .cursor(cursor)
             .on_action(cx.listener(|this, _: &DeleteSelection, _, cx| this.delete_selection(cx)))
             .on_action(cx.listener(|this, _: &DuplicateSelection, _, cx| this.duplicate_selection(cx)))
@@ -282,6 +294,11 @@ impl Folio {
             }))
             .on_action(cx.listener(|this, _: &CycleStyle, _, cx| this.cycle_style(cx)))
             .on_action(cx.listener(|this, _: &Escape, _, cx| {
+                // An open menu goes first.
+                if this.menu.take().is_some() {
+                    cx.notify();
+                    return;
+                }
                 this.selection.clear();
                 this.gesture = Gesture::None;
                 this.set_tool(Tool::Select, cx);
@@ -338,6 +355,7 @@ impl Folio {
             .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
                 this.drop_paths(paths.paths().to_vec(), cx);
             }))
+            .children(picture)
             .child(underlay)
             .children(frames)
             .children(labels)
@@ -1431,6 +1449,83 @@ fn theme_grid() -> f32 {
 
 fn contains(outer: &Rect, inner: &Rect) -> bool {
     inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h
+}
+
+/// The sheet's pattern, in world units so it moves and zooms with the
+/// sheet: `dot` for dots, crosses and graph paper's heavier lines, `line`
+/// for the rest.
+pub(super) fn paint_pattern(bounds: gpui::Bounds<Pixels>, cam: Camera, grid: f32, pattern: Pattern, dot: Hsla, line: Hsla, window: &mut Window) {
+    let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    let o = bounds.origin;
+    let mut hair = |r: &Rule, color: Hsla| {
+        let b = if r.across {
+            gpui::Bounds::new(point(o.x, o.y + px(r.at - 0.5)), gpui::size(bounds.size.width, px(1.)))
+        } else {
+            gpui::Bounds::new(point(o.x + px(r.at - 0.5), o.y), gpui::size(px(1.), bounds.size.height))
+        };
+        window.paint_quad(gpui::fill(b, color));
+    };
+    match pattern {
+        Pattern::Plain => {}
+        Pattern::Dots => paint_dots(bounds, cam, grid, dot, window),
+        Pattern::Grid => {
+            let step = pattern_step(grid, cam.zoom, 10.);
+            for r in rules(cam, w, h, step, true, true, None) {
+                hair(&r, line);
+            }
+        }
+        Pattern::Graph => {
+            let step = pattern_step(grid, cam.zoom, 8.);
+            // Minor lines first, so the heavier ones cross over them.
+            let all = rules(cam, w, h, step, true, true, Some(5));
+            for r in all.iter().filter(|r| !r.major) {
+                hair(r, line);
+            }
+            for r in all.iter().filter(|r| r.major) {
+                hair(r, dot);
+            }
+        }
+        Pattern::Lines => {
+            let step = pattern_step(grid * 1.25, cam.zoom, 12.);
+            for r in rules(cam, w, h, step, true, false, None) {
+                hair(&r, line);
+            }
+        }
+        Pattern::Crosses => {
+            let step = pattern_step(grid, cam.zoom, 16.);
+            let all = rules(cam, w, h, step, true, true, None);
+            let arm = px(3.5);
+            for y in all.iter().filter(|r| r.across) {
+                for x in all.iter().filter(|r| !r.across) {
+                    let c = o + point(px(x.at), px(y.at));
+                    window.paint_quad(gpui::fill(gpui::Bounds::new(point(c.x - arm, c.y - px(0.5)), gpui::size(arm * 2., px(1.))), dot));
+                    window.paint_quad(gpui::fill(gpui::Bounds::new(point(c.x - px(0.5), c.y - arm), gpui::size(px(1.), arm * 2.)), dot));
+                }
+            }
+        }
+        Pattern::Isometric => {
+            // Rows of dots, every other row shifted half a step: a lattice of
+            // equal triangles.
+            let step = pattern_step(grid, cam.zoom, 14.);
+            let row = step * 0.866;
+            let r = px(1.1);
+            let mut j = (-cam.pan.y / row).ceil() as i64;
+            loop {
+                let y = cam.pan.y + j as f32 * row;
+                if y > h {
+                    break;
+                }
+                let x0 = cam.pan.x + if j.rem_euclid(2) == 1 { step / 2. } else { 0. };
+                let mut x = x0.rem_euclid(step);
+                while x < w {
+                    let p = o + point(px(x), px(y));
+                    window.paint_quad(gpui::fill(gpui::Bounds::new(point(p.x - r, p.y - r), gpui::size(r * 2., r * 2.)), dot).corner_radii(r));
+                    x += step;
+                }
+                j += 1;
+            }
+        }
+    }
 }
 
 fn paint_dots(bounds: gpui::Bounds<Pixels>, cam: Camera, grid: f32, color: Hsla, window: &mut Window) {

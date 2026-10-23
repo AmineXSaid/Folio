@@ -17,7 +17,7 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, t: &Theme) -> Div {
         .h(px(h))
         .overflow_hidden()
         .rounded(t.radius.button)
-        .bg(t.colors.canvas)
+        .bg(t.tint(c.backdrop.tint))
         .border_1()
         .border_color(t.colors.border);
     let Some(b) = bounds else {

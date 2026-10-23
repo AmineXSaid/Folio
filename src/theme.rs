@@ -3,13 +3,16 @@
 
 use gpui::{hsla, point, px, rgb, rgba, App, BoxShadow, Global, Hsla, Pixels};
 
-use crate::model::{Accent, Ink, NoteFont, Paper};
+use crate::model::{Accent, Ink, NoteFont, Paper, Tint};
 
 #[derive(Clone, Copy)]
 pub struct Colors {
     /// The sheet behind the stickers.
     pub canvas: Hsla,
     pub canvas_dot: Hsla,
+    /// A ruled pattern's lines: finer than the dots; the heavier lines of
+    /// graph paper take `canvas_dot`.
+    pub canvas_line: Hsla,
     /// Sidebar, top bar, menus, dialogs.
     pub surface: Hsla,
     pub surface_sunk: Hsla,
@@ -190,6 +193,7 @@ impl Theme {
             colors: Colors {
                 canvas: c(0xf6f7f3),
                 canvas_dot: c(0xd6dcd4),
+                canvas_line: c(0xe3e7e0),
                 surface: c(0xffffff),
                 surface_sunk: c(0xfafbf8),
                 border: c(0xe7eae5),
@@ -240,6 +244,7 @@ impl Theme {
             colors: Colors {
                 canvas: c(0x121614),
                 canvas_dot: c(0x2a312d),
+                canvas_line: c(0x1e2421),
                 surface: c(0x191e1c),
                 surface_sunk: c(0x151a18),
                 border: c(0x29302c),
@@ -298,6 +303,19 @@ impl Theme {
             Paper::Mint => (0xdff4e8, 0x1f3628),
             Paper::Sand => (0xf2ebdc, 0x35302a),
             Paper::Stone => (0xeceeed, 0x2b2f2e),
+        };
+        c(if self.is_dark { dark } else { light })
+    }
+
+    /// A sheet's paper colour; Paper is the canvas itself.
+    pub fn tint(&self, tint: Tint) -> Hsla {
+        let (light, dark) = match tint {
+            Tint::Paper => return self.colors.canvas,
+            Tint::Warm => (0xf7f2e7, 0x17140f),
+            Tint::Cool => (0xf0f3f8, 0x11151a),
+            Tint::Mint => (0xedf5ef, 0x0f1712),
+            Tint::Blush => (0xf8efed, 0x181213),
+            Tint::Lavender => (0xf3f0f8, 0x141219),
         };
         c(if self.is_dark { dark } else { light })
     }
@@ -475,6 +493,7 @@ impl Theme {
             c.text_subtle = rgb(0xb3bcb7).into();
             c.border = rgb(0x8a9590).into();
             c.canvas_dot = rgb(0x46504b).into();
+            c.canvas_line = rgb(0x343c38).into();
             c.rule = rgba(0xffffff80).into();
             c.ruled = rgba(0x82a6e666).into();
             c.margin = rgba(0xf0628fb3).into();
@@ -485,6 +504,7 @@ impl Theme {
             c.text_subtle = rgb(0x4d5852).into();
             c.border = rgb(0x6f7a74).into();
             c.canvas_dot = rgb(0xa9b3ab).into();
+            c.canvas_line = rgb(0xc4ccc5).into();
             c.rule = rgba(0x18251f80).into();
             c.ruled = rgba(0x3f68b066).into();
             c.margin = rgba(0xe5487ab3).into();

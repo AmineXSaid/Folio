@@ -13,6 +13,7 @@
 #   edit    typing into a note        menu    a note's right-click menu
 #   palette Ctrl+K                    settings
 #   types   the cheatsheet sheet: taped notes, cheat cards, index cards
+#   background  the sheet menu's Background page: patterns, colours, a picture
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -62,6 +63,7 @@ for mode in light dark; do
   # The cheatsheet: the three note types.
   key ctrl+k; xdotool type --delay 20 "hil testing"; key Return
   xdotool mousemove 640 790; shot types
+  xdotool mousemove 680 150 click 3; sleep 0.6; xdotool mousemove 760 360 click 1; shot background; key Escape
   key ctrl+k; xdotool type --delay 20 "studio"; key Down Return
   shot sheet
   # A note's menu, then typing into it.

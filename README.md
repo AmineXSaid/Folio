@@ -21,6 +21,9 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
 - **The sheet:** pan and zoom, box-select and move groups with alignment
   guides, areas (Kanban columns, days of the week…), pen, marker, eraser,
   text on the sheet, curved links between notes, tidy up, a map.
+  Each sheet picks its background: dots, grid, graph paper, lines,
+  crosses, isometric or plain, on one of six paper colours, or a picture
+  or SVG of your own behind it.
 - **Everywhere:** Ctrl+K for commands, sheets and notes; Ctrl+Alt+N from
   any app for a quick note into your Inbox; notes pinned to the desktop
   above other windows; a tray icon and starting with Windows.

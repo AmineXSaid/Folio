@@ -41,9 +41,10 @@ fn unused(dir: &Path, base: &str, ext: &str) -> PathBuf {
     (1..).map(with).find(|p| !p.exists()).expect("some name is free")
 }
 
-/// The pictures a sheet uses: note pictures and link-card icons.
+/// The pictures a sheet uses: note pictures, link-card icons and its
+/// background picture.
 fn media_of(c: &Category) -> Vec<String> {
-    let mut out = Vec::new();
+    let mut out: Vec<String> = c.backdrop.image.iter().cloned().collect();
     for s in &c.stickers {
         out.extend(s.image.clone());
         out.extend(s.link.as_ref().and_then(|l| l.icon.clone()));
@@ -201,6 +202,11 @@ pub fn import(board: &mut Board, pkg: Package, media: &Path) -> std::io::Result<
     }
     let n = pkg.sheets.len();
     for mut c in pkg.sheets {
+        if let Some(i) = c.backdrop.image.as_mut() {
+            if let Some(new) = renamed.get(i) {
+                *i = new.clone();
+            }
+        }
         for s in &mut c.stickers {
             if let Some(i) = s.image.as_mut() {
                 if let Some(new) = renamed.get(i) {
@@ -288,8 +294,10 @@ mod tests {
         let (media_a, media_b) = (dir.join("a"), dir.join("b"));
         std::fs::create_dir_all(&media_a).unwrap();
         std::fs::write(media_a.join("1.png"), b"one").unwrap();
+        std::fs::write(media_a.join("2.svg"), b"<svg/>").unwrap();
         let mut a = demo::board();
         a.categories[1].stickers[0].image = Some("1.png".into());
+        a.categories[1].backdrop = Backdrop { pattern: Pattern::Grid, tint: Tint::Warm, image: Some("2.svg".into()), soften: true };
         let file = dir.join("Trip.folio");
         export_folio(&[&a.categories[1]], &media_a, &file).unwrap();
 
@@ -304,6 +312,11 @@ mod tests {
         assert_ne!(new.id, a.categories[1].id, "fresh ids");
         let img = new.stickers[0].image.clone().unwrap();
         assert_eq!(std::fs::read(media_b.join(img)).unwrap(), b"one");
+        // The background picture comes too, under its new name.
+        assert_eq!(new.backdrop.pattern, Pattern::Grid);
+        let bg = new.backdrop.image.clone().unwrap();
+        assert_ne!(bg, "2.svg");
+        assert_eq!(std::fs::read(media_b.join(bg)).unwrap(), b"<svg/>");
         assert!(read_folio(&dir.join("a/1.png")).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -601,6 +601,128 @@ impl Accent {
     pub const ALL: [Accent; 5] = [Accent::Amber, Accent::Slate, Accent::Rose, Accent::Moss, Accent::Plum];
 }
 
+/// The pattern a sheet is ruled with, in world units so it moves and
+/// zooms with the sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Pattern {
+    #[default]
+    Dots,
+    /// Lines across and down: squared paper.
+    Grid,
+    /// Squared paper with a heavier line every fifth.
+    Graph,
+    /// Lines across, like a notebook.
+    Lines,
+    /// A small cross where the lines would meet.
+    Crosses,
+    /// Dots on a triangle lattice, for isometric sketches.
+    Isometric,
+    Plain,
+}
+
+impl Pattern {
+    pub const ALL: [Pattern; 7] =
+        [Pattern::Dots, Pattern::Grid, Pattern::Graph, Pattern::Lines, Pattern::Crosses, Pattern::Isometric, Pattern::Plain];
+    pub fn label(self) -> &'static str {
+        match self {
+            Pattern::Dots => "Dots",
+            Pattern::Grid => "Grid",
+            Pattern::Graph => "Graph",
+            Pattern::Lines => "Lines",
+            Pattern::Crosses => "Crosses",
+            Pattern::Isometric => "Isometric",
+            Pattern::Plain => "Plain",
+        }
+    }
+}
+
+/// The colour of a sheet's paper. Each has a light and a dark rendering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Tint {
+    #[default]
+    Paper,
+    Warm,
+    Cool,
+    Mint,
+    Blush,
+    Lavender,
+}
+
+impl Tint {
+    pub const ALL: [Tint; 6] = [Tint::Paper, Tint::Warm, Tint::Cool, Tint::Mint, Tint::Blush, Tint::Lavender];
+    pub fn label(self) -> &'static str {
+        match self {
+            Tint::Paper => "Paper",
+            Tint::Warm => "Warm",
+            Tint::Cool => "Cool",
+            Tint::Mint => "Mint",
+            Tint::Blush => "Blush",
+            Tint::Lavender => "Lavender",
+        }
+    }
+}
+
+/// What a sheet is drawn on: a pattern on a tint, and maybe a picture
+/// behind it all.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Backdrop {
+    pub pattern: Pattern,
+    pub tint: Tint,
+    /// A picture (PNG, JPEG, GIF, WebP or SVG) filling the sheet's window,
+    /// still while the sheet moves: a file in the media folder.
+    pub image: Option<String>,
+    /// The picture faded toward the paper, so notes stay easy to read.
+    pub soften: bool,
+}
+
+/// One line of a pattern on screen: across (`y`) or down (`x`), and
+/// whether it's a heavier one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rule {
+    pub across: bool,
+    pub at: f32,
+    pub major: bool,
+}
+
+/// The spacing, in screen pixels, a pattern of `grid` world units is drawn
+/// at: doubled while it's tighter than `least`, so lines and dots never
+/// crowd together when zoomed out.
+pub fn pattern_step(grid: f32, zoom: f32, least: f32) -> f32 {
+    let mut step = grid * zoom;
+    while step < least {
+        step *= 2.;
+    }
+    step
+}
+
+/// The lines a pattern draws over a `w`×`h` view through `cam`: `every`
+/// lines along each way, every `major`th one heavier (counted from the
+/// world's origin, so they stay put as the sheet moves).
+pub fn rules(cam: Camera, w: f32, h: f32, step: f32, across: bool, down: bool, major: Option<u32>) -> Vec<Rule> {
+    let mut out = Vec::new();
+    let mut add = |vertical: bool, pan: f32, len: f32| {
+        let first = (-pan / step).ceil() as i64;
+        let mut i = first;
+        loop {
+            let at = pan + i as f32 * step;
+            if at > len {
+                break;
+            }
+            let heavy = major.is_some_and(|m| i.rem_euclid(m as i64) == 0);
+            out.push(Rule { across: !vertical, at, major: heavy });
+            i += 1;
+        }
+    };
+    if across {
+        add(false, cam.pan.y, h);
+    }
+    if down {
+        add(true, cam.pan.x, w);
+    }
+    out
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Category {
     pub id: Id,
@@ -630,6 +752,9 @@ pub struct Category {
     pub opened: u64,
     #[serde(default)]
     pub edited: u64,
+    /// What the sheet is drawn on.
+    #[serde(default)]
+    pub backdrop: Backdrop,
 }
 
 impl Category {
@@ -650,6 +775,7 @@ impl Category {
             icon: String::new(),
             opened: 0,
             edited: 0,
+            backdrop: Backdrop::default(),
         }
     }
 
@@ -1804,5 +1930,32 @@ mod tests {
         pic.edited = 99;
         c.stickers.push(pic);
         assert_eq!(c.next_look(NoteStyle::Card, NoteFont::Sans).0, NoteStyle::Cheat);
+    }
+
+    #[test]
+    fn sheets_saved_before_backdrops_are_dotted_paper() {
+        let mut c = Category::new(1, "t", Accent::Amber);
+        c.backdrop = Backdrop { pattern: Pattern::Graph, tint: Tint::Mint, image: Some("9.svg".into()), soften: true };
+        let mut v: serde_json::Value = serde_json::to_value(&c).unwrap();
+        assert_eq!(serde_json::from_value::<Category>(v.clone()).unwrap().backdrop, c.backdrop);
+        v.as_object_mut().unwrap().remove("backdrop");
+        assert_eq!(serde_json::from_value::<Category>(v).unwrap().backdrop, Backdrop::default());
+        assert_eq!(Backdrop::default().pattern, Pattern::Dots);
+    }
+
+    #[test]
+    fn pattern_rules_stay_put_and_thin_out_zoomed_out() {
+        assert_eq!(pattern_step(22., 1., 14.), 22.);
+        assert_eq!(pattern_step(22., 0.25, 14.), 22.);
+        assert_eq!(pattern_step(22., 0.5, 14.), 22.);
+        let cam = Camera { pan: v2(30., -5.), zoom: 1. };
+        let r = rules(cam, 100., 50., 20., true, true, Some(5));
+        let across: Vec<f32> = r.iter().filter(|x| x.across).map(|x| x.at).collect();
+        let down: Vec<f32> = r.iter().filter(|x| !x.across).map(|x| x.at).collect();
+        assert_eq!(across, [15., 35.]);
+        assert_eq!(down, [10., 30., 50., 70., 90.]);
+        // The heavier line is the world's x = 0, wherever the view is.
+        assert!(r.iter().any(|x| !x.across && x.at == 30. && x.major));
+        assert_eq!(r.iter().filter(|x| x.major).count(), 1);
     }
 }
