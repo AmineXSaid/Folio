@@ -22,7 +22,9 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
   shortcut; pasted plain text turned into Markdown in one go.
 - **The sheet:** pan and zoom, box-select and move groups with alignment
   guides, areas (Kanban columns, days of the week…), pen, marker, eraser,
-  text on the sheet, curved links between notes, tidy up, a map.
+  text on the sheet (Markdown that wraps, in any ink, typeface and size,
+  with its own bar of marks while you write), curved links between
+  notes, tidy up, a map.
   Each sheet picks its background: dots, grid, graph paper, lines,
   crosses, isometric or plain, on one of six paper colours, or a picture
   or SVG of your own behind it.
