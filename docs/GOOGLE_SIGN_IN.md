@@ -29,13 +29,29 @@ At <https://console.cloud.google.com>, signed in with your Google account:
 
 ## 2. Build it in
 
-Put both in `google-client.env` at the repository root. The file is
-git-ignored and never committed:
+Google offers the client as a JSON file (`client_secret_….json`). Never
+commit it or its values: the repository is public, and GitHub and Google
+both flag a client secret pushed to a public repository. `.gitignore`
+keeps `client_secret_*.json` and `google-client.env` out.
 
-```
-FOLIO_GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
-FOLIO_GOOGLE_CLIENT_SECRET=GOCSPX-...
-```
+Give the two values to the build in one of two ways. The environment wins
+over the file.
+
+- **Environment variables**, for builds in a Claude Code cloud session or
+  CI: set `FOLIO_GOOGLE_CLIENT_ID` and `FOLIO_GOOGLE_CLIENT_SECRET` in the
+  environment's settings (the cloud environment menu in the session's
+  title bar › Edit › environment variables). Every new session's builds
+  then have them.
+- **`google-client.env`** at the repository root, for builds on your own
+  computer:
+
+  ```
+  FOLIO_GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+  FOLIO_GOOGLE_CLIENT_SECRET=GOCSPX-...
+  ```
+
+  The JSON's `installed.client_id` and `installed.client_secret` are the
+  two values.
 
 Then build as usual: `cargo build --release`, or `installer/make.sh` for
 Setup.exe. `build.rs` bakes both values into the .exe. Google says a desktop
