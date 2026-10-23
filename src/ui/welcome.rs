@@ -18,6 +18,7 @@ pub enum Step {
     Avatar,
 }
 
+#[derive(Clone)]
 pub struct Welcome {
     pub step: Step,
     /// The avatar picked (or picked for you).
@@ -78,6 +79,16 @@ impl Folio {
             self.welcome = None;
             cx.notify();
         }
+    }
+
+    /// The welcome after it's done: it sinks away as the window shows.
+    pub(super) fn render_welcome_leaving(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let t = theme(cx).clone();
+        let (w, n) = self.exits.welcome.leaving(t.motion.dialog_out)?;
+        let real = self.welcome.replace(w);
+        let el = self.render_welcome(window, cx).into_any_element();
+        self.welcome = real;
+        Some(motion::leave(div().absolute().inset_0().child(el), ("welcome-out", n), t.motion.dialog_out, t.motion.sink))
     }
 
     pub(super) fn render_welcome(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -209,7 +220,7 @@ impl Folio {
                     inset: false,
                 }]),
             )
-            .child(motion::rise_in(
+            .child(motion::enter(
                 div()
                     .px(px(56.))
                     .py(px(44.))
@@ -220,8 +231,8 @@ impl Folio {
                     .shadow(t.shadow_float())
                     .child(body),
                 gpui::ElementId::Name(step_key.into()),
-                12.,
-                &t,
+                t.motion.dialog_in,
+                t.motion.rise_dialog,
             ))
             .when(returning, |d| {
                 d.child(

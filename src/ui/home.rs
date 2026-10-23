@@ -206,7 +206,7 @@ impl Folio {
                             .child(n.to_string()),
                     )
                 })
-                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tip).build(window, cx))
+                .tooltip(move |window, cx| super::tip(tip, window, cx))
                 .on_click(cx.listener(move |this, _, _, cx| this.open_bin(tab, cx)))
         };
         div()
@@ -368,14 +368,15 @@ impl Folio {
     fn render_results(&self, q: &str, card_w: f32, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hits = self.board.search(q);
         let shown = hits.len().min(60);
-        let rows = hits.into_iter().take(60).map(|h| {
+        // Each note found fades up into the list; ones already there stay.
+        let rows = hits.into_iter().take(60).enumerate().map(|(i, h)| {
             let c = &self.board.categories[h.sheet];
             let s = c.sticker(h.note).unwrap();
             let title = first_line(s);
             let snippet = snippet(s, q);
             let tags = s.tags();
             let id = h.note;
-            div()
+            let row = div()
                 .id(("hit", id))
                 .flex()
                 .items_start()
@@ -422,7 +423,8 @@ impl Folio {
                         .when(!c.icon.is_empty(), |d| d.child(mark(&c.icon, 18., &t)))
                         .child(c.name.clone()),
                 )
-                .on_click(cx.listener(move |this, _, window, cx| this.reveal_note(id, window, cx)))
+                .on_click(cx.listener(move |this, _, window, cx| this.reveal_note(id, window, cx)));
+            super::motion::row_in(row, ("hit-in", id as usize), i, t)
         });
         let ql = q.to_lowercase();
         let sheets: Vec<usize> = (0..self.board.categories.len())

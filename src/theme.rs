@@ -109,20 +109,81 @@ pub struct Sizes {
     pub dot_grid: f32,     // 22: world units between canvas dots
 }
 
-/// How long things take to move, in milliseconds.
+/// How things arrive and leave ("Glide"): they fade up a few pixels and
+/// settle with an ease-out, and leave the same way, faster, with an
+/// ease-in. Times in milliseconds, distances in px.
 #[derive(Clone, Copy)]
 pub struct Motion {
-    /// A popover, menu, dialog or page arriving.
+    /// A menu, popover or the edit bar arriving.
     pub pop_in: u64,
+    /// And leaving.
+    pub pop_out: u64,
     /// Between one row and the next as a list opens.
     pub stagger: u64,
-    /// The accent line drawing down a popover's edge as it opens.
-    pub edge_draw: u64,
-    /// The accent line's width, px.
-    pub edge_bar: f32,
+    /// A dialog arriving and leaving.
+    pub dialog_in: u64,
+    pub dialog_out: u64,
+    /// The search opening (its field widens, its results rise).
+    pub search_in: u64,
+    pub search_out: u64,
+    /// The sheets drawer sliding in and out.
+    pub drawer_in: u64,
+    pub drawer_out: u64,
+    /// A page (home, a sheet, settings...) arriving.
+    pub page_in: u64,
+    /// A toast arriving and leaving.
+    pub toast_in: u64,
+    pub toast_out: u64,
+    /// A note arriving on the sheet, and going to the Trash.
+    pub note_in: u64,
+    pub note_out: u64,
+    /// A pin landing on a note, and after a new note, how long it waits.
+    pub pin_in: u64,
+    pub pin_wait: u64,
+    /// A window of its own (a note on the desktop, the quick note).
+    pub window_in: u64,
+    pub window_out: u64,
+    /// A tooltip.
+    pub tip_in: u64,
+    /// Light and dark: the old one fades off the window.
+    pub theme_fade: u64,
+    /// How far things rise as they arrive.
+    pub rise: f32,
+    pub rise_dialog: f32,
+    pub rise_window: f32,
+    /// How far a toast slides in from the right.
+    pub slide_toast: f32,
+    /// How far things sink as they leave.
+    pub sink: f32,
 }
 
-const MOTION: Motion = Motion { pop_in: 180, stagger: 22, edge_draw: 160, edge_bar: 3. };
+const MOTION: Motion = Motion {
+    pop_in: 180,
+    pop_out: 120,
+    stagger: 22,
+    dialog_in: 240,
+    dialog_out: 140,
+    search_in: 220,
+    search_out: 130,
+    drawer_in: 260,
+    drawer_out: 180,
+    page_in: 280,
+    toast_in: 220,
+    toast_out: 150,
+    note_in: 220,
+    note_out: 160,
+    pin_in: 180,
+    pin_wait: 160,
+    window_in: 260,
+    window_out: 140,
+    tip_in: 120,
+    theme_fade: 220,
+    rise: 8.,
+    rise_dialog: 14.,
+    rise_window: 10.,
+    slide_toast: 18.,
+    sink: 4.,
+};
 
 #[derive(Clone)]
 pub struct Theme {

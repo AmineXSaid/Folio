@@ -27,9 +27,50 @@ fn template_icon(t: Template) -> &'static str {
 }
 
 impl Folio {
+    /// The open dialog: the backdrop dims in, the dialog rises into place.
+    /// A click on the backdrop cancels it.
     pub(super) fn render_dialog(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         let Some(d) = self.dialog else { return div().into_any_element() };
+        // Each kind of dialog arrives on its own.
+        let key = format!("dialog-{:?}", std::mem::discriminant(&d));
+        let scrim = div()
+            .id("scrim")
+            .key_context("Dialog")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(t.colors.scrim)
+            .on_action(cx.listener(|this, _: &SaveNote, window, cx| this.dialog_ok(window, cx)))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx)))
+            .child(super::motion::enter(
+                self.dialog_box(d, cx),
+                gpui::ElementId::Name(format!("{key}-box").into()),
+                t.motion.dialog_in,
+                t.motion.rise_dialog,
+            ));
+        super::motion::scrim(scrim, gpui::ElementId::Name(key.into()), t.colors.scrim, &t)
+    }
+
+    /// A dialog that just closed: it sinks away as the backdrop lifts.
+    pub(super) fn render_dialog_leaving(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let t = theme(cx).clone();
+        let (d, n) = self.exits.dialog.leaving(t.motion.dialog_out)?;
+        let ms = t.motion.dialog_out;
+        let backdrop = div().absolute().inset_0().flex().items_center().justify_center().child(super::motion::leave(
+            self.dialog_box(d, cx).relative(),
+            ("dialog-out", n),
+            ms,
+            t.motion.sink,
+        ));
+        Some(super::motion::scrim_out(backdrop, ("dialog-scrim-out", n), t.colors.scrim, ms))
+    }
+
+    /// The dialog itself: its heading, what it asks, and its buttons.
+    fn dialog_box(&mut self, d: Dialog, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let t = theme(cx).clone();
         let (heading, ok) = match d {
             Dialog::NewSheet { .. } => ("New sheet", "Create sheet"),
             Dialog::RenameSheet(_) => ("Rename sheet", "Save"),
@@ -286,38 +327,18 @@ impl Folio {
                 .child(secondary_button("d-cancel", "Cancel", &t).on_click(cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx))))
                 .child(primary_button("d-ok", ok, &t).on_click(cx.listener(|this, _, window, cx| this.dialog_ok(window, cx))))
         };
-        // Each kind of dialog arrives on its own: the backdrop dims in, the
-        // dialog rises into place.
-        let key = format!("dialog-{:?}", std::mem::discriminant(&d));
-        let scrim = div()
-            .id("scrim")
-            .key_context("Dialog")
-            .absolute()
-            .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(t.colors.scrim)
-            .on_action(cx.listener(|this, _: &SaveNote, window, cx| this.dialog_ok(window, cx)))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.dialog_cancel(window, cx)))
-            .child(super::motion::rise_in(
-                div()
-                    .id("dialog")
-                    .w(if wide { px(520.) } else { t.size.dialog_w })
-                    .p(t.space.xl)
-                    .rounded(t.radius.dialog)
-                    .bg(t.colors.surface)
-                    .border_1()
-                    .border_color(t.colors.border)
-                    .shadow(t.shadow_float())
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(div().pb(t.space.lg).text_size(px(18.)).font_weight(gpui::FontWeight::SEMIBOLD).child(heading))
-                    .child(body)
-                    .child(footer),
-                gpui::ElementId::Name(format!("{key}-box").into()),
-                10.,
-                &t,
-            ));
-        super::motion::scrim(scrim, gpui::ElementId::Name(key.into()), t.colors.scrim, &t)
+        div()
+            .id("dialog")
+            .w(if wide { px(520.) } else { t.size.dialog_w })
+            .p(t.space.xl)
+            .rounded(t.radius.dialog)
+            .bg(t.colors.surface)
+            .border_1()
+            .border_color(t.colors.border)
+            .shadow(t.shadow_float())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(div().pb(t.space.lg).text_size(px(18.)).font_weight(gpui::FontWeight::SEMIBOLD).child(heading))
+            .child(body)
+            .child(footer)
     }
 }

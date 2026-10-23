@@ -23,7 +23,7 @@ mod transfer;
 mod welcome;
 mod topbar;
 
-use gpui::{div, prelude::*, px, svg, App, Hsla, Pixels, SharedString, Svg};
+use gpui::{div, prelude::*, px, svg, AnyView, App, Context, Hsla, Pixels, SharedString, Svg, Window};
 
 use crate::theme::{theme, Theme};
 
@@ -294,54 +294,79 @@ pub fn kbd(text: impl Into<SharedString>, t: &Theme) -> gpui::Div {
         .child(text.into())
 }
 
+/// A tooltip: gpui-component's, fading in once it shows.
+pub fn tip(text: impl Into<SharedString>, window: &mut Window, cx: &mut App) -> AnyView {
+    let inner = gpui::component::tooltip::Tooltip::new(text.into()).build(window, cx);
+    cx.new(|_| Tip(inner)).into()
+}
+
+struct Tip(AnyView);
+
+impl Render for Tip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ms = theme(cx).motion.tip_in;
+        motion::fade_in(div().child(self.0.clone()), "tip-in", ms)
+    }
+}
+
+/// A toast in the corner: it slides in from the right as it fades in.
 pub fn toast(t: &Theme, msg: SharedString) -> impl IntoElement {
     let id = gpui::ElementId::Name(format!("toast-{msg}").into());
-    // Crisp rather than soft: small corners, a hairline edge, a lit top
-    // edge and a brand mark, sitting on a tight shadow.
-    div().absolute().bottom(t.space.xl).right(t.space.xl).child(motion::rise_in(
-        div()
-            .flex()
-            .items_center()
-            .gap(t.space.md)
-            .pl(t.space.sm)
-            .pr(t.space.lg)
-            .py(t.space.sm)
-            .max_w(px(420.))
-            .rounded(t.radius.small)
-            .bg(t.colors.toast)
-            .border_1()
-            .border_color(t.colors.toast_fg.opacity(0.1))
-            .text_color(t.colors.toast_fg)
-            .text_size(t.text.caption)
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .shadow({
-                let mut s = t.shadow_float();
-                s.push(gpui::BoxShadow {
-                    color: t.colors.toast_fg.opacity(0.08),
-                    offset: gpui::point(px(0.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                    inset: true,
-                });
-                s
-            })
-            .child(
-                div()
-                    .size(px(22.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(t.radius.small)
-                    .bg(t.colors.brand)
-                    .child(icon("icons/bell.svg", px(12.), t.colors.primary_fg)),
-            )
-            .child(div().w(px(1.)).h(px(14.)).bg(t.colors.toast_fg.opacity(0.14)))
-            .child(div().flex_1().min_w_0().child(msg)),
-        id,
-        8.,
-        t,
+    div().absolute().bottom(t.space.xl).right(t.space.xl).child(motion::slide_in(toast_card(t, msg), id, t))
+}
+
+/// A toast that just went: it fades as it sinks.
+pub fn toast_leaving(t: &Theme, msg: SharedString, n: usize) -> impl IntoElement {
+    div().absolute().bottom(t.space.xl).right(t.space.xl).child(motion::leave(
+        toast_card(t, msg).relative(),
+        ("toast-out", n),
+        t.motion.toast_out,
+        t.motion.sink,
     ))
+}
+
+/// Crisp rather than soft: small corners, a hairline edge, a lit top edge
+/// and a brand mark, sitting on a tight shadow.
+fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(t.space.md)
+        .pl(t.space.sm)
+        .pr(t.space.lg)
+        .py(t.space.sm)
+        .max_w(px(420.))
+        .rounded(t.radius.small)
+        .bg(t.colors.toast)
+        .border_1()
+        .border_color(t.colors.toast_fg.opacity(0.1))
+        .text_color(t.colors.toast_fg)
+        .text_size(t.text.caption)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .shadow({
+            let mut s = t.shadow_float();
+            s.push(gpui::BoxShadow {
+                color: t.colors.toast_fg.opacity(0.08),
+                offset: gpui::point(px(0.), px(1.)),
+                blur_radius: px(0.),
+                spread_radius: px(0.),
+                inset: true,
+            });
+            s
+        })
+        .child(
+            div()
+                .size(px(22.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(t.radius.small)
+                .bg(t.colors.brand)
+                .child(icon("icons/bell.svg", px(12.), t.colors.primary_fg)),
+        )
+        .child(div().w(px(1.)).h(px(14.)).bg(t.colors.toast_fg.opacity(0.14)))
+        .child(div().flex_1().min_w_0().child(msg))
 }
 
 /// Keeps gpui-component's inputs and markdown in Folio's colours and type.

@@ -26,6 +26,8 @@ pub struct NoteWindow {
     /// Sizing from the corner: the window's size less the pointer, so the
     /// corner stays under it.
     sizing: Option<Point<Pixels>>,
+    /// Taken off the desktop: it plays its way out, then the window goes.
+    leaving: bool,
     _subs: Vec<gpui::Subscription>,
 }
 
@@ -55,7 +57,21 @@ impl NoteWindow {
                 }
             }),
         ];
-        NoteWindow { folio, id, editing: None, sizing: None, _subs: subs }
+        NoteWindow { folio, id, editing: None, sizing: None, leaving: false, _subs: subs }
+    }
+
+    /// Fades the note out of its window, then closes the window.
+    pub fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.leaving, true) {
+            return;
+        }
+        cx.notify();
+        let ms = super::motion::ms(theme(cx).motion.window_out);
+        cx.spawn_in(window, async move |_, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(ms)).await;
+            let _ = cx.update(|window, _| window.remove_window());
+        })
+        .detach();
     }
 
     fn start_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -250,8 +266,8 @@ impl Render for NoteWindow {
                 window.resize(size(w, h));
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.sizing = None))
-            .child(
-                div()
+            .child({
+                let paper_el = div()
                     .relative()
                     .size_full()
                     .flex()
@@ -267,8 +283,15 @@ impl Render for NoteWindow {
                     .text_color(t.colors.text)
                     .child(strip)
                     .child(content)
-                    .child(corner),
-            )
+                    .child(corner);
+                // The note fades up into its window, and sinks away out of it.
+                let m = t.motion;
+                if self.leaving {
+                    super::motion::leave(paper_el, "note-window-out", m.window_out, m.sink)
+                } else {
+                    super::motion::enter(paper_el, "note-window-in", m.window_in, m.rise_window)
+                }
+            })
             .into_any_element()
     }
 }

@@ -56,6 +56,10 @@ impl Folio {
         if !self.settling.is_empty() {
             window.request_animation_frame();
         }
+        // Notes arriving and leaving, pins landing: keep drawing while they do.
+        if self.exits.notes.follow(self.board.sheet(), &t.motion) {
+            window.request_animation_frame();
+        }
         let sheet = self.sheet();
         let cam = sheet.camera;
         let (vw, vh) = self.viewport_size();
@@ -221,11 +225,33 @@ impl Folio {
             .collect();
 
         let editing = self.editing.map(|e| e.id);
+        let m = t.motion;
+        // A note drawn grown or shrunk `scale` times about its centre and
+        // moved down `dy` px, seen through `opacity`: arriving, it fades up
+        // from 96 %; leaving, it fades and sinks a little as it shrinks.
+        let moving = |this: &Self, s: &Sticker, scale: f32, dy: f32, opacity: f32, cx: &mut Context<Self>| {
+            let r = this.note_rect(s);
+            let c = v2(r.x + r.w / 2., r.y + r.h / 2.);
+            let zoom = cam.zoom * scale;
+            let pan = v2(cam.pan.x + c.x * (cam.zoom - zoom), cam.pan.y + c.y * (cam.zoom - zoom) + dy);
+            div().absolute().top_0().left_0().opacity(opacity).child(this.render_sticker(s, Camera { pan, zoom }, &t, cx)).into_any_element()
+        };
         let stickers: Vec<_> = sheet
             .stickers
             .iter()
             .filter(|s| Some(s.id) != editing && self.note_rect(s).intersects(&view))
-            .map(|s| self.render_sticker(s, cam, &t, cx))
+            .map(|s| match self.exits.notes.arriving(s.id, &m) {
+                Some(k) => moving(self, s, 0.96 + 0.04 * k, m.rise * 0.75 * (1. - k), k, cx),
+                None => self.render_sticker(s, cam, &t, cx),
+            })
+            .collect();
+        let gone: Vec<_> = self
+            .exits
+            .notes
+            .leaving(&m)
+            .into_iter()
+            .filter(|(s, _)| self.note_rect(s).intersects(&view))
+            .map(|(s, k)| moving(self, &s, 1. - 0.03 * k, m.sink * k, 1. - k, cx))
             .collect();
 
         // A picture behind the sheet: still while the sheet moves, softened
@@ -294,8 +320,8 @@ impl Folio {
             }))
             .on_action(cx.listener(|this, _: &CycleStyle, _, cx| this.cycle_style(cx)))
             .on_action(cx.listener(|this, _: &Escape, _, cx| {
-                // An open menu goes first.
-                if this.menu.take().is_some() {
+                // An open menu or the drawer goes first.
+                if this.menu.take().is_some() || std::mem::take(&mut this.drawer) {
                     cx.notify();
                     return;
                 }
@@ -360,6 +386,7 @@ impl Folio {
             .children(frames)
             .children(labels)
             .children(stickers)
+            .children(gone)
             .children(band.map(|(x, y, w, h)| {
                 let making = matches!(self.gesture, Gesture::MakeFrame { .. });
                 div()
@@ -385,6 +412,7 @@ impl Folio {
             .when(self.drop_tray, |d| d.child(self.render_tray(&t)));
 
         let edit_layer = self.render_edit_layer(&t, window, cx);
+        let edit_bar_leaving = self.render_edit_bar_leaving(&t, cx);
         div()
             .relative()
             .flex_1()
@@ -395,6 +423,7 @@ impl Folio {
             .child(self.render_sheet_head(&t, cx))
             .children(self.render_label_edit(&t))
             .children(edit_layer)
+            .children(edit_bar_leaving)
             .child(self.render_toolbar(window, cx))
             .child(self.render_zoom(cx))
             .when(self.board.settings.minimap && !empty, |d| d.child(self.render_minimap(&t, cx)))
@@ -493,17 +522,14 @@ impl Folio {
 
     /// The note being typed into, drawn over the sheet, with its edit bar
     /// above it: writing on the first row, the note's look on the second.
-    fn render_edit_layer(&self, t: &Theme, _: &mut Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        use gpui::component::tooltip::Tooltip;
-        let ed = self.editing?;
-        let s = self.sheet().sticker(ed.id)?;
+    /// The edit bar over the note being typed into: writing on the first
+    /// row, the note's look on the second.
+    fn edit_bar(&self, s: &Sticker, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
         let cam = self.sheet().camera;
         let r = self.note_rect(s);
-        let z = cam.zoom.max(0.8);
         let at = cam.to_screen(v2(r.x, r.y));
         let id = s.id;
-        let k = size_factor(s.text_size);
-        let tip = |text: String| move |window: &mut Window, cx: &mut gpui::App| Tooltip::new(text.clone()).build(window, cx);
+        let tip = |text: String| move |window: &mut Window, cx: &mut gpui::App| super::tip(text.clone(), window, cx);
         let bar_btn = |name: &'static str, path: &'static str| {
             div()
                 .id(name)
@@ -691,7 +717,7 @@ impl Folio {
                         window.focus(&this.focus, cx);
                     })),
             );
-        let bar = div()
+        div()
             .absolute()
             .left(px(at.x))
             .top(px((at.y - 86.).max(4.)))
@@ -706,7 +732,27 @@ impl Folio {
             .shadow(t.shadow_float())
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(writing)
-            .child(look);
+            .child(look)
+    }
+
+    /// The edit bar after Done, sinking away over its note.
+    fn render_edit_bar_leaving(&mut self, t: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let (id, n) = self.exits.edit.leaving(t.motion.pop_out)?;
+        let s = self.sheet().sticker(id)?.clone();
+        Some(super::motion::leave(self.edit_bar(&s, t, cx), ("edit-bar-out", n), t.motion.pop_out, t.motion.sink))
+    }
+
+    fn render_edit_layer(&self, t: &Theme, _: &mut Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let ed = self.editing?;
+        let s = self.sheet().sticker(ed.id)?;
+        let cam = self.sheet().camera;
+        let r = self.note_rect(s);
+        let z = cam.zoom.max(0.8);
+        let at = cam.to_screen(v2(r.x, r.y));
+        let id = s.id;
+        let k = size_factor(s.text_size);
+        // The bar rises into place each time a note opens for typing.
+        let bar = super::motion::rise_in(self.edit_bar(s, t, cx), ("edit-bar", id as usize), t);
         let (rt, rb) = super::sticker::radii(s.style);
         let (rt, rb) = (rt * z, rb * z);
         let picture = s.image.as_ref().map(|name| {
@@ -729,12 +775,15 @@ impl Folio {
         };
         let me = cx.entity();
         let w = r.w * z;
+        // A new note fades up into place as it opens for typing.
+        let arriving = self.exits.notes.arriving(id, &t.motion).unwrap_or(1.);
         let note = div()
             .id("editing")
             .key_context("NoteEdit")
             .absolute()
             .left(px(at.x))
-            .top(px(at.y))
+            .top(px(at.y + t.motion.rise * 0.75 * (1. - arriving)))
+            .opacity(arriving)
             .w(px(w))
             .min_h(px(r.h * z))
             .rounded_t(px(rt))
@@ -758,7 +807,7 @@ impl Folio {
             .child(title)
             .child(div().px(px(10. * z)).pb(px(8. * z)).child(Textarea::new(&self.body_input).appearance(false)))
             .when(s.style == NoteStyle::Taped && s.pin.is_none(), |d| d.child(super::sticker::tape(id, w, z, t)))
-            .children(s.pin.map(|p| super::pins::pin_view(p, w, z, t)));
+            .children(s.pin.map(|p| super::pins::pin_view(p, w, z, self.exits.notes.pin_landing(id, &t.motion), t)));
         let note = on_format(note, move |f, window, cx| me.update(cx, |this, cx| this.format_key(f, window, cx)));
         Some(div().absolute().inset_0().child(note).child(bar).into_any_element())
     }

@@ -72,7 +72,7 @@ impl Folio {
                 .justify_center()
                 .rounded(t.radius.small)
                 .child(glyph)
-                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
                 .map(|d| {
                     if live {
                         d.cursor_pointer()
@@ -203,14 +203,14 @@ impl Folio {
                 let can = !self.nav_back.is_empty();
                 bar_button("go-back", "icons/arrow-left.svg")
                     .when(!can, |d| d.opacity(0.35).cursor_default())
-                    .tooltip(|window, cx| gpui::component::tooltip::Tooltip::new("Back  Alt+←").build(window, cx))
+                    .tooltip(|window, cx| super::tip("Back  Alt+←", window, cx))
                     .on_click(cx.listener(|this, _, window, cx| this.go_back(window, cx)))
             })
             .child({
                 let can = !self.nav_forward.is_empty();
                 bar_button("go-forward", "icons/arrow-right.svg")
                     .when(!can, |d| d.opacity(0.35).cursor_default())
-                    .tooltip(|window, cx| gpui::component::tooltip::Tooltip::new("Forward  Alt+→").build(window, cx))
+                    .tooltip(|window, cx| super::tip("Forward  Alt+→", window, cx))
                     .on_click(cx.listener(|this, _, window, cx| this.go_forward(window, cx)))
             });
         let field = div().relative().child(nav).child(self.palette_field(window, cx));
@@ -248,7 +248,7 @@ impl Folio {
                 .cursor_pointer()
                 .child(icon("icons/plus.svg", px(14.), t.colors.primary_fg))
                 .child(label)
-                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
         };
         let (can_undo, can_redo) = (!self.undo.is_empty() && self.editing.is_none(), !self.redo.is_empty());
         let right = div()

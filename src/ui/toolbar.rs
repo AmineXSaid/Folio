@@ -23,7 +23,7 @@ impl Folio {
                 .justify_center()
                 .rounded(px(11.))
                 .cursor_pointer()
-                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
                 // The tool in use sits on a raised chip with a dot under it,
                 // like a running app in the macOS Dock.
                 .when(active, |d| {
@@ -41,72 +41,19 @@ impl Folio {
                 }))
         }).collect();
         // The inks float in their own pill beside the dock, so the tools
-        // never move under the pointer when they appear.
-        let swatches = self.tool.uses_ink().then(|| {
-            super::motion::rise_in(
-            div()
-                .id("inks")
-                .occlude()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left_full()
-                .ml(t.space.sm)
-                .gap(t.space.xs)
-                .px(t.space.sm)
-                .flex()
-                .items_center()
-                .rounded(px(16.))
-                .bg(dock_body(&t))
-                .border_1()
-                .border_color(dock_edge(&t))
-                .shadow(dock_shadow(&t))
-                .children({
-                    // The five at hand, and the current one if it's another.
-                    let mut quick: Vec<Ink> = Ink::QUICK.to_vec();
-                    if !quick.contains(&self.ink) {
-                        quick.push(self.ink);
-                    }
-                    quick.into_iter().map(|ink| {
-                    let on = self.ink == ink;
-                    div()
-                        .id(("ink", ink as usize))
-                        .size(px(24.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(t.radius.full)
-                        .cursor_pointer()
-                        .when(on, |d| d.border_2().border_color(t.ink(ink)))
-                        .child(div().size(px(14.)).rounded(t.radius.full).bg(t.ink(ink)))
-                        .on_click(cx.listener(move |this, _, _, cx| this.pick_ink(ink, cx)))
-                    }).collect::<Vec<_>>()
-                })
-                .child(div().w(px(1.)).h(px(18.)).mx(px(2.)).bg(t.colors.border))
-                // Every ink, in a palette above.
-                .child(
-                    div()
-                        .id("ink-more")
-                        .size(px(26.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(t.radius.small)
-                        .cursor_pointer()
-                        .when(self.ink_palette, |d| d.bg(t.colors.brand_tint))
-                        .hover(|d| d.bg(t.colors.hover))
-                        .child(icon("icons/palette.svg", t.size.icon_sm, if self.ink_palette { t.colors.brand } else { t.colors.text_muted }))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.ink_palette = !this.ink_palette;
-                            cx.notify();
-                        })),
-                )
-                .when(self.ink_palette, |d| d.child(self.render_ink_palette(&t, cx))),
-                "inks-in",
-                4.,
-                &t,
-            )
-        });
+        // never move under the pointer when they appear. The pill and the
+        // palette over it rise in, and sink away when put away.
+        let m = t.motion;
+        let palette_going = self
+            .exits
+            .ink_palette
+            .leaving(m.pop_out)
+            .map(|(_, n)| super::motion::leave(self.render_ink_palette(&t, cx), ("ink-palette-out", n), m.pop_out, m.sink));
+        let swatches = if self.tool.uses_ink() {
+            Some(super::motion::rise_in(self.ink_pill(&t, palette_going, cx), "inks-in", &t))
+        } else {
+            self.exits.inks.leaving(m.pop_out).map(|(_, n)| super::motion::leave(self.ink_pill(&t, None, cx), ("inks-out", n), m.pop_out, m.sink))
+        };
         div()
             .absolute()
             .bottom(t.space.xl)
@@ -140,11 +87,74 @@ impl Folio {
         cx.notify();
     }
 
+    /// The inks at hand, in their pill beside the dock, with every ink in
+    /// a palette above while it's open (or `going`, as it leaves).
+    fn ink_pill(&self, t: &crate::theme::Theme, going: Option<gpui::AnyElement>, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id("inks")
+            .occlude()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left_full()
+            .ml(t.space.sm)
+            .gap(t.space.xs)
+            .px(t.space.sm)
+            .flex()
+            .items_center()
+            .rounded(px(16.))
+            .bg(dock_body(t))
+            .border_1()
+            .border_color(dock_edge(t))
+            .shadow(dock_shadow(t))
+            .children({
+                // The five at hand, and the current one if it's another.
+                let mut quick: Vec<Ink> = Ink::QUICK.to_vec();
+                if !quick.contains(&self.ink) {
+                    quick.push(self.ink);
+                }
+                quick.into_iter().map(|ink| {
+                let on = self.ink == ink;
+                div()
+                    .id(("ink", ink as usize))
+                    .size(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(t.radius.full)
+                    .cursor_pointer()
+                    .when(on, |d| d.border_2().border_color(t.ink(ink)))
+                    .child(div().size(px(14.)).rounded(t.radius.full).bg(t.ink(ink)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.pick_ink(ink, cx)))
+                }).collect::<Vec<_>>()
+            })
+            .child(div().w(px(1.)).h(px(18.)).mx(px(2.)).bg(t.colors.border))
+            // Every ink, in a palette above.
+            .child(
+                div()
+                    .id("ink-more")
+                    .size(px(26.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(t.radius.small)
+                    .cursor_pointer()
+                    .when(self.ink_palette, |d| d.bg(t.colors.brand_tint))
+                    .hover(|d| d.bg(t.colors.hover))
+                    .child(icon("icons/palette.svg", t.size.icon_sm, if self.ink_palette { t.colors.brand } else { t.colors.text_muted }))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.ink_palette = !this.ink_palette;
+                        cx.notify();
+                    })),
+            )
+            .when(self.ink_palette, |d| d.child(super::motion::rise_in(self.render_ink_palette(t, cx), "ink-palette-in", t)))
+            .children(going)
+    }
+
     /// All the inks in a grid, hung above the ink pill.
-    fn render_ink_palette(&self, t: &crate::theme::Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_ink_palette(&self, t: &crate::theme::Theme, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let current = self.ink;
-        super::motion::rise_in(
-            div()
+        div()
                 .id("ink-palette")
                 .occlude()
                 .absolute()
@@ -177,11 +187,7 @@ impl Folio {
                         .hover(|d| d.bg(t.colors.hover))
                         .child(div().size(px(16.)).rounded(t.radius.full).bg(t.ink(ink)))
                         .on_click(cx.listener(move |this, _, _, cx| this.pick_ink(ink, cx)))
-                }))),
-            "ink-palette-in",
-            -6.,
-            t,
-        )
+                })))
     }
 
     pub(super) fn render_zoom(&mut self, cx: &mut Context<Self>) -> impl IntoElement {

@@ -12,13 +12,54 @@ use crate::theme::{theme, Theme};
 use crate::time::{self, now};
 
 impl Folio {
+    /// The open drawer: it slides in fast and settles as the window behind
+    /// dims; a click on the dimmed part closes it.
     pub(super) fn render_drawer(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         if !self.drawer {
             return div().into_any_element();
         }
         let w = f32::from(t.size.drawer);
-        let reduce = self.board.settings.reduce_motion;
+        let ms = super::motion::ms(t.motion.drawer_in);
+        let panel = self
+            .drawer_panel(cx)
+            .with_animation("drawer-in", Animation::new(Duration::from_millis(ms)).with_easing(ease_out_expo), move |d, k| {
+                d.left(px(-w * (1. - k)))
+            });
+        let backdrop = div()
+            .id("drawer")
+            .absolute()
+            .inset_0()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.drawer = false;
+                    cx.notify();
+                }),
+            )
+            .child(panel);
+        super::motion::scrim(backdrop, "drawer-scrim", t.colors.scrim, &t)
+    }
+
+    /// The drawer that just closed, sliding back out as the window behind
+    /// it brightens.
+    pub(super) fn render_drawer_leaving(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let t = theme(cx).clone();
+        let (_, n) = self.exits.drawer.leaving(t.motion.drawer_out)?;
+        let w = f32::from(t.size.drawer);
+        let panel = self
+            .drawer_panel(cx)
+            .child(div().absolute().inset_0().occlude())
+            .with_animation(("drawer-out", n), Animation::new(Duration::from_millis(super::motion::ms(t.motion.drawer_out))).with_easing(|k: f32| k * k * k), move |d, k| {
+                d.left(px(-w * k))
+            });
+        Some(super::motion::scrim_out(div().absolute().inset_0().child(panel), ("drawer-scrim-out", n), t.colors.scrim, t.motion.drawer_out))
+    }
+
+    /// The drawer's panel: where you can go, every sheet, and you.
+    fn drawer_panel(&mut self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let t = theme(cx).clone();
+        let w = f32::from(t.size.drawer);
         let order = self.board.ordered();
         let active = (self.screen == Screen::Sheet).then_some(self.board.active);
         let cards: Vec<_> = order.into_iter().map(|ix| self.drawer_card(ix, active == Some(ix), &t, cx)).collect();
@@ -192,29 +233,7 @@ impl Folio {
                     ),
             )
             .child(self.drawer_profile(&t, cx));
-        let panel = if reduce {
-            panel.left_0().into_any_element()
-        } else {
-            panel
-                .with_animation("drawer-in", Animation::new(Duration::from_millis(220)).with_easing(ease_out), move |d, k| {
-                    d.left(px(-w * (1. - k)))
-                })
-                .into_any_element()
-        };
-        div()
-            .id("drawer")
-            .absolute()
-            .inset_0()
-            .bg(t.colors.scrim)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.drawer = false;
-                    cx.notify();
-                }),
-            )
-            .child(panel)
-            .into_any_element()
+        panel.left_0()
     }
 
     /// You, at the foot of the drawer: your avatar and name, whether your
@@ -326,6 +345,11 @@ impl Folio {
     }
 }
 
-pub fn ease_out(t: f32) -> f32 {
-    1. - (1. - t).powi(3)
+/// Fast, then a long gentle settle: the drawer's slide.
+fn ease_out_expo(t: f32) -> f32 {
+    if t >= 1. {
+        1.
+    } else {
+        1. - 2f32.powf(-10. * t)
+    }
 }

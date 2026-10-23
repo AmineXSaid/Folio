@@ -11,6 +11,8 @@ use crate::theme::theme;
 pub struct QuickNoteWindow {
     folio: Entity<Folio>,
     input: Entity<TextareaState>,
+    /// Saved or closed: the box plays its way out, then the window goes.
+    leaving: bool,
     _subs: Vec<gpui::Subscription>,
 }
 
@@ -30,21 +32,38 @@ impl QuickNoteWindow {
         })];
         let i = input.clone();
         window.defer(cx, move |window, cx| i.update(cx, |i, cx| i.focus(window, cx)));
-        QuickNoteWindow { folio, input, _subs: subs }
+        QuickNoteWindow { folio, input, leaving: false, _subs: subs }
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.leaving {
+            return;
+        }
         let text = self.input.read(cx).value().to_string();
         self.folio.update(cx, |f, cx| {
             f.quick_note(&text, cx);
             f.desktop.quick = None;
         });
-        window.remove_window();
+        self.leave(window, cx);
     }
 
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.folio.update(cx, |f, _| f.desktop.quick = None);
-        window.remove_window();
+        self.leave(window, cx);
+    }
+
+    /// Fades the box out, then closes the window.
+    fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.leaving, true) {
+            return;
+        }
+        cx.notify();
+        let ms = super::motion::ms(theme(cx).motion.window_out);
+        cx.spawn_in(window, async move |_, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(ms)).await;
+            let _ = cx.update(|window, _| window.remove_window());
+        })
+        .detach();
     }
 }
 
@@ -57,13 +76,15 @@ impl Render for QuickNoteWindow {
             .font_family(t.font)
             .text_color(t.colors.text)
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| this.close(window, cx)))
-            .child(
-                div()
+            .child({
+                let card = div()
+                    .relative()
                     .size_full()
                     .flex()
                     .flex_col()
                     .gap(px(10.))
                     .p(px(16.))
+                    .rounded(t.radius.dialog)
                     .bg(t.colors.surface)
                     .border_1()
                     .border_color(t.colors.border)
@@ -93,7 +114,14 @@ impl Render for QuickNoteWindow {
                             .child("Enter saves")
                             .child("Shift+Enter: new line")
                             .child("Esc closes"),
-                    ),
-            )
+                    );
+                // The box fades up in its window, and sinks away when done.
+                let m = t.motion;
+                if self.leaving {
+                    super::motion::leave(card, "quick-out", m.window_out, m.sink)
+                } else {
+                    super::motion::enter(card, "quick-in", m.window_in, m.rise_window)
+                }
+            })
     }
 }

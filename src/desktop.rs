@@ -98,6 +98,8 @@ pub fn open_quick_note(folio: Entity<Folio>, cx: &mut App) {
         focus: true,
         show: true,
         app_id: Some("folio".into()),
+        // See-through round its corners, so the box can fade up in it.
+        window_background: gpui::WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
     let f = folio.clone();
@@ -144,8 +146,14 @@ impl Folio {
         let me = cx.entity();
         for id in stale {
             if let Some(Some(h)) = self.desktop.notes.remove(&id) {
-                cx.defer(move |cx| {
-                    let _ = h.update(cx, |_, window, _| window.remove_window());
+                // It plays its way out, then closes.
+                cx.defer(move |cx| match h.downcast::<crate::ui::popout::NoteWindow>() {
+                    Some(note) => {
+                        let _ = note.update(cx, |note, window, cx| note.leave(window, cx));
+                    }
+                    None => {
+                        let _ = h.update(cx, |_, window, _| window.remove_window());
+                    }
                 });
             }
         }

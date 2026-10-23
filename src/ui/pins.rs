@@ -38,13 +38,19 @@ pub fn pin_image(shape: PinShape, tone: PinTone, t: &Theme) -> Option<Arc<Image>
 
 /// `pin` across the middle of the top edge of a note `w` px wide, at zoom
 /// `z`: a push pin stands on its point, the rest sit across the edge.
-pub fn pin_view(pin: Pin, w: f32, z: f32, t: &Theme) -> gpui::Div {
-    let d = pin.size.units() * z;
+/// While it lands (`landing`, 0 to 1), it fades in from 85 % about its
+/// middle.
+pub fn pin_view(pin: Pin, w: f32, z: f32, landing: Option<f32>, t: &Theme) -> gpui::Div {
+    let full = pin.size.units() * z;
+    let k = landing.unwrap_or(1.);
+    let d = full * (0.85 + 0.15 * k);
+    let middle = -full * pin.shape.anchor() + full / 2.;
     div()
         .absolute()
         .left(px(w / 2. - d / 2.))
-        .top(px(-d * pin.shape.anchor()))
+        .top(px(middle - d / 2.))
         .size(px(d))
+        .opacity(k)
         .children(pin_image(pin.shape, pin.tone, t).map(|i| img(i).size_full()))
 }
 

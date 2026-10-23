@@ -67,10 +67,57 @@ fn caption(text: &'static str, t: &Theme) -> Div {
 }
 
 impl Folio {
+    /// The open menu, rising into place where it was asked for; a click
+    /// anywhere else closes it.
     pub(super) fn render_menu(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         let Some(menu) = self.menu.as_ref() else { return div().into_any_element() };
         let (at, kind, page) = (menu.at, menu.kind, menu.page);
+        let Some(card) = self.menu_card(kind, page, cx) else { return div().into_any_element() };
+        div()
+            .absolute()
+            .inset_0()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.menu = None;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, _, _, cx| {
+                    this.menu = None;
+                    cx.notify();
+                }),
+            )
+            .child(deferred(anchored().position(at).snap_to_window_with_margin(px(8.)).child(super::motion::rise_in(
+                card,
+                gpui::ElementId::Name(format!("menu-{at:?}-{kind:?}").into()),
+                &t,
+            ))))
+            .into_any_element()
+    }
+
+    /// A menu that just closed, fading where it was.
+    pub(super) fn render_menu_leaving(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let t = theme(cx).clone();
+        let ((at, kind, page), n) = self.exits.menu.leaving(t.motion.pop_out)?;
+        let card = self.menu_card(kind, page, cx)?;
+        Some(
+            deferred(anchored().position(at).snap_to_window_with_margin(px(8.)).child(super::motion::leave(
+                card.relative(),
+                ("menu-out", n),
+                t.motion.pop_out,
+                t.motion.sink,
+            )))
+            .into_any_element(),
+        )
+    }
+
+    /// A menu's card: its rows for `kind` on `page`.
+    fn menu_card(&mut self, kind: MenuKind, page: MenuPage, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
+        let t = theme(cx).clone();
         let back = |label: &'static str, cx: &mut Context<Self>| {
             row("back", "icons/chevron-left.svg", label, None, &t).on_click(cx.listener(|this, _, _, cx| {
                 if let Some(m) = this.menu.as_mut() {
@@ -90,7 +137,7 @@ impl Folio {
         let mut items: Vec<gpui::AnyElement> = Vec::new();
         match (kind, page) {
             (MenuKind::Note(id), MenuPage::Main) => {
-                let Some(s) = self.board.find_note(id).cloned() else { return div().into_any_element() };
+                let Some(s) = self.board.find_note(id).cloned() else { return None };
                 // Twelve papers as small circles: the same width six squares took.
                 let papers = div().flex().items_center().gap(px(3.)).px(t.space.sm).py(t.space.xs).children(Paper::ALL.iter().map(|&p| {
                     div()
@@ -281,7 +328,7 @@ impl Folio {
                 );
             }
             (MenuKind::Note(id), MenuPage::Pin) => {
-                let Some(s) = self.board.find_note(id).cloned() else { return div().into_any_element() };
+                let Some(s) = self.board.find_note(id).cloned() else { return None };
                 let targets = if self.is_selected(super::app::Selection::Sticker(id)) { self.selected_notes() } else { vec![id] };
                 let current = s.pin;
                 items.push(back("Pin", cx).into_any_element());
@@ -316,7 +363,7 @@ impl Folio {
                                     .when(!on, |d| d.hover(|d| d.bg(t.colors.hover)))
                                     .cursor_pointer()
                                     .child(super::pins::pin_icon(shape, tone, 34., &t))
-                                    .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(shape.label()).build(window, cx))
+                                    .tooltip(move |window, cx| super::tip(shape.label(), window, cx))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.set_pin(&targets, cx, |p| {
                                             Some(match p {
@@ -362,7 +409,7 @@ impl Folio {
                                 .border_color(t.colors.border)
                                 .when(on, |d| d.border_2().border_color(t.colors.brand))
                                 .cursor_pointer()
-                                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tone.label()).build(window, cx))
+                                .tooltip(move |window, cx| super::tip(tone.label(), window, cx))
                                 .on_click(cx.listener(move |this, _, _, cx| this.set_pin(&targets, cx, |p| p.map(|p| Pin { tone, ..p }))))
                         }));
                         items.push(tones.into_any_element());
@@ -479,7 +526,7 @@ impl Folio {
                                 .when(on, |d| d.border_2().border_color(t.colors.brand))
                                 .cursor_pointer()
                                 .hover(|d| d.border_color(t.colors.text_subtle))
-                                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tint.label()).build(window, cx))
+                                .tooltip(move |window, cx| super::tip(tint.label(), window, cx))
                                 .on_click(cx.listener(move |this, _, _, cx| this.set_backdrop(cx, |b| b.tint = tint)))
                         }))
                         .into_any_element(),
@@ -593,7 +640,7 @@ impl Folio {
                 );
             }
             (MenuKind::Card(ix), MenuPage::Main) => {
-                let Some(c) = self.board.categories.get(ix) else { return div().into_any_element() };
+                let Some(c) = self.board.categories.get(ix) else { return None };
                 let pinned = c.pinned;
                 items.push(
                     row("m-open-sheet", "icons/arrow-up-right.svg", "Open", None, &t)
@@ -763,46 +810,27 @@ impl Folio {
             _ => None,
         };
         let _ = self.screen == Screen::Home;
-        div()
-            .absolute()
-            .inset_0()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.menu = None;
-                    cx.notify();
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, _, _, cx| {
-                    this.menu = None;
-                    cx.notify();
-                }),
-            )
-            .child(deferred(
-                anchored().position(at).snap_to_window_with_margin(px(8.)).child(super::motion::rise_in(
-                    div()
-                        .id("menu")
-                        .occlude()
-                        .min_w(px(240.))
-                        .max_w(px(360.))
-                        .p(t.space.xs)
-                        .rounded(t.radius.card)
-                        .bg(t.colors.surface)
-                        .border_1()
-                        .border_color(t.colors.border)
-                        .shadow(t.shadow_float())
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .children(heading.map(|h| caption_owned(h, &t)))
-                        .children(items),
-                    // Each opening (and each page) rises into place.
-                    gpui::ElementId::Name(format!("menu-{at:?}-{kind:?}-{page:?}").into()),
-                    -4.,
-                    &t,
+        Some(
+            div()
+                .id("menu")
+                .occlude()
+                .min_w(px(240.))
+                .max_w(px(360.))
+                .p(t.space.xs)
+                .rounded(t.radius.card)
+                .bg(t.colors.surface)
+                .border_1()
+                .border_color(t.colors.border)
+                .shadow(t.shadow_float())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                // Each page fades up in place as you go to it.
+                .child(super::motion::enter(
+                    div().children(heading.map(|h| caption_owned(h, &t))).children(items),
+                    gpui::ElementId::Name(format!("menu-page-{kind:?}-{page:?}").into()),
+                    t.motion.pop_in,
+                    t.motion.sink,
                 )),
-            ))
-            .into_any_element()
+        )
     }
 }
 

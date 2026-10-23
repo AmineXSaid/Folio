@@ -338,9 +338,25 @@ any board size. It is also the foundation for sync (§6).
   16–256, each drawn at its size), which the build embeds in the `.exe`.
   Each window asks Windows for the icon at its own display scale, big and
   small, so the taskbar never stretches one.
-- **Motion (planned):** stickers ease to their lifted shadow in 120 ms;
-  new stickers scale from 96 % with a 160 ms ease-out; sheet switches
-  cross-fade in 120 ms. Respect "reduce motion".
+- **Motion ("Glide", `theme::Motion`, `src/ui/motion.rs`):** everything
+  fades up a few pixels and settles with an ease-out, and leaves the same
+  way, faster, with an ease-in. Menus, popovers, the edit bar and the ink
+  pills: 180 ms in, 120 out, 8 px. Dialogs and the welcome: 240 in, 140
+  out, 14 px, over a backdrop that dims in and lifts. The search: the
+  field widens 260→420 px, results rise 6 px row by row (22 ms apart), and
+  sink as it narrows. The drawer slides in 260 ms (ease-out-expo) and out
+  180. Pages fade up 8 px in 280 ms. Toasts slide in 18 px from the right.
+  A new note fades up from 96 % in 220 ms (drawn at the camera's zoom
+  about its centre, so it really scales); a note leaving fades, sinks and
+  shrinks to 97 % in 160; a pin lands from 85 % in 180 (a beat after a new
+  note); a new picture fades in. A desktop note and the quick note fade up
+  10 px in their own windows and play out before the window closes.
+  Tooltips fade in; light ↔ dark fades the old canvas colour off in 220 ms.
+  Whatever closes, however it was closed, is kept on screen as an
+  unclickable copy while it leaves (`motion::Exit`, `NoteMotion`). Notes
+  picked up and dropped keep their own lift and settle. Settings › Reduce
+  motion makes all of it instant. `FOLIO_SLOW_MOTION=10` plays everything
+  ten times slower, to look at a transition frame by frame.
 - **Sheet backgrounds** use `canvas_dot` (dots, crosses, graph paper's
   heavier lines), `canvas_line` (the other lines) and `tint(Tint)`, the
   paper colours, light and dark.

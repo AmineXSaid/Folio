@@ -135,7 +135,8 @@ impl Folio {
             .flex_col()
             .gap(px(6.))
             .child(div().flex().flex_wrap().gap(px(2.)).children(tabs))
-            .child(div().flex().flex_wrap().gap(px(2.)).children(grid))
+            // Each tab's emoji fade up in place.
+            .child(super::motion::enter(div().flex().flex_wrap().gap(px(2.)).children(grid), ("emoji-grid", tab), t.motion.pop_in, t.motion.sink))
     }
 }
 

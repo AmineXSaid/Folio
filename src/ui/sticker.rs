@@ -354,6 +354,8 @@ impl Folio {
                 .when(!has_text && s.fixed, |i| i.h(px(s.rect.h * z)).rounded_b(px(ib)))
                 .object_fit(ObjectFit::Cover)
                 .flex_none()
+                // A picture just added fades in.
+                .opacity(self.exits.notes.picture_showing(s.id, &t.motion).unwrap_or(1.))
         });
 
         let id = s.id;
@@ -585,7 +587,7 @@ impl Folio {
                 )
             })
             .when(style == NoteStyle::Taped && s.pin.is_none(), |d| d.child(tape(s.id, w, z, t)))
-            .children(s.pin.map(|p| super::pins::pin_view(p, w, z, t)))
+            .children(s.pin.map(|p| super::pins::pin_view(p, w, z, self.exits.notes.pin_landing(s.id, &t.motion), t)))
             .when(s.locked, |d| d.child(div().absolute().top(px(6. * z)).right(px(6. * z)).child(icon("icons/lock.svg", px(12. * z.max(0.8)), t.colors.text_subtle))))
             .when(selected, |d| {
                 d.child(

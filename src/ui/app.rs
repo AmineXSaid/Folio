@@ -21,6 +21,7 @@ use crate::store;
 use crate::theme::{self, theme};
 use crate::time::{self, now};
 use crate::ui::*;
+use super::motion::Exit;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
@@ -275,6 +276,7 @@ pub enum MenuPage {
     Pin,
 }
 
+#[derive(Clone)]
 pub struct Menu {
     /// Window position.
     pub at: Point<Pixels>,
@@ -381,6 +383,7 @@ pub struct Folio {
     /// The backup whose sheets are listed: (day, [(id, name, notes, icon)]).
     pub backup_open: Option<(String, Vec<(Id, String, usize, String)>)>,
     pub toast: Option<SharedString>,
+    pub exits: Exits,
     pub saved: bool,
     /// The OS's light/dark, when the theme follows it.
     pub system_dark: bool,
@@ -405,6 +408,27 @@ pub struct Folio {
     save_task: Option<Task<()>>,
     _ticker: Task<()>,
     _subs: Vec<gpui::Subscription>,
+}
+
+/// What just closed, kept on screen while it leaves (`motion::Exit`).
+#[derive(Default)]
+pub struct Exits {
+    pub menu: Exit<(Point<Pixels>, MenuKind, MenuPage)>,
+    pub dialog: Exit<Dialog>,
+    pub toast: Exit<SharedString>,
+    pub drawer: Exit<()>,
+    pub palette: Exit<()>,
+    pub notes: super::motion::NoteMotion,
+    /// The edit bar, by the note being typed into.
+    pub edit: Exit<Id>,
+    /// The ink pill beside the tool dock, and the palette over it.
+    pub inks: Exit<()>,
+    pub ink_palette: Exit<()>,
+    pub welcome: Exit<super::welcome::Welcome>,
+    /// Light and dark switching: the old canvas colour, fading off, and
+    /// when; a number for its animation.
+    pub theme: Option<(gpui::Hsla, Instant)>,
+    pub theme_n: usize,
 }
 
 const UNDO_DEPTH: usize = 100;
@@ -551,6 +575,7 @@ impl Folio {
             bin_tab: BinTab::Trash,
             backup_open: None,
             toast: None,
+            exits: Exits::default(),
             saved: true,
             system_dark: is_dark(window.appearance()),
             title_input,
@@ -655,9 +680,34 @@ impl Folio {
     pub fn apply_theme(&mut self, cx: &mut Context<Self>) {
         let s = &self.board.settings;
         super::motion::set_reduced(s.reduce_motion);
+        let before = cx.try_global::<theme::ActiveTheme>().map(|a| (a.0.is_dark, a.0.colors.canvas));
         theme::set(self.dark(), s.high_contrast, s.ui_scale, cx);
         sync_component_theme(cx);
+        // Light to dark or back: the old look fades off the window.
+        if let Some((was_dark, canvas)) = before {
+            if was_dark != self.dark() && !super::motion::reduced() {
+                self.exits.theme = Some((canvas, Instant::now()));
+                self.exits.theme_n += 1;
+                let ms = super::motion::ms(theme(cx).motion.theme_fade);
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_millis(ms + 30)).await;
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                })
+                .detach();
+            }
+        }
         cx.refresh_windows();
+    }
+
+    /// The old canvas colour over the window, fading off after a switch
+    /// between light and dark. It takes no clicks.
+    fn render_theme_fade(&mut self, t: &theme::Theme) -> Option<gpui::AnyElement> {
+        let (color, at) = self.exits.theme?;
+        if at.elapsed() >= Duration::from_millis(super::motion::ms(t.motion.theme_fade)) {
+            self.exits.theme = None;
+            return None;
+        }
+        Some(super::motion::fade_off(div().absolute().inset_0().bg(color), ("theme-fade", self.exits.theme_n), t.motion.theme_fade, 0.85))
     }
 
     pub fn toggle_theme(&mut self, cx: &mut Context<Self>) {
@@ -1952,10 +2002,56 @@ impl Folio {
     }
 }
 
+impl Folio {
+    /// Notes what's open this frame. What just closed starts leaving, and
+    /// a frame is asked for once it has gone, so nothing lingers unseen.
+    fn follow_exits(&mut self, cx: &mut Context<Self>) {
+        let m = theme(cx).motion;
+        let menu = self.menu.as_ref().map(|m| (m.at, m.kind, m.page));
+        let mut gone = Vec::new();
+        if self.exits.menu.track(menu.as_ref()) {
+            gone.push(m.pop_out);
+        }
+        if self.exits.dialog.track(self.dialog.as_ref()) {
+            gone.push(m.dialog_out);
+        }
+        if self.exits.toast.track(self.toast.as_ref()) {
+            gone.push(m.toast_out);
+        }
+        if self.exits.drawer.track(self.drawer.then_some(&())) {
+            gone.push(m.drawer_out);
+        }
+        if self.exits.palette.track(self.palette.then_some(&())) {
+            gone.push(m.search_out);
+        }
+        if self.exits.edit.track(self.editing.map(|e| e.id).as_ref()) {
+            gone.push(m.pop_out);
+        }
+        let inks = self.screen == Screen::Sheet && self.tool.uses_ink();
+        if self.exits.inks.track(inks.then_some(&())) {
+            gone.push(m.pop_out);
+        }
+        if self.exits.ink_palette.track((inks && self.ink_palette).then_some(&())) {
+            gone.push(m.pop_out);
+        }
+        if self.exits.welcome.track(self.welcome.as_ref()) {
+            gone.push(m.dialog_out);
+        }
+        for ms in gone {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_millis(super::motion::ms(ms) + 30)).await;
+                let _ = this.update(cx, |_, cx| cx.notify());
+            })
+            .detach();
+        }
+    }
+}
+
 impl Render for Folio {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         self.track_place();
+        self.follow_exits(cx);
         // Off the sheet, the sheet's focus is stale: keys go to the window.
         if self.screen != Screen::Sheet && self.focus.is_focused(window) {
             window.focus(&self.root_focus, cx);
@@ -2042,13 +2138,20 @@ impl Render for Folio {
                 super::motion::page_in(div().flex_1().min_h_0().relative().flex().flex_col().child(main), gpui::ElementId::Name(key.into()), &t)
             })
             .child(self.render_drawer(window, cx))
+            .children(self.render_drawer_leaving(cx))
             .children(self.dialog.is_some().then(|| self.render_dialog(window, cx)))
+            .children(self.render_dialog_leaving(cx))
             .children(self.palette.then(|| self.render_palette_scrim(cx)))
+            .children(self.render_palette_scrim_leaving(cx))
             .children(self.menu.is_some().then(|| self.render_menu(window, cx)))
+            .children(self.render_menu_leaving(cx))
             .children(self.toast.clone().map(|msg| toast(&t, msg)))
+            .children(self.exits.toast.leaving(t.motion.toast_out).map(|(msg, n)| toast_leaving(&t, msg, n)))
+            .children(self.render_theme_fade(&t))
             // The first time, the welcome rises in as the opening fades
             // away over it.
             .children((self.welcome.is_some() && self.intro.as_ref().is_none_or(|i| i.revealing())).then(|| self.render_welcome(window, cx)))
+            .children(self.render_welcome_leaving(window, cx))
             .children(self.intro.is_some().then(|| self.render_intro(window, cx)))
     }
 }

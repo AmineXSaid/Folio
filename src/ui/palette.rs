@@ -9,7 +9,7 @@
 
 use gpui::component::input::Input;
 use gpui::component::Sizable as _;
-use gpui::{div, font, prelude::*, px, Context, CursorStyle, FontWeight, MouseButton, SharedString, StyledText, TextRun, Window};
+use gpui::{div, font, prelude::*, px, AnimationExt as _, Context, CursorStyle, FontWeight, MouseButton, SharedString, StyledText, TextRun, Window};
 
 use super::app::{BinTab, Folio, Screen};
 use super::home::first_line;
@@ -612,7 +612,10 @@ impl Folio {
         if !open {
             let (edge, ink) = (t.colors.border, t.colors.text_muted);
             let lift = t.shadow_raised();
-            return field
+            // Just closed: the results sink away as the field narrows.
+            let going = self.exits.palette.leaving(t.motion.search_out).map(|(_, n)| n);
+            let gone = going.map(|n| self.palette_dropdown(Some(n), window, cx));
+            let field = field
                 .w(t.size.search)
                 .bg(t.colors.surface_sunk)
                 .border_color(t.colors.border)
@@ -620,11 +623,23 @@ impl Folio {
                 .text_color(t.colors.text_subtle)
                 .hover(move |d| d.border_color(edge).text_color(ink).bg(t.colors.surface).shadow(lift))
                 .child(div().flex_1().min_w_0().truncate().text_size(t.text.caption).child("Search sheets, notes, commands"))
-                .tooltip(|window, cx| gpui::component::tooltip::Tooltip::new(format!("Search  {}", shortcut("K"))).build(window, cx))
+                .tooltip(|window, cx| super::tip(format!("Search  {}", shortcut("K")), window, cx))
                 .on_click(cx.listener(|this, _, window, cx| this.open_palette_with("", window, cx)))
-                .into_any_element();
+                .children(gone.map(|d| gpui::deferred(d).with_priority(2)));
+            let (from, to) = (f32::from(t.size.search_open), f32::from(t.size.search));
+            return match going {
+                Some(n) => field
+                    .with_animation(("search-narrow", n), gpui::Animation::new(std::time::Duration::from_millis(motion::ms(t.motion.search_out))), move |d, k| {
+                        d.w(px(from + (to - from) * gpui::ease_out_quint()(k)))
+                    })
+                    .into_any_element(),
+                None => field.into_any_element(),
+            };
         }
-        let dropdown = self.palette_dropdown(window, cx);
+        let dropdown = self.palette_dropdown(None, window, cx);
+        let opened = self.palette_opened;
+        let (from, to) = (f32::from(t.size.search), f32::from(t.size.search_open));
+        let ms = motion::ms(t.motion.search_in);
         field
             .w(t.size.search_open)
             .bg(t.colors.surface)
@@ -645,11 +660,17 @@ impl Folio {
             .child(div().flex_1().min_w_0().child(Input::new(&self.palette_input).appearance(false).small()))
             .child(keys(&t, "Esc"))
             .child(gpui::deferred(dropdown).with_priority(2))
+            // Opening, the field widens to make room for what you type.
+            .with_animation(("search-widen", opened), gpui::Animation::new(std::time::Duration::from_millis(ms)).with_easing(gpui::ease_out_quint()), move |d, k| {
+                d.w(px(from + (to - from) * k))
+            })
             .into_any_element()
     }
 
-    /// The tabs and the results, hung below the field.
-    fn palette_dropdown(&mut self, _: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// The tabs and the results, hung below the field. They rise into
+    /// place as the search opens; `leaving` (a number for its animation)
+    /// draws them sinking away after it closed, unclickable.
+    fn palette_dropdown(&mut self, leaving: Option<usize>, _: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = theme(cx).clone();
         let found = self.search(cx);
         let count = found.rows.len();
@@ -804,34 +825,45 @@ impl Folio {
             }));
         }
 
+        let panel = div()
+            .id("palette")
+            .relative()
+            .occlude()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .rounded(t.radius.card)
+            .bg(t.colors.surface)
+            .border_1()
+            .border_color(t.colors.border)
+            .shadow(t.shadow_float())
+            .cursor(CursorStyle::Arrow)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(tabs)
+            .child(list);
         div()
             .absolute()
             .top(t.size.bar_control + px(8.))
             // Wider than the field, centred under it, so nothing gets cut.
             .left(px(-70.))
             .right(px(-70.))
-            .child(motion::edge_draw(
-                div()
-                    .id("palette")
-                    .relative()
-                    .occlude()
-                    .flex()
-                    .flex_col()
-                    .overflow_hidden()
-                    .rounded(t.radius.card)
-                    .bg(t.colors.surface)
-                    .border_1()
-                    .border_color(t.colors.border)
-                    .shadow(t.shadow_float())
-                    .cursor(CursorStyle::Arrow)
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(tabs)
-                    .child(list),
-                ("palette-open", opened),
-                t.colors.brand,
-                &t,
-            ))
+            .child(match leaving {
+                Some(n) => motion::leave(panel, ("palette-out", n), t.motion.search_out, t.motion.sink),
+                None => motion::enter(panel, ("palette-open", opened), t.motion.search_in, 6.),
+            })
             .into_any_element()
+    }
+
+    /// The window brightening again after the search closed.
+    pub(super) fn render_palette_scrim_leaving(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let t = theme(cx).clone();
+        let (_, n) = self.exits.palette.leaving(t.motion.search_out)?;
+        Some(motion::scrim_out(
+            div().absolute().top(t.size.topbar).left_0().right_0().bottom_0(),
+            ("palette-scrim-out", n),
+            t.colors.scrim,
+            t.motion.search_out,
+        ))
     }
 
     /// Behind the open search: the window under the title bar, dimmed. A
