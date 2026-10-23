@@ -20,7 +20,7 @@ and what is still to come.
 | Notes visible outside the app | ✅ pin a note to the desktop: its own always-on-top window, ticks sync both ways, remembers where it was; see-through mode (solid again under the pointer) | |
 | Freeform canvas | ✅ pan (wheel, Space+drag, middle-drag, Hand), zoom at the cursor, zoom to fit; box select, Shift-click, group move; alignment guides; snap to the dot grid (Settings); areas that carry their notes; tidy up; arrow keys between notes; a map in the corner; drag notes to the left edge to drop them on another sheet; notes lift while dragged and settle with a small bounce | |
 | Sheet backgrounds | ✅ per sheet, from the sheet's menu › Background (with a live sample of each): dots, grid (squared paper), graph (a heavier line every fifth), lines, crosses, isometric dots, plain; six paper colours, light and dark; a picture or SVG from the computer filling the window behind the sheet, softened toward the paper (on by default); "Use on every sheet". Patterns are in world units, so they move and zoom with the sheet and thin out when zoomed far out | a picture that tiles or moves with the sheet |
-| Sticker styling | ✅ 12 papers, 3 sizes, 3 fonts (sans, handwritten, mono), grow-with-text or fixed height (with a "+N more lines" fade), lock, a faint paper sheen; four note types: Card (the default), Taped (squarer paper, clear tape, a curl at the foot), Cheat card (the title on a deeper band of the paper), Index card (a pin, a pink margin, blue rules the text sits on, one thing per line); the type from the edit bar, a note's menu, S on the sheet, or the sheet's menu for a new note; new notes follow the type and font of the note changed last; a cross on hover sends a note to the Trash | slight tilt: GPUI can't rotate elements, so it needs custom-drawn notes |
+| Sticker styling | ✅ 12 papers, 3 sizes, 3 fonts (sans, handwritten, mono), grow-with-text or fixed height (with a "+N more lines" fade), lock, a faint paper sheen; four note types: Card (the default), Taped (squarer paper, clear tape, a curl at the foot), Cheat card (the title on a deeper band of the paper), Index card (a pin, a pink margin, blue rules the text sits on, one thing per line); the type from the edit bar, a note's menu, S on the sheet, or the sheet's menu for a new note; new notes follow the type and font of the note changed last; pins for every type (index cards come with one): 18 shapes in five families (Classic push pin, ball, tack; Tech chip, bug, terminal, rocket, code; Cute heart, flower, bow, butterfly; Stars star, sparkle, moon; Fun paw, smiley, bolt), sizes S/M/L and eight colours, from the edit bar's Pin button or the note menu, for the whole selection at once; a pinned taped note drops its tape | slight tilt: GPUI can't rotate elements, so it needs custom-drawn notes |
 | Editing | ✅ type straight on the note with a two-row edit bar. Writing: bold (Ctrl+B), italic (Ctrl+I), strikethrough (Ctrl+Shift+X), code (Ctrl+E), highlight (Ctrl+Shift+M), bullets (Ctrl+Shift+B), numbers (Ctrl+Shift+O), tasks (Ctrl+Shift+C), a table, a Remember box (Ctrl+Shift+R), Markdown (Ctrl+Shift+T), picture, reminder, more. Look: type, paper, font, size, Done. Enter continues a list; Esc/Done keeps it | WYSIWYG rendering while typing |
 | Text into Markdown | ✅ `src/markdown.rs` turns plain text (pasted from Word, a PDF or a chat) into Markdown: `•`/`–`/`o` bullets, `1)`/`(a)` numbers, `☐`/`✔` boxes, `Term: meaning` with a bold term, `Tip:`/`Remember:` lines as a Remember box, tab-separated lines as a table, a short first line as the title. On the selection or the whole note (Ctrl+Shift+T, the edit bar's Markdown, a note's menu); Ctrl+Shift+V pastes as Markdown, on the sheet or in a note | rich-text (HTML) paste |
 | Remember boxes and tables | ✅ `>` lines draw as a Remember box, labelled by a first line such as `**Tip:**` or `[!NOTE]`; tables draw on the paper with small-caps headers and dashed rules | |
@@ -127,7 +127,8 @@ Category { id, name, blurb, accent, camera: Camera,
            strokes:  Vec<Stroke>, labels: Vec<Label>, links: Vec<Link> }
 Category { …, backdrop: { pattern, tint, image, soften } }
 Sticker  { id, rect, paper, style /* Card, Taped, Cheat, Index */, title,
-           body /* Markdown */, image, text_size, font, edited, … }
+           body /* Markdown */, image, text_size, font, edited,
+           pin: Option<{ shape, size, tone }>, … }
 Stroke   { id, ink, width, marker, points: Vec<Vec2> }   // world units
 Label    { id, at, text, ink }
 Link     { id, from: StickerId, to: StickerId, ink }
@@ -342,10 +343,15 @@ any board size. It is also the foundation for sync (§6).
   paper colours, light and dark.
 - **Note types** draw from their own tokens: `paper_band` (a cheat card's
   band, per paper), `tape`/`tape_edge`, `curl`, `wash` (the Remember box),
-  `rule` (table rules), `ruled`/`margin`/`head_rule` (index cards), `pin`,
-  and `shadow_taped`/`shadow_index`. The type and writing icons (note-*,
+  `rule` (table rules), `ruled`/`margin`/`head_rule` (index cards), and
+  `shadow_taped`/`shadow_index`. The type and writing icons (note-*,
   bold, italic, strikethrough, code, list, list-ordered, table) are
   Folio's own, drawn to match Lucide's.
+- **Pins** are Folio's own SVGs in `assets/pins/` (64-unit view box). Shapes
+  that take a colour use `{main}`, `{shade}` and `{light}`, filled from
+  `pin_tone(PinTone)` in light and dark; the others keep their own colours.
+  Each is rasterised once per shape and colour and cached. A pin hangs over
+  the note's top edge by its `anchor` (the push pin's needle goes deeper).
 - **Tilt (planned):** the mockup tilts stickers ±2°. GPUI elements can't be
   rotated, so this needs either painting stickers as textured quads in a
   custom element or rendering them to a texture. That's deferred because

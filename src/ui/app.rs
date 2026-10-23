@@ -271,6 +271,8 @@ pub enum MenuPage {
     Colour,
     /// The sheet's pattern, colour and picture.
     Background,
+    /// What a note is pinned up with.
+    Pin,
 }
 
 pub struct Menu {
@@ -1105,15 +1107,16 @@ impl Folio {
         let paper = self.sheet().next_paper(set.default_paper);
         let (style, font) = self.sheet().next_look(set.default_style, set.default_font);
         let (w, h) = (240., 120.);
-        self.board.sheet_mut().stickers.push(Sticker {
+        let mut note = Sticker {
             id,
             rect: Rect { x: at.x - w / 2., y: at.y - 30., w, h },
             paper,
             font,
-            style,
             edited: now(),
             ..Default::default()
-        });
+        };
+        note.set_style(style);
+        self.board.sheet_mut().stickers.push(note);
         self.before = Some(before);
         self.select(Selection::Sticker(id));
         self.begin_edit(id, true, window, cx);
@@ -1124,7 +1127,7 @@ impl Folio {
         self.new_note_at(at, window, cx);
         // Part of the new note's undo step.
         if let Some(s) = self.editing.and_then(|ed| self.board.find_note_mut(ed.id)) {
-            s.style = style;
+            s.set_style(style);
         }
         cx.notify();
     }
@@ -1273,14 +1276,32 @@ impl Folio {
     /// editing) as one undoable step.
     pub fn set_style(&mut self, ids: &[Id], style: NoteStyle, cx: &mut Context<Self>) {
         if let Some(ed) = self.editing {
-            self.change_note(ed.id, cx, |s| s.style = style);
+            self.change_note(ed.id, cx, |s| s.set_style(style));
             return;
         }
         let t = now();
         self.change(cx, |b| {
             for id in ids {
                 if let Some(s) = b.find_note_mut(*id) {
-                    s.style = style;
+                    s.set_style(style);
+                    s.edited = t;
+                }
+            }
+        });
+    }
+
+    /// Changes what these notes are pinned up with (the one being typed
+    /// into, while editing), as one undoable step.
+    pub fn set_pin(&mut self, ids: &[Id], cx: &mut Context<Self>, f: impl Fn(Option<Pin>) -> Option<Pin>) {
+        if let Some(ed) = self.editing {
+            self.change_note(ed.id, cx, |s| s.pin = f(s.pin));
+            return;
+        }
+        let t = now();
+        self.change(cx, |b| {
+            for id in ids {
+                if let Some(s) = b.find_note_mut(*id) {
+                    s.pin = f(s.pin);
                     s.edited = t;
                 }
             }
@@ -1675,17 +1696,18 @@ impl Folio {
                         new_id = b.fresh_id();
                         let paper = b.sheet().next_paper(set.default_paper);
                         let (style, font) = b.sheet().next_look(set.default_style, set.default_font);
-                        b.sheet_mut().stickers.push(Sticker {
+                        let mut note = Sticker {
                             id: new_id,
                             rect: Rect { x: at.x - 120., y: at.y - 60., w: 240., h: 120. },
                             paper,
-                            style,
                             font,
                             title: title.unwrap_or_default(),
                             body,
                             edited: now(),
                             ..Default::default()
-                        });
+                        };
+                        note.set_style(style);
+                        b.sheet_mut().stickers.push(note);
                     });
                     self.select(Selection::Sticker(new_id));
                     if structured {

@@ -12,6 +12,7 @@ mod menu;
 mod motion;
 mod mini;
 mod palette;
+mod pins;
 pub mod popout;
 pub mod quick;
 mod settings;

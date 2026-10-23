@@ -292,6 +292,195 @@ impl NoteStyle {
     }
 }
 
+/// What a note is pinned up with: a shape, from the classic push pin to
+/// a star or a little chip, at a size, in a colour where the shape takes
+/// one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct Pin {
+    pub shape: PinShape,
+    #[serde(default)]
+    pub size: PinSize,
+    #[serde(default)]
+    pub tone: PinTone,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum PinShape {
+    /// A push pin seen from the side, its point in the paper.
+    #[default]
+    Push,
+    /// A round glass head.
+    Ball,
+    /// A flat metal drawing pin.
+    Tack,
+    Chip,
+    Bug,
+    Terminal,
+    Rocket,
+    Code,
+    Heart,
+    Flower,
+    Bow,
+    Butterfly,
+    Star,
+    Sparkle,
+    Moon,
+    Paw,
+    Smiley,
+    Bolt,
+}
+
+impl PinShape {
+    /// The shapes in families, as the picker shows them.
+    pub const FAMILIES: [(&'static str, &'static [PinShape]); 5] = [
+        ("Classic", &[PinShape::Push, PinShape::Ball, PinShape::Tack]),
+        ("Tech", &[PinShape::Chip, PinShape::Bug, PinShape::Terminal, PinShape::Rocket, PinShape::Code]),
+        ("Cute", &[PinShape::Heart, PinShape::Flower, PinShape::Bow, PinShape::Butterfly]),
+        ("Stars", &[PinShape::Star, PinShape::Sparkle, PinShape::Moon]),
+        ("Fun", &[PinShape::Paw, PinShape::Smiley, PinShape::Bolt]),
+    ];
+    /// Its picture's name in `assets/pins`.
+    pub fn key(self) -> &'static str {
+        match self {
+            PinShape::Push => "push",
+            PinShape::Ball => "ball",
+            PinShape::Tack => "tack",
+            PinShape::Chip => "chip",
+            PinShape::Bug => "bug",
+            PinShape::Terminal => "terminal",
+            PinShape::Rocket => "rocket",
+            PinShape::Code => "code",
+            PinShape::Heart => "heart",
+            PinShape::Flower => "flower",
+            PinShape::Bow => "bow",
+            PinShape::Butterfly => "butterfly",
+            PinShape::Star => "star",
+            PinShape::Sparkle => "sparkle",
+            PinShape::Moon => "moon",
+            PinShape::Paw => "paw",
+            PinShape::Smiley => "smiley",
+            PinShape::Bolt => "bolt",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            PinShape::Push => "Push pin",
+            PinShape::Ball => "Ball",
+            PinShape::Tack => "Tack",
+            PinShape::Chip => "Chip",
+            PinShape::Bug => "Bug",
+            PinShape::Terminal => "Terminal",
+            PinShape::Rocket => "Rocket",
+            PinShape::Code => "Code",
+            PinShape::Heart => "Heart",
+            PinShape::Flower => "Flower",
+            PinShape::Bow => "Bow",
+            PinShape::Butterfly => "Butterfly",
+            PinShape::Star => "Star",
+            PinShape::Sparkle => "Sparkle",
+            PinShape::Moon => "Moon",
+            PinShape::Paw => "Paw",
+            PinShape::Smiley => "Smiley",
+            PinShape::Bolt => "Bolt",
+        }
+    }
+    /// The colour it comes in unless one is picked, for the shapes that
+    /// take one; the others keep their own colours.
+    pub fn tone(self) -> Option<PinTone> {
+        match self {
+            PinShape::Push => Some(PinTone::Red),
+            PinShape::Ball => Some(PinTone::Pink),
+            PinShape::Heart => Some(PinTone::Pink),
+            PinShape::Bow => Some(PinTone::Purple),
+            PinShape::Star => Some(PinTone::Yellow),
+            _ => None,
+        }
+    }
+    /// How far down its picture the point it's pinned at is: a push pin
+    /// stands on its point; the others sit across the note's top edge.
+    pub fn anchor(self) -> f32 {
+        match self {
+            PinShape::Push => 0.86,
+            _ => 0.55,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PinSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl PinSize {
+    pub const ALL: [PinSize; 3] = [PinSize::Small, PinSize::Medium, PinSize::Large];
+    pub fn label(self) -> &'static str {
+        match self {
+            PinSize::Small => "S",
+            PinSize::Medium => "M",
+            PinSize::Large => "L",
+        }
+    }
+    /// Its width and height in world units.
+    pub fn units(self) -> f32 {
+        match self {
+            PinSize::Small => 30.,
+            PinSize::Medium => 40.,
+            PinSize::Large => 56.,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum PinTone {
+    #[default]
+    Red,
+    Pink,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+    Black,
+    Silver,
+}
+
+impl PinTone {
+    pub const ALL: [PinTone; 8] =
+        [PinTone::Red, PinTone::Pink, PinTone::Yellow, PinTone::Green, PinTone::Blue, PinTone::Purple, PinTone::Black, PinTone::Silver];
+    pub fn label(self) -> &'static str {
+        match self {
+            PinTone::Red => "Red",
+            PinTone::Pink => "Pink",
+            PinTone::Yellow => "Yellow",
+            PinTone::Green => "Green",
+            PinTone::Blue => "Blue",
+            PinTone::Purple => "Purple",
+            PinTone::Black => "Black",
+            PinTone::Silver => "Silver",
+        }
+    }
+}
+
+impl Pin {
+    /// `shape`, keeping this pin's size, and its colour if the new shape
+    /// takes one and this pin had one; else the shape's own.
+    pub fn with_shape(self, shape: PinShape, had: bool) -> Pin {
+        let tone = match (shape.tone(), had && self.shape.tone().is_some()) {
+            (Some(_), true) => self.tone,
+            (Some(own), false) => own,
+            (None, _) => self.tone,
+        };
+        Pin { shape, size: self.size, tone }
+    }
+    /// The pin an index card comes with: a round head, its colour by note.
+    pub fn index_card(id: Id) -> Pin {
+        let tone = [PinTone::Pink, PinTone::Blue, PinTone::Green, PinTone::Yellow][(id % 4) as usize];
+        Pin { shape: PinShape::Ball, size: PinSize::Small, tone }
+    }
+}
+
 /// A web page pinned as a note.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct LinkCard {
@@ -353,6 +542,9 @@ pub struct Sticker {
     pub font: NoteFont,
     #[serde(default)]
     pub style: NoteStyle,
+    /// What it's pinned up with, if anything.
+    #[serde(default)]
+    pub pin: Option<Pin>,
     #[serde(default)]
     pub link: Option<LinkCard>,
     /// Out on the desktop as its own always-on-top window.
@@ -368,6 +560,14 @@ fn yes() -> bool {
 }
 
 impl Sticker {
+    /// Makes it `style`; an index card without a pin gets its round one.
+    pub fn set_style(&mut self, style: NoteStyle) {
+        self.style = style;
+        if style == NoteStyle::Index && self.pin.is_none() {
+            self.pin = Some(Pin::index_card(self.id));
+        }
+    }
+
     /// `#tags` in the title and body, lower-cased, without the `#`.
     pub fn tags(&self) -> Vec<String> {
         let mut t = tags(&self.title);
@@ -1957,5 +2157,36 @@ mod tests {
         // The heavier line is the world's x = 0, wherever the view is.
         assert!(r.iter().any(|x| !x.across && x.at == 30. && x.major));
         assert_eq!(r.iter().filter(|x| x.major).count(), 1);
+    }
+
+    #[test]
+    fn pins_keep_their_size_and_colour_across_shapes() {
+        let red_push = Pin { shape: PinShape::Push, size: PinSize::Large, tone: PinTone::Red };
+        let blue = Pin { tone: PinTone::Blue, ..red_push };
+        // A shape that takes a colour keeps the one picked.
+        assert_eq!(blue.with_shape(PinShape::Heart, true), Pin { shape: PinShape::Heart, size: PinSize::Large, tone: PinTone::Blue });
+        // A first pin takes the shape's own colour.
+        assert_eq!(Pin::default().with_shape(PinShape::Star, false).tone, PinTone::Yellow);
+        // From a fixed-colour shape, the next one takes its own colour too.
+        let chip = blue.with_shape(PinShape::Chip, true);
+        assert_eq!(chip.with_shape(PinShape::Heart, true).tone, PinTone::Pink);
+        let all: Vec<PinShape> = PinShape::FAMILIES.iter().flat_map(|f| f.1.iter().copied()).collect();
+        assert_eq!(all.len(), 18);
+        let s: Sticker = serde_json::from_str(r#"{"id":1,"rect":{"x":0,"y":0,"w":1,"h":1},"paper":"Sage","title":"","body":""}"#).unwrap();
+        assert_eq!(s.pin, None);
+    }
+
+    #[test]
+    fn index_cards_come_with_a_pin_that_can_go() {
+        let mut s = Sticker { id: 6, ..Default::default() };
+        s.set_style(NoteStyle::Index);
+        assert_eq!(s.pin, Some(Pin::index_card(6)));
+        s.pin = None;
+        s.set_style(NoteStyle::Taped);
+        s.set_style(NoteStyle::Index);
+        assert!(s.pin.is_some(), "made an index card again: a pin again");
+        let mut star = Sticker { id: 7, pin: Some(Pin { shape: PinShape::Star, ..Pin::default() }), ..Default::default() };
+        star.set_style(NoteStyle::Index);
+        assert_eq!(star.pin.unwrap().shape, PinShape::Star, "a chosen pin stays");
     }
 }

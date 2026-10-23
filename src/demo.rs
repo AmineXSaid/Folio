@@ -194,6 +194,11 @@ pub fn board() -> Board {
         "MIL → SIL → PIL → HIL: one more real thing at each step.",
     );
     remember.font = NoteFont::Hand;
+    remember.pin = Some(Pin { shape: PinShape::Star, size: PinSize::Medium, tone: PinTone::Yellow });
+    let (mut family, mut bench, mut sil) = (family, bench, sil);
+    family.pin = Some(Pin { shape: PinShape::Push, size: PinSize::Medium, tone: PinTone::Red });
+    bench.pin = Some(Pin { shape: PinShape::Ball, size: PinSize::Small, tone: PinTone::Blue });
+    sil.pin = Some(Pin { shape: PinShape::Chip, size: PinSize::Medium, tone: PinTone::default() });
     let mut booked = styled(&mut b, (972., 380., 232., 100.), Paper::Mint, NoteStyle::Taped, "Bench booked", "Lab 2, on Sam's rig. Bring the harness.");
     booked.due = Some(now + 2 * 86_400);
     let label = b.fresh_id();

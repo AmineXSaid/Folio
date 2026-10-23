@@ -172,6 +172,8 @@ impl Folio {
                         }))
                         .into_any_element(),
                 );
+                let pinned = s.pin.map_or("None", |p| p.shape.label());
+                items.push(row("m-pin", "icons/pin.svg", "Pin", Some(format!("{pinned}  ›")), &t).on_click(cx.listener(goto(MenuPage::Pin))).into_any_element());
                 items.push(
                     row("m-pic", "icons/image.svg", if s.image.is_some() { "Replace picture…" } else { "Add picture…" }, None, &t)
                         .on_click(cx.listener(move |this, _, _, cx| this.pick_image(id, cx)))
@@ -277,6 +279,101 @@ impl Folio {
                         .on_click(cx.listener(move |this, _, _, cx| this.bin_note(id, false, cx)))
                         .into_any_element(),
                 );
+            }
+            (MenuKind::Note(id), MenuPage::Pin) => {
+                let Some(s) = self.board.find_note(id).cloned() else { return div().into_any_element() };
+                let targets = if self.is_selected(super::app::Selection::Sticker(id)) { self.selected_notes() } else { vec![id] };
+                let current = s.pin;
+                items.push(back("Pin", cx).into_any_element());
+                items.push(sep(&t).into_any_element());
+                for (family, shapes) in PinShape::FAMILIES {
+                    items.push(caption(family, &t).into_any_element());
+                    items.push(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(4.))
+                            .px(t.space.sm)
+                            .pb(t.space.xs)
+                            .children(shapes.iter().map(|&shape| {
+                                let on = current.is_some_and(|p| p.shape == shape);
+                                // Shown in the colour it would take.
+                                let tone = match current {
+                                    Some(p) if p.shape.tone().is_some() && shape.tone().is_some() => p.tone,
+                                    _ => shape.tone().unwrap_or_default(),
+                                };
+                                let targets = targets.clone();
+                                div()
+                                    .id(("m-pin", shape as usize))
+                                    .size(px(46.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(t.radius.button)
+                                    .border_1()
+                                    .border_color(if on { t.colors.brand } else { gpui::transparent_black() })
+                                    .when(on, |d| d.bg(t.colors.brand_tint))
+                                    .when(!on, |d| d.hover(|d| d.bg(t.colors.hover)))
+                                    .cursor_pointer()
+                                    .child(super::pins::pin_icon(shape, tone, 34., &t))
+                                    .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(shape.label()).build(window, cx))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.set_pin(&targets, cx, |p| {
+                                            Some(match p {
+                                                Some(p) => p.with_shape(shape, true),
+                                                None => Pin::default().with_shape(shape, false),
+                                            })
+                                        })
+                                    }))
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                if let Some(p) = current {
+                    items.push(sep(&t).into_any_element());
+                    let sizes = div().flex().items_center().gap(px(4.)).px(t.space.sm).pb(t.space.xs).child(div().w(px(52.)).text_size(t.text.caption).text_color(t.colors.text_muted).child("Size")).children(PinSize::ALL.iter().map(|&z| {
+                        let on = p.size == z;
+                        let targets = targets.clone();
+                        div()
+                            .id(("m-pin-size", z as usize))
+                            .size(px(26.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(t.radius.small)
+                            .border_1()
+                            .border_color(if on { t.colors.brand } else { t.colors.border })
+                            .text_size(t.text.caption)
+                            .cursor_pointer()
+                            .child(z.label())
+                            .on_click(cx.listener(move |this, _, _, cx| this.set_pin(&targets, cx, |p| p.map(|p| Pin { size: z, ..p }))))
+                    }));
+                    items.push(sizes.into_any_element());
+                    if p.shape.tone().is_some() {
+                        let tones = div().flex().items_center().gap(px(5.)).px(t.space.sm).pb(t.space.xs).child(div().w(px(52.)).text_size(t.text.caption).text_color(t.colors.text_muted).child("Colour")).children(PinTone::ALL.iter().map(|&tone| {
+                            let on = p.tone == tone;
+                            let targets = targets.clone();
+                            div()
+                                .id(("m-pin-tone", tone as usize))
+                                .size(px(20.))
+                                .rounded(t.radius.full)
+                                .bg(t.pin_swatch(tone))
+                                .border_1()
+                                .border_color(t.colors.border)
+                                .when(on, |d| d.border_2().border_color(t.colors.brand))
+                                .cursor_pointer()
+                                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tone.label()).build(window, cx))
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_pin(&targets, cx, |p| p.map(|p| Pin { tone, ..p }))))
+                        }));
+                        items.push(tones.into_any_element());
+                    }
+                    let targets = targets.clone();
+                    items.push(
+                        row("m-nopin", "icons/x.svg", "No pin", None, &t)
+                            .on_click(cx.listener(move |this, _, _, cx| this.set_pin(&targets, cx, |_| None)))
+                            .into_any_element(),
+                    );
+                }
             }
             (MenuKind::Note(id), MenuPage::MoveTo) => {
                 items.push(back("Move to sheet", cx).into_any_element());

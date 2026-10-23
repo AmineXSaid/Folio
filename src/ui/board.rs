@@ -652,6 +652,16 @@ impl Folio {
             ));
         let look = row()
             .children(styles)
+            .child(
+                bar_btn("e-pin", "icons/pin.svg").tooltip(tip("Pin: push pins, stars, hearts, chips…".into())).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.menu = Some(super::app::Menu { at: ev.position, kind: MenuKind::Note(id), page: MenuPage::Pin });
+                        cx.notify();
+                    }),
+                ),
+            )
             .child(divider())
             .children(papers)
             .child(divider())
@@ -747,8 +757,8 @@ impl Folio {
             .children(picture)
             .child(title)
             .child(div().px(px(10. * z)).pb(px(8. * z)).child(Textarea::new(&self.body_input).appearance(false)))
-            .when(s.style == NoteStyle::Taped, |d| d.child(super::sticker::tape(id, w, z, t)))
-            .when(s.style == NoteStyle::Index, |d| d.child(super::sticker::pin(id, w, z, t)));
+            .when(s.style == NoteStyle::Taped && s.pin.is_none(), |d| d.child(super::sticker::tape(id, w, z, t)))
+            .children(s.pin.map(|p| super::pins::pin_view(p, w, z, t)));
         let note = on_format(note, move |f, window, cx| me.update(cx, |this, cx| this.format_key(f, window, cx)));
         Some(div().absolute().inset_0().child(note).child(bar).into_any_element())
     }

@@ -1,5 +1,5 @@
 //! Three jobs:
-//! - Lists every file under `assets/icons` and `assets/brand` (PNG) for
+//! - Lists every file under `assets/icons`, `assets/pins` and `assets/brand` (PNG) for
 //!   `src/assets.rs` to embed, so a new icon needs no hand-kept list.
 //! - Embeds any .ttf/.otf in `assets/fonts/extra` (git-ignored): fonts you
 //!   hold a licence to ship, such as Anthropic Sans, go in the .exe from
@@ -25,7 +25,7 @@ fn main() {
     google_client();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
     let mut files = Vec::new();
-    for (dir, ext) in [("icons", "svg"), ("brand", "png")] {
+    for (dir, ext) in [("icons", "svg"), ("brand", "png"), ("pins", "svg")] {
         println!("cargo:rerun-if-changed=assets/{dir}");
         let mut names: Vec<String> = std::fs::read_dir(root.join(dir))
             .expect("assets dir")

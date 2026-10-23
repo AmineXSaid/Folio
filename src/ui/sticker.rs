@@ -52,7 +52,7 @@ pub fn radii(style: NoteStyle) -> (f32, f32) {
 }
 
 /// A strip of clear tape over a taped note's top edge. Where it lands
-/// along the edge varies by note, as tape does.
+/// along the edge varies by note, as tape does. A pinned note goes without.
 pub fn tape(id: Id, w: f32, z: f32, t: &Theme) -> gpui::Div {
     let at = [0.5, 0.27, 0.7][(id % 3) as usize];
     div()
@@ -66,20 +66,6 @@ pub fn tape(id: Id, w: f32, z: f32, t: &Theme) -> gpui::Div {
         .border_r_1()
         .border_color(t.colors.tape_edge)
         .shadow(t.shadow_raised())
-}
-
-/// An index card's pin, in the middle of its top edge.
-pub fn pin(id: Id, w: f32, z: f32, t: &Theme) -> gpui::Div {
-    let d = 15. * z;
-    div()
-        .absolute()
-        .top(px(-7. * z))
-        .left(px(w / 2. - d / 2.))
-        .size(px(d))
-        .rounded(t.radius.full)
-        .bg(t.pin(id))
-        .shadow(t.shadow_raised())
-        .child(div().absolute().left(px(3.5 * z)).top(px(3. * z)).size(px(5. * z)).rounded(t.radius.full).bg(gpui::white().opacity(0.55)))
 }
 
 /// A cheat card's title band: a deeper shade of the paper.
@@ -598,8 +584,8 @@ impl Folio {
                         .child(more_label),
                 )
             })
-            .when(style == NoteStyle::Taped, |d| d.child(tape(s.id, w, z, t)))
-            .when(style == NoteStyle::Index, |d| d.child(pin(s.id, w, z, t)))
+            .when(style == NoteStyle::Taped && s.pin.is_none(), |d| d.child(tape(s.id, w, z, t)))
+            .children(s.pin.map(|p| super::pins::pin_view(p, w, z, t)))
             .when(s.locked, |d| d.child(div().absolute().top(px(6. * z)).right(px(6. * z)).child(icon("icons/lock.svg", px(12. * z.max(0.8)), t.colors.text_subtle))))
             .when(selected, |d| {
                 d.child(

@@ -3,7 +3,7 @@
 
 use gpui::{hsla, point, px, rgb, rgba, App, BoxShadow, Global, Hsla, Pixels};
 
-use crate::model::{Accent, Ink, NoteFont, Paper, Tint};
+use crate::model::{Accent, Ink, NoteFont, Paper, PinTone, Tint};
 
 #[derive(Clone, Copy)]
 pub struct Colors {
@@ -339,9 +339,24 @@ impl Theme {
         c(if self.is_dark { dark } else { light })
     }
 
-    /// An index card's pin, by the note: four colours that take turns.
-    pub fn pin(&self, id: u64) -> Hsla {
-        c([0xe5487a, 0x4b6fd0, 0x3d9a6d, 0xd9a12b][(id % 4) as usize])
+    /// A pin's colour: its body, shade and highlight, filled into the pin
+    /// pictures (`assets/pins`). Pins are things, the same in dark mode.
+    pub fn pin_tone(&self, tone: PinTone) -> [u32; 3] {
+        match tone {
+            PinTone::Red => [0xe5484d, 0xa8232a, 0xff9b9e],
+            PinTone::Pink => [0xe5487a, 0xa8204f, 0xffb3cb],
+            PinTone::Yellow => [0xf5c22e, 0xc48d10, 0xffe7a0],
+            PinTone::Green => [0x3d9a6d, 0x22653f, 0xb9ecd0],
+            PinTone::Blue => [0x4b6fd0, 0x2a4596, 0xc9d8ff],
+            PinTone::Purple => [0x8b5cf6, 0x5b32b8, 0xd9c9ff],
+            PinTone::Black => [0x2f353a, 0x111417, 0x8a949b],
+            PinTone::Silver => [0xc9d1d6, 0x8d979d, 0xf6f8f9],
+        }
+    }
+
+    /// A pin colour's swatch.
+    pub fn pin_swatch(&self, tone: PinTone) -> Hsla {
+        c(self.pin_tone(tone)[0])
     }
 
     pub fn ink(&self, i: Ink) -> Hsla {
