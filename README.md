@@ -14,6 +14,10 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
 - **Notes:** type straight onto them; Markdown with tables, task lists you
   tick with a click, coloured highlights, pictures and animated GIFs, link
   cards; notes grow with their text; reminders; lock; a handwritten font.
+  Four types of note: card, taped, cheat card (the title on a band) and
+  index card (ruled, with a pin); Remember boxes from `>` lines; an edit
+  bar with bold, italic, lists, tasks, tables and more, each with a
+  shortcut; pasted plain text turned into Markdown in one go.
 - **The sheet:** pan and zoom, box-select and move groups with alignment
   guides, areas (Kanban columns, days of the week…), pen, marker, eraser,
   text on the sheet, curved links between notes, tidy up, a map.
@@ -24,6 +28,8 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
   backup every day (the last 14 kept) you can restore from.
 
 ![Folio, a sheet in dark mode](docs/screenshots/sheet-dark.png)
+
+![A cheatsheet of taped notes, cheat cards and index cards](docs/screenshots/types-light.png)
 
 ## Run it
 
@@ -146,7 +152,11 @@ set to its address.
 | Ctrl+F | Search notes |
 | Ctrl+Alt+N | Quick note from any app |
 | Ctrl+N / Ctrl+Shift+N | New note / new sheet |
-| Ctrl+B | The sheets drawer |
+| Ctrl+B | The sheets drawer (bold, while typing in a note) |
+| While typing | Ctrl+B / I bold, italic · Ctrl+E code · Ctrl+Shift+X strikethrough · Ctrl+Shift+M highlight · Ctrl+Shift+B / O / C bullets, numbers, tasks · Ctrl+Shift+R a Remember box · Enter continues a list |
+| S | The selected notes' type: card, taped, cheat card, index card |
+| Ctrl+Shift+T | Turn text into Markdown (the selection, or the whole note) |
+| Ctrl+Shift+V | Paste as Markdown |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
 | Ctrl+, | Settings |
 

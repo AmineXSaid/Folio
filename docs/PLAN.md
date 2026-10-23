@@ -19,8 +19,10 @@ and what is still to come.
 | Getting a thought down fast | ✅ Ctrl+Alt+N from any app opens a quick-note box → Inbox sheet; tray icon (Windows); start with Windows | a phone companion |
 | Notes visible outside the app | ✅ pin a note to the desktop: its own always-on-top window, ticks sync both ways, remembers where it was; see-through mode (solid again under the pointer) | |
 | Freeform canvas | ✅ pan (wheel, Space+drag, middle-drag, Hand), zoom at the cursor, zoom to fit; box select, Shift-click, group move; alignment guides; snap to the dot grid (Settings); areas that carry their notes; tidy up; arrow keys between notes; a map in the corner; drag notes to the left edge to drop them on another sheet; notes lift while dragged and settle with a small bounce | |
-| Sticker styling | ✅ 6 papers, 3 sizes, 3 fonts (sans, handwritten, mono), grow-with-text or fixed height (with a "+N more lines" fade), lock, a faint paper sheen | slight tilt: GPUI can't rotate elements, so it needs custom-drawn notes |
-| Editing | ✅ type straight on the note with a format bar (paper, font, size, task, picture, reminder, more); Esc/Done keeps it | WYSIWYG rendering while typing |
+| Sticker styling | ✅ 12 papers, 3 sizes, 3 fonts (sans, handwritten, mono), grow-with-text or fixed height (with a "+N more lines" fade), lock, a faint paper sheen; four note types: Card (the default), Taped (squarer paper, clear tape, a curl at the foot), Cheat card (the title on a deeper band of the paper), Index card (a pin, a pink margin, blue rules the text sits on, one thing per line); the type from the edit bar, a note's menu, S on the sheet, or the sheet's menu for a new note; new notes follow the type and font of the note changed last; a cross on hover sends a note to the Trash | slight tilt: GPUI can't rotate elements, so it needs custom-drawn notes |
+| Editing | ✅ type straight on the note with a two-row edit bar. Writing: bold (Ctrl+B), italic (Ctrl+I), strikethrough (Ctrl+Shift+X), code (Ctrl+E), highlight (Ctrl+Shift+M), bullets (Ctrl+Shift+B), numbers (Ctrl+Shift+O), tasks (Ctrl+Shift+C), a table, a Remember box (Ctrl+Shift+R), Markdown (Ctrl+Shift+T), picture, reminder, more. Look: type, paper, font, size, Done. Enter continues a list; Esc/Done keeps it | WYSIWYG rendering while typing |
+| Text into Markdown | ✅ `src/markdown.rs` turns plain text (pasted from Word, a PDF or a chat) into Markdown: `•`/`–`/`o` bullets, `1)`/`(a)` numbers, `☐`/`✔` boxes, `Term: meaning` with a bold term, `Tip:`/`Remember:` lines as a Remember box, tab-separated lines as a table, a short first line as the title. On the selection or the whole note (Ctrl+Shift+T, the edit bar's Markdown, a note's menu); Ctrl+Shift+V pastes as Markdown, on the sheet or in a note | rich-text (HTML) paste |
+| Remember boxes and tables | ✅ `>` lines draw as a Remember box, labelled by a first line such as `**Tip:**` or `[!NOTE]`; tables draw on the paper with small-caps headers and dashed rules | |
 | Tasks | ✅ `- [ ]` lines are real checkboxes you tick with a click, with a done/total chip | |
 | Coloured text | ✅ highlights (`<mark color="green">`), in tasks too | foreground colour (§4.1) |
 | Tables, images, GIFs, SVG | ✅ as before; link cards from a pasted address: the page's title, site icon and preview picture | crop, captions; animated SVG (§4.2) |
@@ -105,7 +107,10 @@ src/
   assets.rs      embedded icons, fonts, logo
   ui/app.rs      Folio view: state, tools, gestures, undo/redo, debounced save
   ui/board.rs    the sheet: pointer handling, culling, painting dots/ink/links
-  ui/sticker.rs  one sticker: paper, picture, title, Markdown, level of detail
+  markdown.rs    a note's text as blocks (text, tasks, Remember boxes, tables),
+                 the edit bar's formatting, text into Markdown  (no GPUI)
+  ui/sticker.rs  one sticker: its type, paper, picture, title, Markdown,
+                 level of detail
   ui/sidebar.rs  sheets list, theme switch
   ui/topbar.rs   breadcrumb, search, undo/redo, delete sheet, New note
   ui/toolbar.rs  floating tool dock + ink swatches, zoom control
@@ -119,7 +124,8 @@ Board    { version, categories: Vec<Category>, active, dark, next_id }
 Category { id, name, blurb, accent, camera: Camera,
            stickers: Vec<Sticker>,   // back-to-front: order = z-order
            strokes:  Vec<Stroke>, labels: Vec<Label>, links: Vec<Link> }
-Sticker  { id, rect, paper, title, body /* Markdown */, image, text_size, edited }
+Sticker  { id, rect, paper, style /* Card, Taped, Cheat, Index */, title,
+           body /* Markdown */, image, text_size, font, edited, … }
 Stroke   { id, ink, width, marker, points: Vec<Vec2> }   // world units
 Label    { id, at, text, ink }
 Link     { id, from: StickerId, to: StickerId, ink }
@@ -329,6 +335,12 @@ any board size. It is also the foundation for sync (§6).
 - **Motion (planned):** stickers ease to their lifted shadow in 120 ms;
   new stickers scale from 96 % with a 160 ms ease-out; sheet switches
   cross-fade in 120 ms. Respect "reduce motion".
+- **Note types** draw from their own tokens: `paper_band` (a cheat card's
+  band, per paper), `tape`/`tape_edge`, `curl`, `wash` (the Remember box),
+  `rule` (table rules), `ruled`/`margin`/`head_rule` (index cards), `pin`,
+  and `shadow_taped`/`shadow_index`. The type and writing icons (note-*,
+  bold, italic, strikethrough, code, list, list-ordered, table) are
+  Folio's own, drawn to match Lucide's.
 - **Tilt (planned):** the mockup tilts stickers ±2°. GPUI elements can't be
   rotated, so this needs either painting stickers as textured quads in a
   custom element or rendering them to a texture. That's deferred because

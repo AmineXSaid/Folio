@@ -12,6 +12,7 @@
 #   drawer  the sheets drawer         sheet   a sheet
 #   edit    typing into a note        menu    a note's right-click menu
 #   palette Ctrl+K                    settings
+#   types   the cheatsheet sheet: taped notes, cheat cards, index cards
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -51,10 +52,16 @@ for mode in light dark; do
   xdotool windowfocus --sync "$WID" 2>/dev/null || true
   sleep 1.6; import -window root "$OUT/intro-$mode.png"
   sleep 3
+  # The first run asks your name, then your look: "Start writing".
+  xdotool type --delay 30 "Sam"; key Return; sleep 0.8
+  xdotool mousemove 670 588 click 1; sleep 1.5
   [ "$mode" = dark ] && key ctrl+shift+l
   shot home
   key ctrl+b; shot drawer; key Escape
   # The first sheet, from the palette.
+  # The cheatsheet: the three note types.
+  key ctrl+k; xdotool type --delay 20 "hil testing"; key Return
+  xdotool mousemove 640 790; shot types
   key ctrl+k; xdotool type --delay 20 "studio"; key Down Return
   shot sheet
   # A note's menu, then typing into it.
