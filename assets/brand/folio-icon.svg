@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
   <!-- Folio's app icon, the vector master: the logo's tile filling the
        whole square, as other apps' icons do, and the note filling the
-       tile. Drawn at any size it stays sharp; the .ico uses it above 48 px,
-       and scripts/icon_grid.py redraws it on the pixel grid up to 48 px. -->
+       tile. Drawn at any size it stays sharp; the .ico has it at every
+       size from 16 to 256 px (scripts/icons.sh). -->
   <defs>
     <linearGradient id="tile" x1="0.2" y1="0" x2="0.55" y2="1">
       <stop offset="0" stop-color="#EF5E8E"/>

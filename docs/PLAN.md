@@ -337,12 +337,10 @@ any board size. It is also the foundation for sync (§6).
   to edge, with no shadow, as Chrome's and Teams' icons do:
   `folio-icon.svg` (the vector master: a soft gradient on the tile and
   the paper, a shaded fold, a glossy pin, the note lifted on a soft
-  shadow) above 48 px, and `scripts/icon_grid.py` for 16–48 px,
-  which stands the note straight and puts every line on a whole pixel.
-  `scripts/icons.sh` renders the PNGs and `assets/folio.ico` (21 sizes,
-  16–256, each drawn at its size), which the build embeds in the `.exe`.
-  Each window asks Windows for the icon at its own display scale, big and
-  small, so the taskbar never stretches one.
+  shadow), the one drawing at every size. `scripts/icons.sh` renders the
+  PNGs and `assets/folio.ico` (21 sizes, 16–256, each drawn at its size), which the build embeds in
+  the `.exe`. Each window asks Windows for the icon at its own display
+  scale, big and small, so the taskbar never stretches one.
 - **Motion ("Glide", `theme::Motion`, `src/ui/motion.rs`):** everything
   fades up a few pixels and settles with an ease-out, and leaves the same
   way, faster, with an ease-in. Menus, popovers, the edit bar and the ink

@@ -4,14 +4,12 @@
 #   scripts/icons.sh
 #
 #   folio-{512,256,128,64}.png   the logo with its shadow (README, sidebar)
-#   assets/folio.ico             16-256 px (21 sizes); the tile fills the square as
-#                                Chrome's and Teams' icons do. 16-48 px are
-#                                drawn on their own pixel grid by
-#                                scripts/icon_grid.py (a straight note, whole-
-#                                pixel lines); bigger ones are folio-icon.svg.
+#   assets/folio.ico             16-256 px (21 sizes), every one the same
+#                                drawing: folio-icon.svg, whose tile fills
+#                                the square as Chrome's and Teams' icons do.
 #
 # Each size is drawn at that size by headless Chromium, not shrunk from a
-# big one. Needs Chromium (CHROME=...), Python 3 and ImageMagick.
+# big one. Needs Chromium (CHROME=...) and ImageMagick.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -33,10 +31,8 @@ icons=()
 # Every size Windows asks for at 100-250% display scaling, each drawn at
 # that size: a missing one gets stretched up from a smaller one, and looks
 # pixelated in Explorer and on the taskbar.
-for n in 256 192 160 144 128 112 96 80 72 64 60 56; do render "$B/folio-icon.svg" $n "$TMP/i$n.png"; icons+=("$TMP/i$n.png"); done
-for n in 48 40 36 32 30 28 24 20 16; do
-  python3 -I scripts/icon_grid.py $n >"$TMP/g$n.svg"
-  render "$TMP/g$n.svg" $n "$TMP/i$n.png"
+for n in 256 192 160 144 128 112 96 80 72 64 60 56 48 40 36 32 30 28 24 20 16; do
+  render "$B/folio-icon.svg" $n "$TMP/i$n.png"
   icons+=("$TMP/i$n.png")
 done
 cp "$TMP/i256.png" "$B/folio-icon-256.png"
