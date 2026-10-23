@@ -618,7 +618,7 @@ impl Folio {
                 .text_color(t.colors.text_subtle)
                 .hover(move |d| d.border_color(edge).text_color(ink).bg(t.colors.surface))
                 .child(div().flex_1().min_w_0().truncate().text_size(t.text.caption).child("Search sheets, notes and commands"))
-                .child(keys(&t, "Ctrl K"))
+                .tooltip(|window, cx| gpui::component::tooltip::Tooltip::new(format!("Search  {}", shortcut("K"))).build(window, cx))
                 .on_click(cx.listener(|this, _, window, cx| this.open_palette_with("", window, cx)))
                 .into_any_element();
         }

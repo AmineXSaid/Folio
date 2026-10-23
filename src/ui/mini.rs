@@ -2,26 +2,46 @@
 //! when there's room) and links, scaled to fit a box. Used by the home
 //! cards and the drawer.
 
+use std::path::Path;
+
 use gpui::{canvas, div, point, prelude::*, px, Div, PathBuilder};
 
 use crate::model::*;
 use crate::theme::Theme;
 
-/// A `w`×`h` picture of `c`. `titles`: write note titles when legible.
-pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, t: &Theme) -> Div {
+/// A `w`×`h` picture of `c` on its background (pattern, colour, picture
+/// from `media`). `titles`: write note titles when legible.
+pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &Theme) -> Div {
     let rects: Vec<Rect> = c.stickers.iter().map(|s| s.rect).collect();
     let bounds = rects.iter().copied().chain(c.frames.iter().map(|f| f.rect)).reduce(|a, b| a.union(&b));
+    let bd = &c.backdrop;
+    let paper = t.tint(bd.tint);
+    let picture = bd.image.as_ref().map(|name| {
+        div()
+            .absolute()
+            .inset_0()
+            .child(gpui::img(media.join(name)).size_full().object_fit(gpui::ObjectFit::Cover))
+            .when(bd.soften, |d| d.child(div().absolute().inset_0().bg(paper.opacity(0.55))))
+    });
+    // The sheet's pattern at the miniature's scale: through the same camera
+    // as the notes once there are any.
+    let pattern = |cam: Camera| {
+        let (p, dot, line) = (bd.pattern, t.colors.canvas_dot, t.colors.canvas_line);
+        let grid = t.size.dot_grid;
+        canvas(|_, _, _| {}, move |b, _, window, _| super::board::paint_pattern(b, cam, grid, p, dot, line, window)).absolute().inset_0()
+    };
     let base = div()
         .relative()
         .w(px(w))
         .h(px(h))
         .overflow_hidden()
         .rounded(t.radius.button)
-        .bg(t.tint(c.backdrop.tint))
+        .bg(paper)
         .border_1()
-        .border_color(t.colors.border);
+        .border_color(t.colors.border)
+        .children(picture);
     let Some(b) = bounds else {
-        return base.child(
+        return base.child(pattern(Camera { pan: v2(0., 0.), zoom: 0.5 })).child(
             div()
                 .absolute()
                 .inset_0()
@@ -97,7 +117,7 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, t: &Theme) -> Div {
         .map(|(a, b2)| link_curve(&a.rect, &b2.rect).map(|p| (ox + p.x * k, oy + p.y * k)))
         .collect();
     let link_color = t.colors.text_subtle.opacity(0.7);
-    base.child(
+    base.child(pattern(Camera { pan: v2(ox, oy), zoom: k })).child(
         canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {

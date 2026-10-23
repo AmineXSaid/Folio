@@ -299,7 +299,7 @@ impl Folio {
             }]))
             .cursor_pointer()
             .hover(|d| d.border_color(t.colors.text_subtle))
-            .child(miniature(c, 66., 50., false, t).flex_none())
+            .child(miniature(c, 66., 50., false, &crate::store::media_dir(&self.dir), t).flex_none())
             .child(
                 div()
                     .flex_1()

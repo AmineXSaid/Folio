@@ -80,36 +80,14 @@ impl Folio {
             if let Some(today) = self.render_today(&t, cx) {
                 body = body.child(today);
             }
+            // Your #tags, to filter by.
             let tags = self.board.all_tags();
-            // Filters: a note colour, then the tags.
-            let papers = Paper::ALL.iter().map(|&p| {
-                let q = format!("paper:{}", p.key());
-                div()
-                    .id(("paper-filter", p as usize))
-                    .size(px(22.))
-                    .rounded(t.radius.full)
-                    .bg(t.paper(p))
-                    .border_1()
-                    .border_color(t.colors.border)
-                    .cursor_pointer()
-                    .hover(|d| d.border_color(t.colors.brand))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let q = q.clone();
-                        this.search_input.update(cx, |i, cx| i.set_value(q, window, cx));
-                        cx.notify();
-                    }))
-                    .into_any_element()
-            });
-            // Nothing to filter until there are notes.
-            let any_notes = self.board.categories.iter().any(|c| !c.stickers.is_empty());
-            body = body.when(any_notes, |b| b.child(
+            body = body.when(!tags.is_empty(), |b| b.child(
                 div()
                     .flex()
                     .flex_wrap()
                     .items_center()
                     .gap(t.space.sm)
-                    .children(papers)
-                    .child(div().w(px(1.)).h(px(20.)).mx(t.space.xs).bg(t.colors.border))
                     .children(tags.into_iter().take(14).map(|(tag, n)| -> gpui::AnyElement {
                         let label = format!("#{tag}");
                         let id = SharedString::from(format!("tag-{tag}"));
@@ -167,35 +145,86 @@ impl Folio {
                     .children(cards)
                     .child(new_sheet_card(card_w, &t, cx)),
             );
-            let trashed = self.board.bin.len();
-            body = body.child(
-                div().flex().justify_center().child(
-                    div()
-                        .id("to-bin")
-                        .flex()
-                        .items_center()
-                        .gap(t.space.xs)
-                        .text_size(t.text.caption)
-                        .text_color(t.colors.text_subtle)
-                        .cursor_pointer()
-                        .hover(|d| d.text_color(t.colors.text))
-                        .child(icon("icons/archive.svg", t.size.icon_sm, t.colors.text_subtle))
-                        .child(format!("Trash & archive · {trashed}"))
-                        .on_click(cx.listener(|this, _, _, cx| this.open_bin(BinTab::Trash, cx))),
-                ),
-            );
         } else {
             body = body.child(self.render_results(&q, card_w, &t, cx));
         }
 
         div()
-            .id("home")
+            .relative()
             .size_full()
-            .overflow_y_scroll()
-            .px(t.space.xxl)
-            .pt(t.space.xl)
-            .pb(px(48.))
-            .child(body)
+            .child(
+                div()
+                    .id("home")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .px(t.space.xxl)
+                    .pt(t.space.xl)
+                    // Room to scroll the last cards clear of the Trash and Archive.
+                    .pb(px(96.))
+                    .child(body),
+            )
+            .child(self.render_bin_dock(&t, cx))
+    }
+
+    /// Trash and Archive, held in the window's bottom-right corner whatever
+    /// its size: each with how much is in it.
+    fn render_bin_dock(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let archived = self.board.bin.iter().filter(|b| b.archived).count();
+        let trashed = self.board.bin.len() - archived;
+        let part = |id: &'static str, path: &'static str, label: &'static str, n: usize, tab: BinTab, tip: &'static str| {
+            div()
+                .id(id)
+                .h(px(32.))
+                .pl(px(10.))
+                .pr(px(if n > 0 { 6. } else { 12. }))
+                .flex()
+                .items_center()
+                .gap(px(7.))
+                .rounded(t.radius.full)
+                .text_size(t.text.caption)
+                .text_color(t.colors.text_muted)
+                .cursor_pointer()
+                .hover(|d| d.bg(t.colors.hover).text_color(t.colors.text))
+                .child(icon(path, t.size.icon_sm, t.colors.text_muted))
+                .child(label)
+                .when(n > 0, |d| {
+                    d.child(
+                        div()
+                            .min_w(px(20.))
+                            .h(px(20.))
+                            .px(px(6.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(t.radius.full)
+                            .bg(t.colors.surface_sunk)
+                            .border_1()
+                            .border_color(t.colors.border)
+                            .text_size(t.text.micro)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(t.colors.text_body)
+                            .child(n.to_string()),
+                    )
+                })
+                .tooltip(move |window, cx| gpui::component::tooltip::Tooltip::new(tip).build(window, cx))
+                .on_click(cx.listener(move |this, _, _, cx| this.open_bin(tab, cx)))
+        };
+        div()
+            .absolute()
+            .right(t.space.xl)
+            .bottom(t.space.xl)
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .p(px(4.))
+            .rounded(t.radius.full)
+            .bg(t.colors.surface)
+            .border_1()
+            .border_color(t.colors.border)
+            .shadow(t.shadow_float())
+            .child(part("to-trash", "icons/trash.svg", "Trash", trashed, BinTab::Trash, "Deleted notes and sheets, kept 30 days"))
+            .child(div().w(px(1.)).h(px(18.)).bg(t.colors.border))
+            .child(part("to-archive", "icons/archive.svg", "Archive", archived, BinTab::Archive, "Archived notes and sheets, kept until you delete them"))
     }
 
     /// Reminders due today or overdue, as a strip of chips.
@@ -270,7 +299,7 @@ impl Folio {
     fn sheet_card(&self, ix: usize, w: f32, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let c = &self.board.categories[ix];
         let inner = w - 20.;
-        let thumb = miniature(c, inner, (inner * 0.66).round(), true, t);
+        let thumb = miniature(c, inner, (inner * 0.66).round(), true, &crate::store::media_dir(&self.dir), t);
         let n = c.stickers.len();
         let when = format!("{n} note{} · {}", if n == 1 { "" } else { "s" }, time::ago(c.opened.max(c.edited), now()));
         let name = c.name.clone();
