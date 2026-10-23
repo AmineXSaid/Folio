@@ -332,14 +332,18 @@ impl Folio {
         let (rt, rb) = (rt * z, rb * z);
         let w = r.w * z;
 
+        // What reaches a corner rounds it itself: the note clips its
+        // contents to a rectangle, inside its 1px edge.
+        let (it, ib) = ((rt - 1.).max(0.), (rb - 1.).max(0.));
         let picture = s.image.as_ref().map(|name| {
             let has_text = !s.title.is_empty() || !s.body.is_empty();
             // The id gives the picture frame state, so an animated GIF plays.
             img(self.image_path(name))
                 .id(("picture", s.id))
                 .w_full()
+                .rounded_t(px(it))
                 .when(has_text || !s.fixed, |i| i.h(px((s.rect.w * 0.62).min(s.rect.h) * z)))
-                .when(!has_text && s.fixed, |i| i.h(px(s.rect.h * z)))
+                .when(!has_text && s.fixed, |i| i.h(px(s.rect.h * z)).rounded_b(px(ib)))
                 .object_fit(ObjectFit::Cover)
                 .flex_none()
         });
@@ -439,7 +443,7 @@ impl Folio {
                 .children(title)
                 .children(body)
                 .children(chips),
-            NoteStyle::Cheat => div().flex().flex_col().child(band(title, s.paper, z, t)).child(
+            NoteStyle::Cheat => div().flex().flex_col().child(band(title, s.paper, z, t).when(s.image.is_none(), |d| d.rounded_t(px(it)))).child(
                 div().px(px(14. * z)).pt(px(10. * z)).pb(px(14. * z)).flex().flex_col().gap(px(8. * z)).children(body).children(chips),
             ),
             NoteStyle::Index => {
