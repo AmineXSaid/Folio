@@ -110,6 +110,7 @@ pub fn note_body(
     on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
 ) -> NoteParts {
     let lh = line_height(s.style);
+    let ruled = s.style == NoteStyle::Index;
     let mut body: Vec<AnyElement> = Vec::new();
     let base = md_ids.unwrap_or(s.id) * 1024;
     if let Some(l) = &s.link {
@@ -161,9 +162,27 @@ pub fn note_body(
     let mut task = 0usize;
     for block in blocks(&s.body) {
         match block {
+            // An index card keeps a ruled line for every line typed, blank
+            // ones too, so the text never drifts off its rules.
+            Block::Text(text) if s.style == NoteStyle::Index => {
+                for line in text.lines() {
+                    let l = crate::markdown::ruled_line(line);
+                    body.push(
+                        div()
+                            .flex()
+                            .gap(px(6. * k))
+                            .min_h(px(lh * k))
+                            .pl(px(14. * k * l.indent as f32))
+                            .text_size(px(13. * k))
+                            .line_height(px(lh * k))
+                            .text_color(t.colors.text_body)
+                            .children(l.marker.map(|m| div().flex_none().text_color(t.colors.text_muted).child(m)))
+                            .when(!l.text.is_empty(), |d| d.child(div().flex_1().min_w_0().child(md_view(next_id(), &l.text, t))))
+                            .into_any_element(),
+                    );
+                }
+            }
             Block::Text(text) => {
-                // An index card is one thing per line: lines stay as typed.
-                let text = if s.style == NoteStyle::Index { crate::markdown::keep_lines(&text) } else { text };
                 body.push(
                     div()
                         .text_size(px(13. * k))
@@ -220,13 +239,13 @@ pub fn note_body(
                 let gap = if s.style == NoteStyle::Index { 0. } else { 5. * k };
                 body.push(div().flex().flex_col().gap(px(gap)).children(rows).into_any_element());
             }
+            // On an index card the box spans whole ruled lines.
             Block::Callout { label, text } => body.push(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(2. * k))
+                    .when(!ruled, |d| d.gap(px(2. * k)).py(px(8. * k)))
                     .px(px(10. * k))
-                    .py(px(8. * k))
                     .rounded(px(8. * k))
                     .bg(t.colors.wash)
                     .when_some(label, |d, label| {
@@ -234,6 +253,7 @@ pub fn note_body(
                             div()
                                 .flex()
                                 .items_center()
+                                .when(ruled, |d| d.h(px(lh * k)))
                                 .gap(px(5. * k))
                                 .text_size(px(10. * k))
                                 .font_weight(gpui::FontWeight::BOLD)
@@ -246,7 +266,7 @@ pub fn note_body(
                         d.child(
                             div()
                                 .text_size(px(12.5 * k))
-                                .line_height(px(18. * k))
+                                .line_height(px(if ruled { lh } else { 18. } * k))
                                 .text_color(t.colors.text)
                                 .child(md_view(next_id(), &text, t)),
                         )
@@ -260,9 +280,11 @@ pub fn note_body(
                     div()
                         .flex()
                         .gap(px(6. * k))
-                        .py(px(5. * k))
+                        .when(!ruled, |d| d.py(px(5. * k)))
+                        .when(ruled, |d| d.h(px(lh * k)).items_center())
+                        .when(head_row && !ruled, |d| d.pt_0())
                         .when(head_row, |d| {
-                            d.pt_0()
+                            d
                                 .border_b_1()
                                 .border_color(t.colors.rule)
                                 .text_size(px(10. * k))
@@ -270,7 +292,7 @@ pub fn note_body(
                                 .text_color(t.colors.text_body)
                         })
                         .when(!head_row && i < last, |d| d.border_b_1().border_dashed().border_color(t.colors.rule))
-                        .when(i == last && !head_row, |d| d.pb_0())
+                        .when(i == last && !head_row && !ruled, |d| d.pb_0())
                         .children(cells.into_iter().enumerate().map(|(c, cell)| {
                             let plain = !cell.contains(['*', '`', '<', '[', '~', '_']);
                             div()
@@ -508,33 +530,6 @@ impl Folio {
                 .child(div().absolute().right_0().bottom_0().w(g).h(px(2.)).rounded(px(1.)).bg(t.colors.text_subtle))
                 .child(div().absolute().right_0().bottom_0().w(px(2.)).h(g).rounded(px(1.)).bg(t.colors.text_subtle))
         });
-        // Under the pointer: a cross that sends the note to the Trash
-        // (Ctrl+Z brings it back).
-        let delete = (hovered && !s.locked && detail && !lifted).then(|| {
-            let d = 20. * z.clamp(0.8, 1.4);
-            div()
-                .id(("delete", s.id))
-                .absolute()
-                .top(px(6. * z))
-                .right(px(6. * z))
-                .size(px(d))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(t.radius.small)
-                .bg(t.colors.wash)
-                .cursor_pointer()
-                .hover(|d| d.bg(t.colors.danger.opacity(0.18)))
-                .child(icon("icons/x.svg", px(d * 0.6), t.colors.text_body))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.bin_note(id, false, cx);
-                    }),
-                )
-        });
-
         let shadow = if lifted {
             t.shadow_lifted(z)
         } else {
@@ -621,7 +616,6 @@ impl Folio {
                 )
             })
             .children(grip)
-            .children(delete)
             .into_any_element()
     }
 }

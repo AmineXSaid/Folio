@@ -66,27 +66,35 @@ pub fn blocks(body: &str) -> Vec<Block> {
     out
 }
 
-/// Each line on a line of its own, as typed (Markdown would run them into
-/// one paragraph): a hard break at the end of every line that another
-/// follows, outside code.
-pub fn keep_lines(text: &str) -> String {
-    let lines: Vec<&str> = text.split('\n').collect();
-    let mut fence = false;
-    let mut out = String::with_capacity(text.len() + lines.len() * 2);
-    for (i, line) in lines.iter().enumerate() {
-        if line.trim_start().starts_with("```") {
-            fence = !fence;
-        }
-        out.push_str(line);
-        let next = lines.get(i + 1);
-        if !fence && !line.trim().is_empty() && next.is_some_and(|n| !n.trim().is_empty()) && !line.ends_with("  ") {
-            out.push_str("  ");
-        }
-        if next.is_some() {
-            out.push('\n');
-        }
+/// One line of an index card, which keeps a ruled line for every line
+/// typed: its indent (levels), list marker (`•` or `3.`) and the inline
+/// Markdown after it. A heading is a bold line; a blank line or a rule
+/// keeps its ruled line, empty.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuledLine {
+    pub indent: usize,
+    pub marker: Option<String>,
+    pub text: String,
+}
+
+pub fn ruled_line(line: &str) -> RuledLine {
+    let rest = line.trim_start_matches([' ', '\t']);
+    let lead = &line[..line.len() - rest.len()];
+    let indent = lead.chars().filter(|c| *c == '\t').count() + lead.chars().filter(|c| *c == ' ').count() / 2;
+    let rest = rest.trim_end();
+    let plain = |text: String| RuledLine { indent, marker: None, text };
+    if rest.is_empty() || (rest.len() >= 3 && ["-", "*", "_"].iter().any(|m| rest.chars().all(|c| c.to_string() == *m || c == ' '))) {
+        return plain(String::new());
     }
-    out
+    if rest.starts_with('#') {
+        let h = rest.trim_start_matches('#').trim();
+        return plain(if h.is_empty() { String::new() } else { format!("**{h}**") });
+    }
+    match list_marker(rest) {
+        Some((Prefix::Numbered, m)) => RuledLine { indent, marker: Some(format!("{}.", &m[..m.len() - 2])), text: rest[m.len()..].to_string() },
+        Some((_, m)) => RuledLine { indent, marker: Some("•".into()), text: rest[m.len()..].to_string() },
+        None => plain(rest.to_string()),
+    }
 }
 
 fn flush(text: &mut Vec<&str>, out: &mut Vec<Block>) {
@@ -734,10 +742,14 @@ mod tests {
     }
 
     #[test]
-    fn lines_stay_as_typed() {
-        assert_eq!(keep_lines("milk\neggs\n\nbread"), "milk  \neggs\n\nbread");
-        assert_eq!(keep_lines("```\na\nb\n```"), "```\na\nb\n```");
-        assert_eq!(keep_lines("one  \ntwo"), "one  \ntwo");
+    fn index_card_lines() {
+        let l = |s: &str| ruled_line(s);
+        assert_eq!(l("plain **words**"), RuledLine { indent: 0, marker: None, text: "plain **words**".into() });
+        assert_eq!(l("  - item"), RuledLine { indent: 1, marker: Some("•".into()), text: "item".into() });
+        assert_eq!(l("12) twelve"), RuledLine { indent: 0, marker: Some("12.".into()), text: "twelve".into() });
+        assert_eq!(l("## Heading"), RuledLine { indent: 0, marker: None, text: "**Heading**".into() });
+        assert_eq!(l("---").text, "");
+        assert_eq!(l("   ").text, "");
     }
 
     #[test]
