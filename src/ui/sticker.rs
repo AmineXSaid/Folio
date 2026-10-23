@@ -80,8 +80,13 @@ pub fn band(title: Option<AnyElement>, paper: Paper, z: f32, t: &Theme) -> gpui:
         .children(title)
 }
 
-fn md_view(id: u64, text: &str, t: &Theme) -> TextView {
+pub(super) fn md_view(id: u64, text: &str, t: &Theme) -> TextView {
     TextView::markdown(("md", id), tint_marks(text, t.is_dark)).selectable(false).style(markdown_style(t))
+}
+
+/// Markdown written in an ink of its own: text on the sheet.
+pub(super) fn md_view_in(id: u64, text: &str, ink: gpui::Hsla, t: &Theme) -> TextView {
+    md_view(id, text, t).text_color(ink)
 }
 
 /// A note's content: link card, title, then its text, with task lines as

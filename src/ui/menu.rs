@@ -793,6 +793,57 @@ impl Folio {
                         }))
                         .into_any_element(),
                 );
+                // Its size and typeface, as in the bar while writing.
+                let (size, font, slanted) = self
+                    .sheet()
+                    .labels
+                    .iter()
+                    .find(|l| l.id == id)
+                    .map(|l| (l.size, l.font, l.italic))
+                    .unwrap_or_default();
+                let chip = |id: gpui::ElementId, on: bool| {
+                    div()
+                        .id(id)
+                        .h(px(24.))
+                        .min_w(px(26.))
+                        .px(px(6.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.small)
+                        .text_size(t.text.caption)
+                        .cursor_pointer()
+                        .when(on, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint))
+                        .when(!on, |d| d.text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
+                };
+                items.push(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(2.))
+                        .px(t.space.sm)
+                        .py(px(2.))
+                        .children(LabelSize::ALL.iter().map(|&z| {
+                            chip(("m-label-size", z as usize).into(), size == z)
+                                .child(z.label())
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_label(id, cx, |l| l.size = z)))
+                        }))
+                        .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(t.colors.border))
+                        .children(NoteFont::ALL.iter().map(|&f| {
+                            chip(("m-label-font", f as usize).into(), font == f)
+                                .font_family(t.note_font(f))
+                                .child("Aa")
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_label(id, cx, |l| l.font = f)))
+                        }))
+                        .child(
+                            chip("m-label-slant".into(), slanted)
+                                .italic()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child("I")
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_label(id, cx, |l| l.italic = !l.italic))),
+                        )
+                        .into_any_element(),
+                );
                 items.push(
                     row("m-label-del", "icons/trash.svg", "Delete", None, &t)
                         .text_color(t.colors.danger)

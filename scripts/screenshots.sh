@@ -15,6 +15,7 @@
 #   types   the cheatsheet sheet: taped notes, cheat cards, index cards
 #   background  the sheet menu's Background page: patterns, colours, a picture
 #   pins    a note menu's Pin page: shapes, sizes, colours
+#   text    writing on the sheet: wrapping Markdown, its bar, an ink
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -66,6 +67,12 @@ for mode in light dark; do
   xdotool mousemove 640 790; shot types
   xdotool mousemove 680 150 click 3; sleep 0.6; xdotool mousemove 760 360 click 1; shot background; key Escape
   xdotool mousemove 1135 600 click 3; sleep 0.6; xdotool mousemove 1030 432 click 1; shot pins; key Escape
+  # Pan to empty sheet, write with the Text tool, pick the coral ink.
+  sleep 0.5; xdotool mousemove 640 660 click 1; sleep 0.4; key h
+  xdotool mousemove 640 660 mousedown 1; sleep 0.2; xdotool mousemove 640 400; xdotool mousemove 640 250 mouseup 1; sleep 0.5
+  key t; xdotool mousemove 120 360 click 1; sleep 0.8
+  xdotool type --delay 15 "Software-Defined Vehicles: the car is a **computer** on wheels, kept up to date over the air."
+  xdotool mousemove 167 311 click 1; shot text; key Escape; key v
   key ctrl+k; xdotool type --delay 20 "studio"; key Down Return
   shot sheet
   # A note's menu, then typing into it.

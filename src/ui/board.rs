@@ -205,23 +205,8 @@ impl Folio {
         let labels: Vec<_> = sheet
             .labels
             .iter()
-            .filter(|l| Some(l.id) != self.label_edit && label_rect(l).intersects(&view))
-            .map(|l| {
-                let at = cam.to_screen(l.at);
-                let selected = self.is_selected(Selection::Label(l.id));
-                div()
-                    .absolute()
-                    .left(px(at.x))
-                    .top(px(at.y))
-                    .px(px(4. * cam.zoom))
-                    .rounded(t.radius.small)
-                    .text_size(px(15. * cam.zoom))
-                    .italic()
-                    .text_color(t.ink(l.ink))
-                    .when(selected, |d| d.border_1().border_color(t.colors.selection))
-                    .whitespace_nowrap()
-                    .children(l.text.lines().map(|line| div().child(line.to_string())))
-            })
+            .filter(|l| Some(l.id) != self.label_edit && self.label_box(l).intersects(&view))
+            .map(|l| self.render_label(l, cam, &t))
             .collect();
 
         let editing = self.editing.map(|e| e.id);
@@ -270,10 +255,15 @@ impl Folio {
             _ if self.space => gpui::CursorStyle::OpenHand,
             Tool::Hand => gpui::CursorStyle::OpenHand,
             Tool::Pen | Tool::Marker | Tool::Eraser | Tool::Connect | Tool::Frame => gpui::CursorStyle::Crosshair,
+            Tool::Text if self.label_grip_at(self.cursor).is_some() || matches!(self.gesture, Gesture::LabelWidth { .. }) => {
+                gpui::CursorStyle::ResizeLeftRight
+            }
             Tool::Text => gpui::CursorStyle::IBeam,
             Tool::Select => match (&self.gesture, self.hovered) {
                 (Gesture::Pan { .. }, _) => gpui::CursorStyle::ClosedHand,
                 (Gesture::Resize { grip, .. } | Gesture::ResizeFrame { grip, .. }, _) => resize_cursor(*grip),
+                (Gesture::LabelWidth { .. }, _) => gpui::CursorStyle::ResizeLeftRight,
+                (Gesture::None, _) if self.label_grip_at(self.cursor).is_some() => gpui::CursorStyle::ResizeLeftRight,
                 (Gesture::None, _) if self.grip_at(self.cursor).is_some() || self.frame_grip_at(self.cursor).is_some() => {
                     let grip = self.grip_at(self.cursor).or(self.frame_grip_at(self.cursor)).map(|(_, g)| g).unwrap_or_default();
                     resize_cursor(grip)
@@ -421,7 +411,7 @@ impl Folio {
             // Outside the sheet's key context, so typing a new name never
             // trips a one-letter tool key.
             .child(self.render_sheet_head(&t, cx))
-            .children(self.render_label_edit(&t))
+            .children(self.render_label_edit(&t, cx))
             .children(edit_layer)
             .children(edit_bar_leaving)
             .child(self.render_toolbar(window, cx))
@@ -493,31 +483,6 @@ impl Folio {
                     .child(title),
             )
             .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(meta))
-    }
-
-    /// Text being written on the sheet: a caret where the text sits, in
-    /// its italic, its size and its ink; no box.
-    fn render_label_edit(&self, t: &Theme) -> Option<gpui::AnyElement> {
-        let id = self.label_edit?;
-        let l = self.sheet().labels.iter().find(|l| l.id == id)?;
-        let cam = self.sheet().camera;
-        let at = cam.to_screen(l.at);
-        let size = 15. * cam.zoom;
-        Some(
-            div()
-                .absolute()
-                .left(px(at.x - 4.))
-                .top(px(at.y - 4.))
-                .min_w(px(260. * cam.zoom.max(0.6)))
-                .max_w(px(640.))
-                .key_context("LabelEdit")
-                .italic()
-                .text_color(t.ink(l.ink))
-                // The text area's text is 0.875rem: a rem that gives the
-                // label's size.
-                .child(rem_scaled(px(size / 0.875), Textarea::new(&self.label_input).appearance(false)))
-                .into_any_element(),
-        )
     }
 
     /// The note being typed into, drawn over the sheet, with its edit bar
@@ -904,7 +869,7 @@ impl Folio {
                 self.select(Selection::Sticker(id));
             }
             MenuKind::Note(id)
-        } else if let Some(id) = self.sheet().label_at(world) {
+        } else if let Some(id) = self.label_at(world) {
             self.select(Selection::Label(id));
             MenuKind::Label(id)
         } else if let Some(id) = self.frame_bar_at(world).or_else(|| self.sheet().frame_at(world)) {
@@ -988,6 +953,13 @@ impl Folio {
         }
         match self.tool {
             Tool::Hand => self.gesture = pan,
+            // A selected text's handle sets where it wraps, with the text
+            // tool in hand too.
+            Tool::Select | Tool::Text if self.label_grip_at(at).is_some() => {
+                let id = self.label_grip_at(at).unwrap_or_default();
+                let w = self.sheet().labels.iter().find(|l| l.id == id).map(|l| self.label_box(l).w).unwrap_or(LABEL_WRAP);
+                self.gesture = Gesture::LabelWidth { id, start: world.x, w };
+            }
             Tool::Select => {
                 if let Some((id, grip)) = self.grip_at(at) {
                     let rect = self.sheet().sticker(id).map(|s| self.note_rect(s)).unwrap();
@@ -1014,7 +986,7 @@ impl Folio {
                     }
                     self.board.sheet_mut().bring_to_front(id);
                     self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
-                } else if let Some(id) = self.sheet().label_at(world) {
+                } else if let Some(id) = self.label_at(world) {
                     let sel = Selection::Label(id);
                     if double {
                         self.gesture = Gesture::None;
@@ -1060,7 +1032,7 @@ impl Folio {
             }
             Tool::Text => {
                 self.gesture = Gesture::None;
-                if let Some(id) = self.sheet().label_at(world) {
+                if let Some(id) = self.label_at(world) {
                     self.select(Selection::Label(id));
                     self.edit_label(id, false, window, cx);
                 } else {
@@ -1098,9 +1070,11 @@ impl Folio {
                 // The pointer changes to a resize arrow on an edge: draw
                 // again whenever what's under it changes, edge included.
                 let grip = self.grip_at(at).or_else(|| self.frame_grip_at(at)).map(|(_, g)| g);
-                if hovered != self.hovered || grip != self.hover_grip {
+                let label_grip = self.label_grip_at(at).is_some();
+                if hovered != self.hovered || grip != self.hover_grip || label_grip != self.hover_label_grip {
                     self.hovered = hovered;
                     self.hover_grip = grip;
+                    self.hover_label_grip = label_grip;
                     cx.notify();
                 }
                 return;
@@ -1157,6 +1131,12 @@ impl Folio {
                     s.rect = r;
                 }
             }
+            Gesture::LabelWidth { id, start, w } => {
+                let (id, w) = (*id, (*w + world.x - *start).clamp(LABEL_MIN_W, LABEL_MAX_W));
+                if let Some(l) = self.board.sheet_mut().labels.iter_mut().find(|l| l.id == id) {
+                    l.width = Some(w);
+                }
+            }
             Gesture::ResizeFrame { id, start, rect, grip } => {
                 let (id, grip) = (*id, *grip);
                 let r = rect.resized(grip, world.x - start.x, world.y - start.y, 160., 120.);
@@ -1174,7 +1154,7 @@ impl Folio {
                     .iter()
                     .filter(|s| r.intersects(&self.note_rect(s)))
                     .map(|s| Selection::Sticker(s.id))
-                    .chain(c.labels.iter().filter(|l| r.intersects(&label_rect(l))).map(|l| Selection::Label(l.id)))
+                    .chain(c.labels.iter().filter(|l| r.intersects(&self.label_box(l))).map(|l| Selection::Label(l.id)))
                     .chain(c.frames.iter().filter(|f| contains(&r, &f.rect)).map(|f| Selection::Frame(f.id)))
                     .collect();
                 if additive {

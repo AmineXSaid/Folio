@@ -11,6 +11,7 @@ mod intro;
 mod menu;
 mod motion;
 mod mini;
+mod label;
 mod palette;
 mod pins;
 pub mod popout;

@@ -108,6 +108,16 @@ pub fn format_input(title: &Entity<InputState>, body: &Entity<TextareaState>, f:
         tidy_input(title, body, f == Format::Paste, window, cx);
         return;
     }
+    format_text(body, f, window, cx);
+}
+
+/// A writing command on a text with no title (text on the sheet): marks,
+/// lists, a new line, or tidying into Markdown.
+pub fn format_text(body: &Entity<TextareaState>, f: Format, window: &mut Window, cx: &mut gpui::App) {
+    if f == Format::Markdown || f == Format::Paste {
+        tidy_text(body, f == Format::Paste, window, cx);
+        return;
+    }
     body.update(cx, |i, cx| {
         let text = i.value().to_string();
         let sel = i.selected_range();
@@ -182,6 +192,28 @@ fn tidy_input(title: &Entity<InputState>, body: &Entity<TextareaState>, paste: b
 
 /// Writes `new` over `old` in a text area where they differ, as one undo
 /// step, then selects `sel`.
+/// Text into Markdown in a text with no title: the selection, or all of
+/// it; with `paste`, the clipboard's text, tidied, where the caret is.
+fn tidy_text(body: &Entity<TextareaState>, paste: bool, window: &mut Window, cx: &mut gpui::App) {
+    let text = body.read(cx).value().to_string();
+    let sel = body.read(cx).selected_range();
+    let (new, range) = if paste {
+        let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) else { return };
+        let md = markdown::tidy_body(&clip);
+        let at = sel.start + md.len();
+        (format!("{}{md}{}", &text[..sel.start], &text[sel.end..]), at..at)
+    } else if sel.is_empty() {
+        let md = markdown::tidy_body(&text);
+        let end = md.len();
+        (md, end..end)
+    } else {
+        let md = markdown::tidy_body(&text[sel.clone()]);
+        let end = sel.start + md.len();
+        (format!("{}{md}{}", &text[..sel.start], &text[sel.end..]), sel.start..end)
+    };
+    body.update(cx, |i, cx| replace_changed(i, &text, &new, range, window, cx));
+}
+
 fn replace_changed(i: &mut TextareaState, old: &str, new: &str, sel: std::ops::Range<usize>, window: &mut Window, cx: &mut Context<TextareaState>) {
     let pre: usize = old.chars().zip(new.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum();
     let suf: usize =
@@ -242,6 +274,9 @@ pub enum Gesture {
     Erase { erased: bool },
     Connect { from: Id, to: Vec2 },
     MakeFrame { start: Vec2, now: Vec2 },
+    /// Setting where text on the sheet wraps, from its right edge: the
+    /// pointer's x and the width at the press (world units).
+    LabelWidth { id: Id, start: f32, w: f32 },
 }
 
 /// The note being typed into, on the sheet.
@@ -349,6 +384,8 @@ pub struct Folio {
     pub hovered: Option<Id>,
     /// The note or area edge under the pointer, for the resize arrow.
     pub hover_grip: Option<crate::model::Grip>,
+    /// The pointer is on a selected text's width handle.
+    pub hover_label_grip: bool,
     /// Space is held: drag pans.
     pub space: bool,
     /// The last pointer position over the sheet, in sheet-local pixels.
@@ -358,6 +395,8 @@ pub struct Folio {
     pub viewport: Rc<Cell<Bounds<Pixels>>>,
     /// Each note's natural height (world units), measured as it's drawn.
     pub heights: Rc<RefCell<HashMap<Id, f32>>>,
+    /// Each label's size (world units), measured as it's drawn.
+    pub label_sizes: Rc<RefCell<HashMap<Id, (f32, f32)>>>,
     pub undo: Vec<Board>,
     pub redo: Vec<Board>,
     pub editing: Option<Edit>,
@@ -551,10 +590,12 @@ impl Folio {
             selection: Vec::new(),
             hovered: None,
             hover_grip: None,
+            hover_label_grip: false,
             space: false,
             cursor: v2(0., 0.),
             viewport: Rc::new(Cell::new(Bounds::default())),
             heights: Rc::new(RefCell::new(HashMap::new())),
+            label_sizes: Rc::new(RefCell::new(HashMap::new())),
             undo: store::load_history(&store::data_dir()),
             redo: Vec::new(),
             editing: None,
@@ -1514,7 +1555,8 @@ impl Folio {
         let before = self.board.clone();
         let id = self.board.fresh_id();
         let ink = self.ink;
-        self.board.sheet_mut().labels.push(Label { id, at: v2(at.x, at.y - 11.), text: String::new(), ink });
+        let label = Label::new(id, v2(at.x, at.y - LabelSize::M.line() / 2.), ink);
+        self.board.sheet_mut().labels.push(label);
         self.before = Some(before);
         self.select(Selection::Label(id));
         self.edit_label(id, true, window, cx);
@@ -1555,6 +1597,46 @@ impl Folio {
         }
         self.commit(before, cx);
         cx.notify();
+    }
+
+    /// A writing command in the text being written on the sheet.
+    pub fn format_label(&mut self, f: Format, window: &mut Window, cx: &mut Context<Self>) {
+        if self.label_edit.is_none() {
+            return;
+        }
+        format_text(&self.label_input, f, window, cx);
+        self.label_input.update(cx, |i, cx| i.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Changes label `id`'s look: while it's being written, as part of
+    /// that edit (one undo step when it's done); otherwise as a step now.
+    pub fn set_label(&mut self, id: Id, cx: &mut Context<Self>, f: impl FnOnce(&mut Label)) {
+        if self.label_edit == Some(id) {
+            if let Some(l) = self.board.sheet_mut().labels.iter_mut().find(|l| l.id == id) {
+                f(l);
+            }
+            cx.notify();
+            return;
+        }
+        self.change(cx, |b| {
+            if let Some(l) = b.sheet_mut().labels.iter_mut().find(|l| l.id == id) {
+                f(l);
+            }
+        });
+    }
+
+    /// Where label `l` lies: as measured when drawn, or estimated.
+    pub fn label_box(&self, l: &Label) -> Rect {
+        match self.label_sizes.borrow().get(&l.id) {
+            Some(&(w, h)) => Rect { x: l.at.x, y: l.at.y, w, h },
+            None => label_rect(l),
+        }
+    }
+
+    /// The top label under `p` (world).
+    pub fn label_at(&self, p: Vec2) -> Option<Id> {
+        self.sheet().labels.iter().rev().find(|l| self.label_box(l).contains(p)).map(|l| l.id)
     }
 
     pub fn rename_frame(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {

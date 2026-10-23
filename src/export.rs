@@ -259,7 +259,7 @@ mod tests {
             ..Default::default()
         };
         c.stickers = vec![note(3, "Later", "x", 900., 50.), note(2, "Temple", "- [ ] Fushimi", 10., 200.), note(4, "First", "y", 800., 10.)];
-        c.labels.push(Label { id: 5, at: v2(0., 0.), text: "don't forget".into(), ink: Ink::Graphite });
+        c.labels.push(Label { text: "don't forget".into(), ..Label::new(5, v2(0., 0.), Ink::Graphite) });
         let md = sheet_markdown(&c);
         assert!(md.starts_with("# ✈️ Trip\n"));
         let first = md.find("## First").unwrap();

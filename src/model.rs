@@ -730,13 +730,77 @@ impl Stroke {
     }
 }
 
-/// Text written straight on the sheet.
+/// Text written straight on the sheet: Markdown (bold, italic, lists,
+/// highlights...), in an ink, a typeface and a size, wrapping at its width.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Label {
     pub id: Id,
     pub at: Vec2,
     pub text: String,
     pub ink: Ink,
+    #[serde(default)]
+    pub font: NoteFont,
+    /// Text written before sizes was the small size.
+    #[serde(default)]
+    pub size: LabelSize,
+    /// Where its lines wrap, in world units; None wraps at `LABEL_WRAP`
+    /// and is no wider than its longest line.
+    #[serde(default)]
+    pub width: Option<f32>,
+    /// Slanted throughout. Text written before this was.
+    #[serde(default = "slanted")]
+    pub italic: bool,
+}
+
+fn slanted() -> bool {
+    true
+}
+
+/// Where text on the sheet wraps unless given a width of its own.
+pub const LABEL_WRAP: f32 = 480.;
+/// The narrowest and widest a label's width can be set.
+pub const LABEL_MIN_W: f32 = 80.;
+pub const LABEL_MAX_W: f32 = 2000.;
+
+impl Label {
+    /// New text at `at`, upright, at the medium size.
+    pub fn new(id: Id, at: Vec2, ink: Ink) -> Self {
+        Label { id, at, text: String::new(), ink, font: NoteFont::Sans, size: LabelSize::M, width: None, italic: false }
+    }
+}
+
+/// The size of text on the sheet: its type size in world units.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LabelSize {
+    #[default]
+    S,
+    M,
+    L,
+    XL,
+}
+
+impl LabelSize {
+    pub const ALL: [LabelSize; 4] = [LabelSize::S, LabelSize::M, LabelSize::L, LabelSize::XL];
+    pub fn units(self) -> f32 {
+        match self {
+            LabelSize::S => 15.,
+            LabelSize::M => 20.,
+            LabelSize::L => 28.,
+            LabelSize::XL => 40.,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            LabelSize::S => "S",
+            LabelSize::M => "M",
+            LabelSize::L => "L",
+            LabelSize::XL => "XL",
+        }
+    }
+    /// The space between one line's top and the next's.
+    pub fn line(self) -> f32 {
+        self.units() * 1.45
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -993,15 +1057,6 @@ impl Category {
         self.stickers.iter().rev().find(|s| s.rect.contains(p)).map(|s| s.id)
     }
 
-    /// The label whose text box (estimated from its length) holds `p`.
-    pub fn label_at(&self, p: Vec2) -> Option<Id> {
-        self.labels
-            .iter()
-            .rev()
-            .find(|l| label_rect(l).contains(p))
-            .map(|l| l.id)
-    }
-
     pub fn bring_to_front(&mut self, id: Id) {
         if let Some(i) = self.stickers.iter().position(|s| s.id == id) {
             let s = self.stickers.remove(i);
@@ -1150,10 +1205,22 @@ impl Category {
 }
 
 /// A label's box: 7 units per character at the 14-unit label size.
+/// About where a label's text lies, from its length, size and width: each
+/// line wraps where it would pass the width. The view measures the real
+/// box as it draws; this is for before it has.
 pub fn label_rect(l: &Label) -> Rect {
-    let longest = l.text.lines().map(|s| s.chars().count()).max().unwrap_or(1).max(4);
-    let lines = l.text.lines().count().max(1);
-    Rect { x: l.at.x, y: l.at.y, w: longest as f32 * 7.4, h: lines as f32 * 22. }
+    let glyph = l.size.units() * 0.49;
+    let wrap = l.width.unwrap_or(LABEL_WRAP);
+    let (mut widest, mut lines) = (4. * glyph, 0.);
+    for line in l.text.lines().chain(l.text.is_empty().then_some("")) {
+        // Markdown's marks take no room once drawn.
+        let chars = line.chars().filter(|c| !matches!(c, '*' | '_' | '~' | '`')).count().max(1) as f32;
+        let w = chars * glyph;
+        widest = widest.max(w.min(wrap));
+        lines += (w / wrap).ceil().max(1.);
+    }
+    let w = if l.width.is_some() { wrap } else { widest };
+    Rect { x: l.at.x, y: l.at.y, w, h: lines * l.size.line() }
 }
 
 /// The curve a link follows: from the edge of one rect toward the other,
@@ -1773,6 +1840,44 @@ impl Board {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn text_written_before_sizes_keeps_its_look() {
+        let old: Label = serde_json::from_str(r#"{"id":4,"at":{"x":1.0,"y":2.0},"text":"ask Sam","ink":"Graphite"}"#).unwrap();
+        assert!(old.italic, "it was slanted");
+        assert_eq!(old.size, LabelSize::S);
+        assert_eq!(old.font, NoteFont::Sans);
+        assert_eq!(old.width, None);
+        let new = Label::new(5, v2(0., 0.), Ink::Graphite);
+        assert!(!new.italic);
+        assert_eq!(new.size, LabelSize::M);
+    }
+
+    #[test]
+    fn long_text_wraps_in_its_box() {
+        let mut l = Label::new(1, v2(10., 20.), Ink::Graphite);
+        l.text = "short".into();
+        let short = label_rect(&l);
+        assert_eq!((short.x, short.y), (10., 20.));
+        assert_eq!(short.h, LabelSize::M.line());
+        l.text = "word ".repeat(200);
+        let long = label_rect(&l);
+        assert!(long.w <= LABEL_WRAP + 0.01, "no wider than the wrap");
+        assert!(long.h > 5. * LabelSize::M.line(), "it wraps onto many lines");
+        // A set width wraps sooner, and is the box's width.
+        l.width = Some(200.);
+        let narrow = label_rect(&l);
+        assert_eq!(narrow.w, 200.);
+        assert!(narrow.h > long.h);
+        // Bigger text, bigger box; Markdown's marks take no room.
+        l.width = None;
+        l.text = "**important**".into();
+        let marked = label_rect(&l);
+        l.text = "important".into();
+        assert_eq!(marked, label_rect(&l));
+        l.size = LabelSize::XL;
+        assert!(label_rect(&l).h > marked.h && label_rect(&l).w > marked.w);
+    }
     use super::*;
 
     fn sticker(id: Id, x: f32, y: f32) -> Sticker {

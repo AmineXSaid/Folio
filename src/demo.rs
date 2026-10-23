@@ -83,10 +83,10 @@ pub fn board() -> Board {
         Link { id: link_b, from: l1, to: l2, ink: Ink::Forest },
     ];
     sheet.labels = vec![Label {
-        id: label,
-        at: v2(470., 500.),
         text: "remember to leave room for the unexpected".into(),
-        ink: Ink::Graphite,
+        italic: true,
+        size: LabelSize::S,
+        ..Label::new(label, v2(470., 500.), Ink::Graphite)
     }];
     // A hand-drawn underline beneath the label.
     let points = (0..=40)
@@ -208,7 +208,12 @@ pub fn board() -> Board {
     sheet.accent = Accent::Slate;
     sheet.icon = "🧪".into();
     sheet.stickers = vec![what, family, bench, sil, pitfalls, remember, booked];
-    sheet.labels = vec![Label { id: label, at: v2(350., 420.), text: "ask Sam for the CAN logger".into(), ink: Ink::Graphite }];
+    sheet.labels = vec![Label {
+        text: "ask Sam for the CAN logger".into(),
+        italic: true,
+        size: LabelSize::S,
+        ..Label::new(label, v2(350., 420.), Ink::Graphite)
+    }];
     let points = (0..=40)
         .map(|i| {
             let t = i as f32 / 40.;
