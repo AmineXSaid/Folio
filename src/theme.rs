@@ -39,6 +39,17 @@ pub struct Colors {
     pub ok: Hsla,
     /// The window's close button under the pointer (as Windows draws it).
     pub window_close: Hsla,
+    /// Note types: clear tape, the Remember box's wash, table rules, an
+    /// index card's blue lines, pink margin and header rule, and the
+    /// shade where a taped note's foot curls.
+    pub tape: Hsla,
+    pub tape_edge: Hsla,
+    pub wash: Hsla,
+    pub rule: Hsla,
+    pub ruled: Hsla,
+    pub margin: Hsla,
+    pub head_rule: Hsla,
+    pub curl: Hsla,
     /// Google's four colours, for its "G" on the sign-in button (blue,
     /// green, yellow, red), as its brand rules ask: never recoloured.
     pub google: [Hsla; 4],
@@ -202,6 +213,14 @@ impl Theme {
                 alert: c(0xd03b3b),
                 ok: c(0x2f8f5b),
                 window_close: c(0xc42b1c),
+                tape: ca(0xffffffb8),
+                tape_edge: ca(0x18251f17),
+                wash: ca(0xffffff9e),
+                rule: ca(0x18251f38),
+                ruled: ca(0x3f68b033),
+                margin: ca(0xe5487a66),
+                head_rule: ca(0xe5487a9e),
+                curl: ca(0x18251f0d),
                 google: [c(0x4285f4), c(0x34a853), c(0xfbbc05), c(0xea4335)],
             },
             text: TEXT,
@@ -244,6 +263,14 @@ impl Theme {
                 alert: c(0xff7b6e),
                 ok: c(0x5cc98a),
                 window_close: c(0xc42b1c),
+                tape: ca(0xffffff29),
+                tape_edge: ca(0xffffff1a),
+                wash: ca(0xffffff12),
+                rule: ca(0xffffff33),
+                ruled: ca(0x82a6e626),
+                margin: ca(0xf0628f57),
+                head_rule: ca(0xf0628f99),
+                curl: ca(0x00000029),
                 google: [c(0x4285f4), c(0x34a853), c(0xfbbc05), c(0xea4335)],
             },
             text: TEXT,
@@ -273,6 +300,30 @@ impl Theme {
             Paper::Stone => (0xeceeed, 0x2b2f2e),
         };
         c(if self.is_dark { dark } else { light })
+    }
+
+    /// A cheat card's title band: a deeper shade of its paper.
+    pub fn paper_band(&self, p: Paper) -> Hsla {
+        let (light, dark) = match p {
+            Paper::Butter => (0xfde7a6, 0x4a412b),
+            Paper::Sage => (0xcde4d4, 0x2b4236),
+            Paper::Sky => (0xd0e0f5, 0x2b3a4c),
+            Paper::Blush => (0xf2d2c9, 0x4b3632),
+            Paper::Lilac => (0xded3f2, 0x3b3449),
+            Paper::Plain => (0xeef1ec, 0x2d3530),
+            Paper::Peach => (0xffd4b3, 0x4e3929),
+            Paper::Rose => (0xf6cbdb, 0x4b2f3d),
+            Paper::Ocean => (0xc3e5e7, 0x284446),
+            Paper::Mint => (0xc7ebd7, 0x284633),
+            Paper::Sand => (0xe6d9bf, 0x453e35),
+            Paper::Stone => (0xdce0de, 0x373c3a),
+        };
+        c(if self.is_dark { dark } else { light })
+    }
+
+    /// An index card's pin, by the note: four colours that take turns.
+    pub fn pin(&self, id: u64) -> Hsla {
+        c([0xe5487a, 0x4b6fd0, 0x3d9a6d, 0xd9a12b][(id % 4) as usize])
     }
 
     pub fn ink(&self, i: Ink) -> Hsla {
@@ -326,6 +377,28 @@ impl Theme {
                 spread_radius: px(0.),
             inset: false,
             },
+        ]
+    }
+
+    /// A taped note: low and close, as paper stuck flat to the sheet.
+    pub fn shadow_taped(&self, zoom: f32) -> Vec<BoxShadow> {
+        let a = if self.is_dark { 0.5 } else { 0.14 };
+        let tint = |k: f32| hsla(150. / 360., 0.2, if self.is_dark { 0.02 } else { 0.12 }, a * k);
+        vec![
+            BoxShadow { color: tint(0.45), offset: point(px(0.), px(1.)), blur_radius: px(1.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: tint(1.), offset: point(px(0.), px(6. * zoom)), blur_radius: px(12. * zoom), spread_radius: px(-4. * zoom), inset: false },
+            BoxShadow { color: tint(1.1), offset: point(px(0.), px(16. * zoom)), blur_radius: px(24. * zoom), spread_radius: px(-14. * zoom), inset: false },
+        ]
+    }
+
+    /// An index card: crisp card stock, a hair off the sheet.
+    pub fn shadow_index(&self, zoom: f32) -> Vec<BoxShadow> {
+        let a = if self.is_dark { 0.5 } else { 0.12 };
+        let tint = |k: f32| hsla(150. / 360., 0.2, if self.is_dark { 0.02 } else { 0.12 }, a * k);
+        vec![
+            BoxShadow { color: tint(0.55), offset: point(px(0.), px(1.)), blur_radius: px(1.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: tint(0.65), offset: point(px(0.), px(3. * zoom)), blur_radius: px(6. * zoom), spread_radius: px(-2. * zoom), inset: false },
+            BoxShadow { color: tint(1.4), offset: point(px(0.), px(14. * zoom)), blur_radius: px(26. * zoom), spread_radius: px(-12. * zoom), inset: false },
         ]
     }
 
@@ -402,6 +475,9 @@ impl Theme {
             c.text_subtle = rgb(0xb3bcb7).into();
             c.border = rgb(0x8a9590).into();
             c.canvas_dot = rgb(0x46504b).into();
+            c.rule = rgba(0xffffff80).into();
+            c.ruled = rgba(0x82a6e666).into();
+            c.margin = rgba(0xf0628fb3).into();
         } else {
             c.text = rgb(0x000000).into();
             c.text_body = rgb(0x111815).into();
@@ -409,6 +485,9 @@ impl Theme {
             c.text_subtle = rgb(0x4d5852).into();
             c.border = rgb(0x6f7a74).into();
             c.canvas_dot = rgb(0xa9b3ab).into();
+            c.rule = rgba(0x18251f80).into();
+            c.ruled = rgba(0x3f68b066).into();
+            c.margin = rgba(0xe5487ab3).into();
         }
         self.high_contrast = true;
         self

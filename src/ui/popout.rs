@@ -6,11 +6,11 @@
 use gpui::component::input::{Input, InputState, Textarea, TextareaState};
 use gpui::{div, point, prelude::*, px, size, Context, Entity, MouseButton, Pixels, Point, Window, WindowControlArea};
 
-use super::app::Folio;
-use super::sticker::note_body;
+use super::app::{format_key_input, Folio};
+use super::sticker::{band, note_body};
 use super::*;
 use crate::desktop::{MIN_H, MIN_W};
-use crate::model::Id;
+use crate::model::{Id, NoteStyle};
 use crate::theme::theme;
 
 /// The title and text being edited.
@@ -172,9 +172,10 @@ impl Render for NoteWindow {
             .child(strip_button("dock", "icons/x.svg", &t).on_click(move |_, _, cx| f_dock.update(cx, |f, cx| f.dock(id, cx))));
 
         let content = match editing {
-            Some((title, body)) => div()
-                .id("note")
-                .key_context("NoteEdit")
+            Some((title, body)) => on_format(div().id("note").key_context("NoteEdit"), {
+                let (title, body) = (title.clone(), body.clone());
+                move |f, window, cx| format_key_input(&title, &body, f, window, cx)
+            })
                 .flex_1()
                 .min_h_0()
                 .px(px(10.))
@@ -203,7 +204,15 @@ impl Render for NoteWindow {
                         this.start_edit(window, cx);
                     }
                 }))
-                .children(note_body(&s, 1.0, &t, &media, None, toggle)),
+                .map(|d| {
+                    let parts = note_body(&s, 1.0, &t, &media, None, toggle);
+                    // A cheat card's title keeps its band, inset in the window.
+                    let title = match s.style {
+                        NoteStyle::Cheat => Some(band(parts.title, s.paper, 1.0, &t).rounded(t.radius.button).into_any_element()),
+                        _ => parts.title,
+                    };
+                    d.children(title).children(parts.body)
+                }),
         };
 
         // The corner: drag it to size the note.

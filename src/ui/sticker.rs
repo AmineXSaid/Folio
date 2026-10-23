@@ -7,6 +7,7 @@ use gpui::component::text::{TextView, TextViewStyle};
 use gpui::{canvas, div, img, prelude::*, px, AnyElement, App, Context, MouseButton, ObjectFit, StyledImage, Window};
 
 use super::app::{Folio, Gesture, Selection};
+use crate::markdown::{blocks, Block};
 use super::home::first_line;
 use super::*;
 use crate::model::*;
@@ -24,8 +25,82 @@ pub fn size_factor(z: TextSize) -> f32 {
     }
 }
 
-/// A note's content: link card, title, then its text, task lines as
-/// checkboxes (`on_toggle` gets the task's number). `k` scales sizes.
+/// A note's content, taken apart so each type can place its title: on a
+/// cheat card's band, above an index card's rule, or at the top.
+pub struct NoteParts {
+    pub title: Option<AnyElement>,
+    pub body: Vec<AnyElement>,
+}
+
+/// The line height a note's text keeps: index cards write on 24 px rules.
+pub fn line_height(style: NoteStyle) -> f32 {
+    if style == NoteStyle::Index {
+        24.
+    } else {
+        20.
+    }
+}
+
+/// Corner radii, top and bottom, in world units: taped paper is squarer
+/// at the top and curls at the foot; index cards are card stock.
+pub fn radii(style: NoteStyle) -> (f32, f32) {
+    match style {
+        NoteStyle::Card | NoteStyle::Cheat => (12., 12.),
+        NoteStyle::Taped => (4., 10.),
+        NoteStyle::Index => (3., 3.),
+    }
+}
+
+/// A strip of clear tape over a taped note's top edge. Where it lands
+/// along the edge varies by note, as tape does.
+pub fn tape(id: Id, w: f32, z: f32, t: &Theme) -> gpui::Div {
+    let at = [0.5, 0.27, 0.7][(id % 3) as usize];
+    div()
+        .absolute()
+        .top(px(-11. * z))
+        .left(px(w * at - 42. * z))
+        .w(px(84. * z))
+        .h(px(22. * z))
+        .bg(t.colors.tape)
+        .border_l_1()
+        .border_r_1()
+        .border_color(t.colors.tape_edge)
+        .shadow(t.shadow_raised())
+}
+
+/// An index card's pin, in the middle of its top edge.
+pub fn pin(id: Id, w: f32, z: f32, t: &Theme) -> gpui::Div {
+    let d = 15. * z;
+    div()
+        .absolute()
+        .top(px(-7. * z))
+        .left(px(w / 2. - d / 2.))
+        .size(px(d))
+        .rounded(t.radius.full)
+        .bg(t.pin(id))
+        .shadow(t.shadow_raised())
+        .child(div().absolute().left(px(3.5 * z)).top(px(3. * z)).size(px(5. * z)).rounded(t.radius.full).bg(gpui::white().opacity(0.55)))
+}
+
+/// A cheat card's title band: a deeper shade of the paper.
+pub fn band(title: Option<AnyElement>, paper: Paper, z: f32, t: &Theme) -> gpui::Div {
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .px(px(14. * z))
+        .py(px(if title.is_some() { 9. * z } else { 4. * z }))
+        .bg(t.paper_band(paper))
+        .children(title)
+}
+
+fn md_view(id: u64, text: &str, t: &Theme) -> TextView {
+    TextView::markdown(("md", id), tint_marks(text, t.is_dark)).selectable(false).style(markdown_style(t))
+}
+
+/// A note's content: link card, title, then its text, with task lines as
+/// checkboxes (`on_toggle` gets the task's number), `>` lines as a
+/// Remember box and tables on the paper. `k` scales sizes.
 pub fn note_body(
     s: &Sticker,
     k: f32,
@@ -33,12 +108,13 @@ pub fn note_body(
     media: &std::path::Path,
     md_ids: Option<u64>,
     on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
-) -> Vec<AnyElement> {
-    let mut out: Vec<AnyElement> = Vec::new();
-    let base = md_ids.unwrap_or(s.id) * 64;
+) -> NoteParts {
+    let lh = line_height(s.style);
+    let mut body: Vec<AnyElement> = Vec::new();
+    let base = md_ids.unwrap_or(s.id) * 1024;
     if let Some(l) = &s.link {
         let title = if l.title.is_empty() { l.url.clone() } else { l.title.clone() };
-        out.push(
+        body.push(
             div()
                 .flex()
                 .flex_col()
@@ -67,52 +143,40 @@ pub fn note_body(
                 .into_any_element(),
         );
     }
-    if !s.title.is_empty() {
-        out.push(
-            div()
-                .text_size(px(15. * k))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(t.colors.text)
-                .line_height(px(20. * k))
-                .child(s.title.clone())
-                .into_any_element(),
-        );
-    }
-    // Plain stretches as Markdown, task lines as checkboxes.
-    let mut plain: Vec<&str> = Vec::new();
+    let title = (!s.title.is_empty()).then(|| {
+        let size = if s.style == NoteStyle::Cheat { 14. } else { 15. };
+        div()
+            .text_size(px(size * k))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(t.colors.text)
+            .line_height(px(if s.style == NoteStyle::Index { 24. } else { 20. } * k))
+            .child(s.title.clone())
+            .into_any_element()
+    });
     let mut seg = 0u64;
-    let mut task = 0usize;
-    let flush = |plain: &mut Vec<&str>, seg: &mut u64, out: &mut Vec<AnyElement>| {
-        let text = plain.join("\n");
-        plain.clear();
-        if text.trim().is_empty() {
-            return;
-        }
-        out.push(
-            div()
-                .text_size(px(13. * k))
-                .line_height(px(20. * k))
-                .text_color(t.colors.text_body)
-                .child(TextView::markdown(("md", base + *seg), tint_marks(&text, t.is_dark)).selectable(false).style(markdown_style(t)))
-                .into_any_element(),
-        );
-        *seg += 1;
+    let mut next_id = || {
+        seg += 1;
+        base + seg
     };
-    let mut tasks: Vec<AnyElement> = Vec::new();
-    for line in s.body.lines() {
-        match task_line(line) {
-            Some((done, text)) => {
-                if !plain.is_empty() {
-                    if !tasks.is_empty() {
-                        out.push(div().flex().flex_col().gap(px(5. * k)).children(std::mem::take(&mut tasks)).into_any_element());
-                    }
-                    flush(&mut plain, &mut seg, &mut out);
-                }
-                let n = task;
-                task += 1;
-                let toggle = on_toggle.clone();
-                let b = px(15. * k);
-                tasks.push(
+    let mut task = 0usize;
+    for block in blocks(&s.body) {
+        match block {
+            Block::Text(text) => body.push(
+                div()
+                    .text_size(px(13. * k))
+                    .line_height(px(lh * k))
+                    .text_color(t.colors.text_body)
+                    .child(md_view(next_id(), &text, t))
+                    .into_any_element(),
+            ),
+            Block::Tasks(items) => {
+                let rows = items.into_iter().map(|(done, text)| {
+                    let n = task;
+                    task += 1;
+                    let toggle = on_toggle.clone();
+                    let b = px(15. * k);
+                    // Markdown too, so **bold** and highlights work in tasks.
+                    let md = if done && !text.trim().is_empty() { format!("~~{}~~", text.trim()) } else { text };
                     div()
                         .flex()
                         .items_start()
@@ -120,7 +184,7 @@ pub fn note_body(
                         .child(
                             div()
                                 .id(("task", base + n as u64))
-                                .mt(px(2.5 * k))
+                                .mt(px((lh - 15.) / 2. * k))
                                 .size(b)
                                 .flex_none()
                                 .rounded(px(4. * k))
@@ -137,37 +201,104 @@ pub fn note_body(
                                     toggle(n, window, cx);
                                 }),
                         )
-                        .child({
-                            // Markdown too, so **bold** and highlights work in tasks.
-                            let md = if done && !text.trim().is_empty() { format!("~~{}~~", text.trim()) } else { text.to_string() };
+                        .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
                                 .text_size(px(13. * k))
-                                .line_height(px(20. * k))
+                                .line_height(px(lh * k))
                                 .text_color(if done { t.colors.text_subtle } else { t.colors.text_body })
-                                .child(
-                                    TextView::markdown(("task-text", base + n as u64), tint_marks(&md, t.is_dark))
-                                        .selectable(false)
-                                        .style(markdown_style(t)),
-                                )
+                                .child(md_view(next_id(), &md, t)),
+                        )
+                        .into_any_element()
+                });
+                let rows: Vec<AnyElement> = rows.collect();
+                let gap = if s.style == NoteStyle::Index { 0. } else { 5. * k };
+                body.push(div().flex().flex_col().gap(px(gap)).children(rows).into_any_element());
+            }
+            Block::Callout { label, text } => body.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2. * k))
+                    .px(px(10. * k))
+                    .py(px(8. * k))
+                    .rounded(px(8. * k))
+                    .bg(t.colors.wash)
+                    .when_some(label, |d, label| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(5. * k))
+                                .text_size(px(10. * k))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(t.colors.text_body)
+                                .child(icon("icons/lightbulb.svg", px(11. * k), t.colors.text_body))
+                                .child(label.to_uppercase()),
+                        )
+                    })
+                    .when(!text.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .text_size(px(12.5 * k))
+                                .line_height(px(18. * k))
+                                .text_color(t.colors.text)
+                                .child(md_view(next_id(), &text, t)),
+                        )
+                    })
+                    .into_any_element(),
+            ),
+            Block::Table { head, rows } => {
+                let last = rows.len();
+                let mut row = |cells: Vec<String>, i: usize| {
+                    let head_row = i == 0;
+                    div()
+                        .flex()
+                        .gap(px(6. * k))
+                        .py(px(5. * k))
+                        .when(head_row, |d| {
+                            d.pt_0()
+                                .border_b_1()
+                                .border_color(t.colors.rule)
+                                .text_size(px(10. * k))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(t.colors.text_body)
                         })
+                        .when(!head_row && i < last, |d| d.border_b_1().border_dashed().border_color(t.colors.rule))
+                        .when(i == last && !head_row, |d| d.pb_0())
+                        .children(cells.into_iter().enumerate().map(|(c, cell)| {
+                            let plain = !cell.contains(['*', '`', '<', '[', '~', '_']);
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .when(c == 0 && !head_row, |d| d.font_weight(gpui::FontWeight::SEMIBOLD).text_color(t.colors.text))
+                                .map(|d| match (head_row, plain) {
+                                    (true, _) => d.child(cell.to_uppercase()),
+                                    (false, true) => d.child(cell),
+                                    (false, false) => d.child(md_view(next_id(), &cell, t)),
+                                })
+                        }))
+                        .into_any_element()
+                };
+                let mut out = vec![row(head, 0)];
+                for (i, r) in rows.into_iter().enumerate() {
+                    out.push(row(r, i + 1));
+                }
+                body.push(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .text_size(px(12. * k))
+                        .line_height(px(16. * k))
+                        .text_color(t.colors.text_body)
+                        .children(out)
                         .into_any_element(),
                 );
             }
-            None => {
-                if !tasks.is_empty() {
-                    out.push(div().flex().flex_col().gap(px(5. * k)).children(std::mem::take(&mut tasks)).into_any_element());
-                }
-                plain.push(line);
-            }
         }
     }
-    if !tasks.is_empty() {
-        out.push(div().flex().flex_col().gap(px(5. * k)).children(tasks).into_any_element());
-    }
-    flush(&mut plain, &mut seg, &mut out);
-    out
+    NoteParts { title, body }
 }
 
 impl Folio {
@@ -192,6 +323,10 @@ impl Folio {
         let k = size_factor(s.text_size) * z;
         let detail = z >= DETAIL_ZOOM;
         let n = now();
+        let style = s.style;
+        let (rt, rb) = radii(style);
+        let (rt, rb) = (rt * z, rb * z);
+        let w = r.w * z;
 
         let picture = s.image.as_ref().map(|name| {
             let has_text = !s.title.is_empty() || !s.body.is_empty();
@@ -208,15 +343,16 @@ impl Folio {
         let id = s.id;
         let me = cx.entity();
         let toggle = move |n: usize, _: &mut Window, cx: &mut App| me.update(cx, |f, cx| f.toggle_task(id, n, cx));
-        let content: Vec<AnyElement> = if detail {
+        let parts = if detail {
             note_body(s, k, t, &crate::store::media_dir(&self.dir), None, toggle)
         } else {
-            vec![div()
+            let title = div()
                 .text_size(px(15. / DETAIL_ZOOM * z))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(t.colors.text)
                 .child(first_line(s))
-                .into_any_element()]
+                .into_any_element();
+            NoteParts { title: Some(title), body: Vec::new() }
         };
 
         // Chips: tasks done, reminder, tags, stale, locked, on the desktop.
@@ -256,10 +392,19 @@ impl Folio {
                 chips.push(chip("on desktop".into(), t.colors.text_subtle, Some("icons/picture-in-picture-2.svg")));
             }
         }
+        let chips = (!chips.is_empty()).then(|| {
+            let row = div().flex().flex_wrap().items_center().gap(px(4. * z)).children(chips);
+            // On an index card the chips take a ruled line of their own.
+            if style == NoteStyle::Index {
+                row.min_h(px(24. * k))
+            } else {
+                row.pt(px(2. * z))
+            }
+        });
         let measured = self.heights.clone();
         let natural = self.heights.borrow().get(&s.id).copied().unwrap_or(0.);
         let cut = s.fixed && natural > s.rect.h + 1.;
-        let lines = ((natural - s.rect.h) / (20. * size_factor(s.text_size))).ceil().max(1.) as usize;
+        let lines = ((natural - s.rect.h) / (line_height(style) * size_factor(s.text_size))).ceil().max(1.) as usize;
         let more_label = format!("+{lines} more line{}", if lines == 1 { "" } else { "s" });
         // Dropped notes settle with a small bounce; picked-up ones lift.
         let settle = self.settle_offset(s.id);
@@ -277,23 +422,73 @@ impl Folio {
         .absolute()
         .inset_0();
 
-        let inner = div()
-            .relative()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .children(picture)
-            .child(
+        // The text, laid out the way this type of note is made.
+        let NoteParts { title, body } = parts;
+        let text = match style {
+            NoteStyle::Card | NoteStyle::Taped => div()
+                .px(px(16. * z))
+                .pt(px(if style == NoteStyle::Taped { 18. } else { 14. } * z))
+                .pb(px(14. * z))
+                .flex()
+                .flex_col()
+                .gap(px(8. * z))
+                .children(title)
+                .children(body)
+                .children(chips),
+            NoteStyle::Cheat => div().flex().flex_col().child(band(title, s.paper, z, t)).child(
+                div().px(px(14. * z)).pt(px(10. * z)).pb(px(14. * z)).flex().flex_col().gap(px(8. * z)).children(body).children(chips),
+            ),
+            NoteStyle::Index => {
+                let ruled = t.colors.ruled;
+                let step = 24. * k;
+                let rules = detail.then(|| {
+                    canvas(
+                        |_, _, _| {},
+                        move |b, _, window, _| {
+                            let mut y = b.origin.y + px(step);
+                            while y <= b.origin.y + b.size.height {
+                                let line = gpui::Bounds::new(gpui::point(b.origin.x, y - px(1.)), gpui::size(b.size.width, px(1.)));
+                                window.paint_quad(gpui::fill(line, ruled));
+                                y += px(step);
+                            }
+                        },
+                    )
+                    .absolute()
+                    .inset_0()
+                });
                 div()
-                    .px(px(16. * z))
-                    .py(px(14. * z))
+                    .relative()
                     .flex()
                     .flex_col()
-                    .gap(px(8. * z))
-                    .children(content)
-                    .when(!chips.is_empty(), |d| d.child(div().flex().flex_wrap().gap(px(4. * z)).pt(px(2. * z)).children(chips))),
-            )
-            .child(measure);
+                    .child(div().absolute().left(px(30. * z)).top_0().bottom_0().w(px(1.)).bg(t.colors.margin))
+                    .child(
+                        div()
+                            .pl(px(40. * z))
+                            .pr(px(16. * z))
+                            .pt(px(12. * z))
+                            .pb(px(4. * z))
+                            .min_h(px(16. * z))
+                            .border_b_1()
+                            .border_color(t.colors.head_rule)
+                            .children(title),
+                    )
+                    .child(
+                        div()
+                            .relative()
+                            .pl(px(40. * z))
+                            .pr(px(14. * z))
+                            .pb(px(10. * z))
+                            .min_h(px(24. * k))
+                            .flex()
+                            .flex_col()
+                            .children(rules)
+                            .children(body)
+                            .children(chips),
+                    )
+            }
+        };
+
+        let inner = div().relative().flex_none().flex().flex_col().children(picture).child(text).child(measure);
 
         let grip = ((selected || hovered) && !s.locked).then(|| {
             let g = t.size.grip;
@@ -305,28 +500,78 @@ impl Folio {
                 .child(div().absolute().right_0().bottom_0().w(g).h(px(2.)).rounded(px(1.)).bg(t.colors.text_subtle))
                 .child(div().absolute().right_0().bottom_0().w(px(2.)).h(g).rounded(px(1.)).bg(t.colors.text_subtle))
         });
+        // Under the pointer: a cross that sends the note to the Trash
+        // (Ctrl+Z brings it back).
+        let delete = (hovered && !s.locked && detail && !lifted).then(|| {
+            let d = 20. * z.clamp(0.8, 1.4);
+            div()
+                .id(("delete", s.id))
+                .absolute()
+                .top(px(6. * z))
+                .right(px(6. * z))
+                .size(px(d))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(t.radius.small)
+                .bg(t.colors.wash)
+                .cursor_pointer()
+                .hover(|d| d.bg(t.colors.danger.opacity(0.18)))
+                .child(icon("icons/x.svg", px(d * 0.6), t.colors.text_body))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.bin_note(id, false, cx);
+                    }),
+                )
+        });
 
-        let shadow = if lifted { t.shadow_lifted(z) } else { t.shadow_card(z) };
+        let shadow = if lifted {
+            t.shadow_lifted(z)
+        } else {
+            match style {
+                NoteStyle::Taped => t.shadow_taped(z),
+                NoteStyle::Index => t.shadow_index(z),
+                _ => t.shadow_card(z),
+            }
+        };
         let edge = if t.is_dark { t.colors.border } else { gpui::hsla(0., 0., 0., 0.04) };
         let paper = t.paper(s.paper);
 
-        // A faint sheen, lighter at the top, so the paper isn't flat.
+        // A faint sheen, lighter at the top, so the paper isn't flat; index
+        // cards are flat card stock.
         let mut top = paper;
-        top.l = (top.l + if t.is_dark { 0.03 } else { 0.022 }).min(1.);
+        if style != NoteStyle::Index {
+            top.l = (top.l + if t.is_dark { 0.03 } else { 0.022 }).min(1.);
+        }
+        // Where taped paper lifts a little at its foot.
+        let curl = (style == NoteStyle::Taped).then(|| {
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .h(px(28. * z))
+                .rounded_b(px(rb))
+                .bg(gpui::linear_gradient(180., gpui::linear_color_stop(t.colors.curl.opacity(0.), 0.), gpui::linear_color_stop(t.colors.curl, 1.)))
+        });
         div()
             .absolute()
             .left(px(at.x))
             .top(px(at.y + lift + settle))
-            .w(px(r.w * z))
+            .w(px(w))
             .when(s.fixed, |d| d.h(px(s.rect.h * z)))
-            .when(!s.fixed, |d| d.min_h(px(s.rect.h * z)))
-            .rounded(px(12. * z))
+            // Grows with its text: the measured height, once known.
+            .when(!s.fixed, |d| d.min_h(px(r.h * z)))
+            .rounded_t(px(rt))
+            .rounded_b(px(rb))
             .bg(gpui::linear_gradient(180., gpui::linear_color_stop(top, 0.), gpui::linear_color_stop(paper, 0.6)))
             .border_1()
             .border_color(edge)
             .shadow(shadow)
             .font_family(t.note_font(s.font))
-            .child(div().size_full().rounded(px(12. * z)).overflow_hidden().child(inner))
+            .child(div().size_full().rounded_t(px(rt)).rounded_b(px(rb)).overflow_hidden().children(curl).child(inner))
             .when(cut, |d| {
                 d.child(
                     div()
@@ -335,7 +580,7 @@ impl Folio {
                         .right_0()
                         .bottom_0()
                         .h(px(34. * z))
-                        .rounded_b(px(12. * z))
+                        .rounded_b(px(rb))
                         .bg(gpui::linear_gradient(
                             180.,
                             gpui::linear_color_stop(paper.opacity(0.), 0.),
@@ -350,6 +595,8 @@ impl Folio {
                         .child(more_label),
                 )
             })
+            .when(style == NoteStyle::Taped, |d| d.child(tape(s.id, w, z, t)))
+            .when(style == NoteStyle::Index, |d| d.child(pin(s.id, w, z, t)))
             .when(s.locked, |d| d.child(div().absolute().top(px(6. * z)).right(px(6. * z)).child(icon("icons/lock.svg", px(12. * z.max(0.8)), t.colors.text_subtle))))
             .when(selected, |d| {
                 d.child(
@@ -359,12 +606,14 @@ impl Folio {
                         .left(px(-3.))
                         .right(px(-3.))
                         .bottom(px(-3.))
-                        .rounded(px(12. * z + 3.))
+                        .rounded_t(px(rt + 3.))
+                        .rounded_b(px(rb + 3.))
                         .border_2()
                         .border_color(t.colors.selection),
                 )
             })
             .children(grip)
+            .children(delete)
             .into_any_element()
     }
 }

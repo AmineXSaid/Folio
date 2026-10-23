@@ -1,4 +1,5 @@
-//! What ships inside the binary: Lucide icons (ISC, `assets/icons/LICENSE`),
+//! What ships inside the binary: Lucide icons (ISC, `assets/icons/LICENSE`)
+//! and a few of Folio's own (the note types, the writing marks),
 //! Hanken Grotesk, JetBrains Mono and Comic Neue (OFL), the Folio logo, and
 //! any fonts placed in `assets/fonts/extra` at build time (see build.rs).
 

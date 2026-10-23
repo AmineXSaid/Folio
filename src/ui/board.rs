@@ -16,7 +16,7 @@ use gpui::{
 
 use std::time::Instant;
 
-use super::app::{Folio, Gesture, MenuKind, MenuPage, Selection, Tool};
+use super::app::{Folio, Format, Gesture, MenuKind, MenuPage, Selection, Tool};
 use super::sticker::size_factor;
 use super::*;
 use crate::model::*;
@@ -272,7 +272,15 @@ impl Folio {
                 Some(Selection::Frame(id)) => this.rename_frame(id, window, cx),
                 None => {}
             }))
-            .on_action(cx.listener(|this, _: &Paste, _, cx| this.paste(cx)))
+            .on_action(cx.listener(|this, _: &Paste, _, cx| this.paste(false, cx)))
+            .on_action(cx.listener(|this, _: &PasteMarkdown, _, cx| this.paste(true, cx)))
+            .on_action(cx.listener(|this, _: &ToMarkdown, _, cx| {
+                let ids = this.selected_notes();
+                if !ids.is_empty() {
+                    this.markdown_notes(&ids, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleStyle, _, cx| this.cycle_style(cx)))
             .on_action(cx.listener(|this, _: &Escape, _, cx| {
                 this.selection.clear();
                 this.gesture = Gesture::None;
@@ -465,9 +473,10 @@ impl Folio {
         )
     }
 
-    /// The note being typed into, drawn over the sheet, with its format
-    /// bar above it.
+    /// The note being typed into, drawn over the sheet, with its edit bar
+    /// above it: writing on the first row, the note's look on the second.
     fn render_edit_layer(&self, t: &Theme, _: &mut Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        use gpui::component::tooltip::Tooltip;
         let ed = self.editing?;
         let s = self.sheet().sticker(ed.id)?;
         let cam = self.sheet().camera;
@@ -476,6 +485,7 @@ impl Folio {
         let at = cam.to_screen(v2(r.x, r.y));
         let id = s.id;
         let k = size_factor(s.text_size);
+        let tip = |text: String| move |window: &mut Window, cx: &mut gpui::App| Tooltip::new(text.clone()).build(window, cx);
         let bar_btn = |name: &'static str, path: &'static str| {
             div()
                 .id(name)
@@ -487,6 +497,12 @@ impl Folio {
                 .cursor_pointer()
                 .hover(|d| d.bg(t.colors.hover))
                 .child(icon(path, t.size.icon_sm, t.colors.text_muted))
+        };
+        // A writing command: the button, its tooltip with the shortcut.
+        let write = |name: &'static str, path: &'static str, what: &str, keys: &str, f: Format| {
+            bar_btn(name, path)
+                .tooltip(tip(format!("{what}  {}", shortcut(keys))))
+                .on_click(cx.listener(move |this, _, window, cx| this.format_editing(f, window, cx)))
         };
         let papers = Paper::ALL.iter().map(|&p| {
             div()
@@ -500,6 +516,33 @@ impl Folio {
                 .cursor_pointer()
                 .when(s.paper == p, |d| d.border_2().border_color(t.colors.brand))
                 .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.paper = p)))
+        });
+        // The note's type: the chosen one says its name.
+        let styles = NoteStyle::ALL.iter().map(|&st| {
+            let on = s.style == st;
+            let path = match st {
+                NoteStyle::Card => "icons/note-card.svg",
+                NoteStyle::Taped => "icons/note-taped.svg",
+                NoteStyle::Cheat => "icons/note-cheat.svg",
+                NoteStyle::Index => "icons/note-index.svg",
+            };
+            let color = if on { t.colors.brand_on_tint } else { t.colors.text_muted };
+            div()
+                .id(("e-style", st as usize))
+                .h(px(26.))
+                .px(px(if on { 8. } else { 6. }))
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .rounded(t.radius.small)
+                .text_size(t.text.caption)
+                .cursor_pointer()
+                .when(on, |d| d.bg(t.colors.brand_tint).text_color(color).font_weight(gpui::FontWeight::SEMIBOLD))
+                .when(!on, |d| d.hover(|d| d.bg(t.colors.hover)))
+                .child(icon(path, t.size.icon_sm, color))
+                .when(on, |d| d.child(st.label()))
+                .tooltip(tip(format!("{}  S on the sheet", st.label())))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_style(&[id], st, cx)))
         });
         let fonts = NoteFont::ALL.iter().map(|&f| {
             let on = s.font == f;
@@ -535,29 +578,46 @@ impl Folio {
                 .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.text_size = zs)))
         });
         let divider = || div().w(px(1.)).h(px(20.)).mx(px(4.)).bg(t.colors.border);
-        let bar = div()
-            .absolute()
-            .left(px(at.x))
-            .top(px((at.y - 50.).max(4.)))
-            .flex()
-            .items_center()
-            .gap(px(3.))
-            .p(px(5.))
-            .rounded(t.radius.card)
-            .bg(t.colors.surface)
-            .border_1()
-            .border_color(t.colors.border)
-            .shadow(t.shadow_float())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .children(papers)
+        let row = || div().flex().items_center().gap(px(3.));
+        let writing = row()
+            .child(write("e-bold", "icons/bold.svg", "Bold", "B", Format::Bold))
+            .child(write("e-italic", "icons/italic.svg", "Italic", "I", Format::Italic))
+            .child(write("e-strike", "icons/strikethrough.svg", "Strikethrough", "Shift+X", Format::Strike))
+            .child(write("e-code", "icons/code.svg", "Code", "E", Format::Code))
+            .child(write("e-mark", "icons/highlighter.svg", "Highlight", "Shift+M", Format::Highlight))
             .child(divider())
-            .children(fonts)
+            .child(write("e-bullets", "icons/list.svg", "Bullets", "Shift+8", Format::Bullets))
+            .child(write("e-numbers", "icons/list-ordered.svg", "Numbers", "Shift+7", Format::Numbers))
+            .child(write("e-task", "icons/list-checks.svg", "Tasks", "Shift+9", Format::Tasks))
             .child(divider())
-            .children(sizes)
+            .child(
+                bar_btn("e-table", "icons/table.svg")
+                    .tooltip(tip("A table: | between cells".into()))
+                    .on_click(cx.listener(|this, _, window, cx| this.format_editing(Format::Table, window, cx))),
+            )
+            .child(write("e-callout", "icons/lightbulb.svg", "Remember box", "Shift+.", Format::Callout))
             .child(divider())
-            .child(bar_btn("e-task", "icons/list-checks.svg").on_click(cx.listener(move |this, _, window, cx| this.add_task(id, window, cx))))
-            .child(bar_btn("e-pic", "icons/image.svg").on_click(cx.listener(move |this, _, _, cx| this.pick_image(id, cx))))
-            .child(bar_btn("e-bell", "icons/bell.svg").on_mouse_down(
+            .child(
+                div()
+                    .id("e-markdown")
+                    .h(px(28.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
+                    .rounded(t.radius.small)
+                    .text_size(t.text.caption)
+                    .text_color(t.colors.text_muted)
+                    .cursor_pointer()
+                    .hover(|d| d.bg(t.colors.hover))
+                    .child(icon("icons/wand-sparkles.svg", t.size.icon_sm, t.colors.text_muted))
+                    .child("Markdown")
+                    .tooltip(tip(format!("Turn pasted text into Markdown  {}", shortcut("Shift+T"))))
+                    .on_click(cx.listener(|this, _, window, cx| this.format_editing(Format::Markdown, window, cx))),
+            )
+            .child(div().flex_1())
+            .child(bar_btn("e-pic", "icons/image.svg").tooltip(tip("Picture".into())).on_click(cx.listener(move |this, _, _, cx| this.pick_image(id, cx))))
+            .child(bar_btn("e-bell", "icons/bell.svg").tooltip(tip("Remind me".into())).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
@@ -571,12 +631,21 @@ impl Folio {
                     cx.stop_propagation();
                     this.open_menu(ev.position, MenuKind::Note(id), cx);
                 }),
-            ))
+            ));
+        let look = row()
+            .children(styles)
             .child(divider())
+            .children(papers)
+            .child(divider())
+            .children(fonts)
+            .child(divider())
+            .children(sizes)
+            .child(div().flex_1())
             .child(
                 div()
                     .id("e-done")
                     .h(px(28.))
+                    .ml(px(6.))
                     .px(px(10.))
                     .flex()
                     .items_center()
@@ -594,24 +663,54 @@ impl Folio {
                         window.focus(&this.focus, cx);
                     })),
             );
+        let bar = div()
+            .absolute()
+            .left(px(at.x))
+            .top(px((at.y - 86.).max(4.)))
+            .flex()
+            .flex_col()
+            .gap(px(3.))
+            .p(px(5.))
+            .rounded(t.radius.card)
+            .bg(t.colors.surface)
+            .border_1()
+            .border_color(t.colors.border)
+            .shadow(t.shadow_float())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(writing)
+            .child(look);
+        let (rt, rb) = super::sticker::radii(s.style);
+        let (rt, rb) = (rt * z, rb * z);
         let picture = s.image.as_ref().map(|name| {
             gpui::img(self.image_path(name))
                 .id(("edit-picture", s.id))
                 .w_full()
                 .h(px((s.rect.w * 0.62).min(s.rect.h) * z))
                 .object_fit(gpui::ObjectFit::Cover)
-                .rounded_t(px(12. * z))
+                .rounded_t(px(rt))
         });
         use gpui::StyledImage;
+        let title = div()
+            .text_size(px(15. * k * z))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .child(Input::new(&self.title_input).appearance(false));
+        // The title sits where this type puts it: on a cheat card's band.
+        let title = match s.style {
+            NoteStyle::Cheat => div().px(px(10. * z)).py(px(4. * z)).rounded_t(px((rt - 2.).max(0.))).bg(t.paper_band(s.paper)).child(title),
+            _ => div().px(px(10. * z)).pt(px(8. * z)).child(title),
+        };
+        let me = cx.entity();
+        let w = r.w * z;
         let note = div()
             .id("editing")
             .key_context("NoteEdit")
             .absolute()
             .left(px(at.x))
             .top(px(at.y))
-            .w(px(r.w * z))
+            .w(px(w))
             .min_h(px(r.h * z))
-            .rounded(px(12. * z))
+            .rounded_t(px(rt))
+            .rounded_b(px(rb))
             .bg(t.paper(s.paper))
             .border_2()
             .border_color(t.colors.brand)
@@ -628,20 +727,11 @@ impl Folio {
                 window.focus(&this.focus, cx);
             }))
             .children(picture)
-            .child(
-                div()
-                    .px(px(10. * z))
-                    .py(px(8. * z))
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_size(px(15. * k * z))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(Input::new(&self.title_input).appearance(false)),
-                    )
-                    .child(Textarea::new(&self.body_input).appearance(false)),
-            );
+            .child(title)
+            .child(div().px(px(10. * z)).pb(px(8. * z)).child(Textarea::new(&self.body_input).appearance(false)))
+            .when(s.style == NoteStyle::Taped, |d| d.child(super::sticker::tape(id, w, z, t)))
+            .when(s.style == NoteStyle::Index, |d| d.child(super::sticker::pin(id, w, z, t)));
+        let note = on_format(note, move |f, window, cx| me.update(cx, |this, cx| this.format_key(f, window, cx)));
         Some(div().absolute().inset_0().child(note).child(bar).into_any_element())
     }
 

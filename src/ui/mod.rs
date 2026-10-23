@@ -74,8 +74,54 @@ gpui::actions!(
         ToolFrame,
         ToolEraser,
         SaveNote,
+        // Writing in a note: the edit bar's first row.
+        Bold,
+        Italic,
+        Strike,
+        InlineCode,
+        Highlight,
+        Bullets,
+        Numbers,
+        Tasks,
+        Callout,
+        InsertTable,
+        NewLine,
+        ToMarkdown,
+        PasteMarkdown,
+        CycleStyle,
     ]
 );
+
+/// The writing shortcuts on an element (a note being edited): each runs
+/// `f` with its formatting command.
+pub fn on_format<E: gpui::InteractiveElement>(el: E, f: impl Fn(app::Format, &mut gpui::Window, &mut App) + Clone + 'static) -> E {
+    use app::Format as F;
+    let g = f.clone();
+    let el = el.on_action(move |_: &Bold, w, cx| g(F::Bold, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &Italic, w, cx| g(F::Italic, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &Strike, w, cx| g(F::Strike, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &InlineCode, w, cx| g(F::Code, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &Highlight, w, cx| g(F::Highlight, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &Bullets, w, cx| g(F::Bullets, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &Numbers, w, cx| g(F::Numbers, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &Tasks, w, cx| g(F::Tasks, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &Callout, w, cx| g(F::Callout, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &InsertTable, w, cx| g(F::Table, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &ToMarkdown, w, cx| g(F::Markdown, w, cx));
+    let g = f.clone();
+    let el = el.on_action(move |_: &PasteMarkdown, w, cx| g(F::Paste, w, cx));
+    el.on_action(move |_: &NewLine, w, cx| f(F::NewLine, w, cx))
+}
 
 pub fn icon(path: &'static str, size: Pixels, color: Hsla) -> Svg {
     svg().path(path).size(size).flex_none().text_color(color)

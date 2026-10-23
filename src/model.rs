@@ -263,6 +263,35 @@ impl NoteFont {
     }
 }
 
+/// How a note is made: today's rounded card, a slip of paper taped to the
+/// sheet, a cheat card with its title on a band, or a ruled index card
+/// with a pin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum NoteStyle {
+    #[default]
+    Card,
+    Taped,
+    Cheat,
+    Index,
+}
+
+impl NoteStyle {
+    pub const ALL: [NoteStyle; 4] = [NoteStyle::Card, NoteStyle::Taped, NoteStyle::Cheat, NoteStyle::Index];
+    pub fn label(self) -> &'static str {
+        match self {
+            NoteStyle::Card => "Card",
+            NoteStyle::Taped => "Taped",
+            NoteStyle::Cheat => "Cheat card",
+            NoteStyle::Index => "Index card",
+        }
+    }
+    /// The one after this, for cycling with a key.
+    pub fn next(self) -> NoteStyle {
+        let i = NoteStyle::ALL.iter().position(|s| *s == self).unwrap_or(0);
+        NoteStyle::ALL[(i + 1) % NoteStyle::ALL.len()]
+    }
+}
+
 /// A web page pinned as a note.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct LinkCard {
@@ -322,6 +351,8 @@ pub struct Sticker {
     pub fixed: bool,
     #[serde(default)]
     pub font: NoteFont,
+    #[serde(default)]
+    pub style: NoteStyle,
     #[serde(default)]
     pub link: Option<LinkCard>,
     /// Out on the desktop as its own always-on-top window.
@@ -736,6 +767,24 @@ impl Category {
         }
     }
 
+    /// A new note's paper: the one after the newest note's, so neighbours
+    /// differ (Plain is skipped).
+    pub fn next_paper(&self, default: Paper) -> Paper {
+        let Some(last) = self.stickers.last().map(|s| s.paper) else { return default };
+        let i = Paper::ALL.iter().position(|p| *p == last).unwrap_or(0);
+        Paper::ALL[(i + 1) % (Paper::ALL.len() - 1)]
+    }
+
+    /// A new note's type and font: those of the note changed last (not a
+    /// picture or a link), so a run of cheat cards is chosen once.
+    pub fn next_look(&self, style: NoteStyle, font: NoteFont) -> (NoteStyle, NoteFont) {
+        self.stickers
+            .iter()
+            .filter(|s| s.image.is_none() && s.link.is_none())
+            .max_by_key(|s| s.edited)
+            .map_or((style, font), |s| (s.style, s.font))
+    }
+
     /// A free place for a new note: to the right of everything, top-aligned.
     pub fn free_spot(&self, w: f32) -> Vec2 {
         match self.content_bounds() {
@@ -887,6 +936,7 @@ pub struct Settings {
     pub quick_hotkey: bool,
     pub default_paper: Paper,
     pub default_font: NoteFont,
+    pub default_style: NoteStyle,
     /// Interface size, 0.9 to 1.3.
     pub ui_scale: f32,
     pub high_contrast: bool,
@@ -910,6 +960,7 @@ impl Default for Settings {
             quick_hotkey: true,
             default_paper: Paper::Butter,
             default_font: NoteFont::Sans,
+            default_style: NoteStyle::Card,
             ui_scale: 1.0,
             high_contrast: false,
             reduce_motion: false,
@@ -1716,5 +1767,42 @@ mod tests {
         assert!(s.is_stale(STALE_AFTER + 10));
         s.snoozed = STALE_AFTER + 100;
         assert!(!s.is_stale(STALE_AFTER + 10));
+    }
+
+    #[test]
+    fn notes_saved_before_types_are_cards() {
+        let json = r#"{"id":4,"rect":{"x":0,"y":0,"w":200,"h":120},"paper":"Sage","title":"t","body":""}"#;
+        let s: Sticker = serde_json::from_str(json).unwrap();
+        assert_eq!(s.style, NoteStyle::Card);
+        let back: Sticker = serde_json::from_str(&serde_json::to_string(&Sticker { style: NoteStyle::Index, ..s }).unwrap()).unwrap();
+        assert_eq!(back.style, NoteStyle::Index);
+        assert_eq!(NoteStyle::Index.next(), NoteStyle::Card);
+    }
+
+    #[test]
+    fn new_notes_follow_the_last_one() {
+        let mut c = Category::new(1, "t", Accent::Amber);
+        assert_eq!(c.next_paper(Paper::Sky), Paper::Sky);
+        assert_eq!(c.next_look(NoteStyle::Taped, NoteFont::Mono), (NoteStyle::Taped, NoteFont::Mono));
+        let mut a = sticker(2, 0., 0.);
+        a.style = NoteStyle::Cheat;
+        a.font = NoteFont::Hand;
+        a.edited = 50;
+        let mut b = sticker(3, 300., 0.);
+        b.style = NoteStyle::Index;
+        b.paper = Paper::Plain;
+        b.edited = 10;
+        c.stickers.push(a);
+        c.stickers.push(b);
+        // The paper follows the newest note, skipping Plain.
+        assert_eq!(c.next_paper(Paper::Sky), Paper::Peach);
+        // The type and font follow the note changed last.
+        assert_eq!(c.next_look(NoteStyle::Card, NoteFont::Sans), (NoteStyle::Cheat, NoteFont::Hand));
+        // A picture doesn't count.
+        let mut pic = sticker(4, 600., 0.);
+        pic.image = Some("p.png".into());
+        pic.edited = 99;
+        c.stickers.push(pic);
+        assert_eq!(c.next_look(NoteStyle::Card, NoteFont::Sans).0, NoteStyle::Cheat);
     }
 }

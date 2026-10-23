@@ -141,6 +141,77 @@ pub fn board() -> Board {
     sheet.icon = "✈️".into();
     sheet.stickers = vec![a, c, d];
 
+    // A cheatsheet made of the three note types: taped notes, cheat cards
+    // with a table and Remember boxes, index cards with tasks.
+    b.add_sheet("HIL testing");
+    let styled = |b: &mut Board, rect, paper, style, title: &str, body: &str| Sticker { style, ..note(b, rect, paper, title, body) };
+    let what = styled(
+        &mut b,
+        (0., 12., 250., 120.),
+        Paper::Butter,
+        NoteStyle::Taped,
+        "What is HIL testing?",
+        "- **Hardware-in-the-loop:** real controller hardware against a simulated plant.\n- Reads inputs, runs its algorithm, writes outputs: a **closed loop**.\n- Catches timing and I/O faults *before* the field.",
+    );
+    let family = styled(
+        &mut b,
+        (282., 36., 330., 160.),
+        Paper::Peach,
+        NoteStyle::Cheat,
+        "Test-in-the-loop family",
+        "| Type | Controller | Plant |\n|---|---|---|\n| MIL | Model | Model |\n| SIL | Real code, host | Model |\n| PIL | Real code, target CPU | Model |\n| HIL | Real ECU | Real-time sim |\n| Vehicle | Real hardware | Real plant |\n> **Remember:** each step makes **one more thing real**.",
+    );
+    let bench = styled(
+        &mut b,
+        (652., 54., 262., 120.),
+        Paper::Plain,
+        NoteStyle::Index,
+        "Before the bench session",
+        "- [x] Flash the ECU build\n- [ ] Load the plant model\n- [ ] Check the CAN wiring\n- [ ] Log the run",
+    );
+    let sil = styled(
+        &mut b,
+        (958., 36., 250., 160.),
+        Paper::Sky,
+        NoteStyle::Cheat,
+        "SIL · Software-in-the-loop",
+        "- Controller = **real production code** on a host PC or emulator.\n- Plant = still a **software model**.\n- Built for the host: `make sil`\n> **Remember:** the same code on the **target CPU** is PIL.",
+    );
+    let pitfalls = styled(
+        &mut b,
+        (16., 290., 270., 120.),
+        Paper::Rose,
+        NoteStyle::Taped,
+        "Common pitfalls",
+        "- “MIL simulates the hardware”: no, both sides are **models**.\n- “System-in-the-loop” isn't standard; say **bench** or **vehicle test**.",
+    );
+    let mut remember = styled(
+        &mut b,
+        (672., 326., 240., 100.),
+        Paper::Lilac,
+        NoteStyle::Index,
+        "Remember",
+        "MIL → SIL → PIL → HIL: one more real thing at each step.",
+    );
+    remember.font = NoteFont::Hand;
+    let mut booked = styled(&mut b, (972., 380., 232., 100.), Paper::Mint, NoteStyle::Taped, "Bench booked", "Lab 2, on Sam's rig. Bring the harness.");
+    booked.due = Some(now + 2 * 86_400);
+    let label = b.fresh_id();
+    let stroke = b.fresh_id();
+    let sheet = b.sheet_mut();
+    sheet.blurb = "Cheatsheet for the test bench".into();
+    sheet.accent = Accent::Slate;
+    sheet.icon = "🧪".into();
+    sheet.stickers = vec![what, family, bench, sil, pitfalls, remember, booked];
+    sheet.labels = vec![Label { id: label, at: v2(350., 420.), text: "ask Sam for the CAN logger".into(), ink: Ink::Graphite }];
+    let points = (0..=40)
+        .map(|i| {
+            let t = i as f32 / 40.;
+            v2(346. + t * 200., 446. + (t * 7.).sin() * 2. + t * 3.)
+        })
+        .collect();
+    sheet.strokes = vec![Stroke { id: stroke, ink: Ink::Coral, width: 2.5, marker: false, points }];
+
     b.categories[0].pinned = true;
     b.categories[0].icon = "🎨".into();
     b.categories[1].icon = "🏠".into();
@@ -151,6 +222,10 @@ pub fn board() -> Board {
             s.edited = now;
         }
     }
+    // The cheatsheet opens first; it was made last so the older samples
+    // keep their ids.
+    let cheat = b.categories.pop().expect("the cheatsheet");
+    b.categories.insert(0, cheat);
     b.active = 0;
     b
 }

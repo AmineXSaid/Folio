@@ -15,6 +15,7 @@ use gpui::{
     SharedString, Task, Window,
 };
 
+use crate::markdown::{self, Prefix};
 use crate::model::*;
 use crate::store;
 use crate::theme::{self, theme};
@@ -76,6 +77,119 @@ impl Tool {
     pub fn uses_ink(self) -> bool {
         matches!(self, Tool::Pen | Tool::Marker | Tool::Text | Tool::Connect)
     }
+}
+
+/// A writing command, from the edit bar or its shortcut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    Bold,
+    Italic,
+    Strike,
+    Code,
+    Highlight,
+    Bullets,
+    Numbers,
+    Tasks,
+    Callout,
+    Table,
+    /// Enter: the next list item, or a plain new line.
+    NewLine,
+    /// Plain text into Markdown: the selection, or the whole note.
+    Markdown,
+    /// The clipboard's text, tidied.
+    Paste,
+}
+
+/// Runs `f` on a note's title and text areas. Only what changed is
+/// written, so the text keeps its scroll and Ctrl+Z in the note undoes it.
+pub fn format_input(title: &Entity<InputState>, body: &Entity<TextareaState>, f: Format, window: &mut Window, cx: &mut gpui::App) {
+    if f == Format::Markdown || f == Format::Paste {
+        tidy_input(title, body, f == Format::Paste, window, cx);
+        return;
+    }
+    body.update(cx, |i, cx| {
+        let text = i.value().to_string();
+        let sel = i.selected_range();
+        let (new, range) = match f {
+            Format::Bold => markdown::toggle_wrap(&text, sel, "**"),
+            Format::Italic => markdown::toggle_wrap(&text, sel, "*"),
+            Format::Strike => markdown::toggle_wrap(&text, sel, "~~"),
+            Format::Code => markdown::toggle_wrap(&text, sel, "`"),
+            Format::Highlight => markdown::toggle_mark(&text, sel, "yellow"),
+            Format::Bullets => markdown::toggle_prefix(&text, sel, Prefix::Bullet),
+            Format::Numbers => markdown::toggle_prefix(&text, sel, Prefix::Numbered),
+            Format::Tasks => markdown::toggle_prefix(&text, sel, Prefix::Task),
+            Format::Callout => markdown::toggle_callout(&text, sel),
+            Format::Table => markdown::insert_table(&text, sel),
+            Format::NewLine => match markdown::continue_list(&text, sel.start).filter(|_| sel.is_empty()) {
+                Some((new, at)) => (new, at..at),
+                None => {
+                    i.replace("\n", window, cx);
+                    return;
+                }
+            },
+            Format::Markdown | Format::Paste => return,
+        };
+        replace_changed(i, &text, &new, range, window, cx);
+    });
+}
+
+/// A writing shortcut in a note's title or text. In the title, Enter
+/// moves on to the text and the marks wait for it; Markdown and Paste work
+/// anywhere.
+pub fn format_key_input(title: &Entity<InputState>, body: &Entity<TextareaState>, f: Format, window: &mut Window, cx: &mut gpui::App) {
+    use gpui::Focusable;
+    if title.read(cx).focus_handle(cx).is_focused(window) {
+        match f {
+            Format::NewLine => body.update(cx, |i, cx| i.focus(window, cx)),
+            Format::Markdown | Format::Paste => format_input(title, body, f, window, cx),
+            _ => {}
+        }
+        return;
+    }
+    format_input(title, body, f, window, cx);
+}
+
+/// Text into Markdown: the selection, or the whole text (its first line
+/// becomes the title when there's none); with `paste`, the clipboard's
+/// text, tidied, goes in at the cursor.
+fn tidy_input(title: &Entity<InputState>, body: &Entity<TextareaState>, paste: bool, window: &mut Window, cx: &mut gpui::App) {
+    let text = body.read(cx).value().to_string();
+    let sel = body.read(cx).selected_range();
+    let untitled = title.read(cx).value().trim().is_empty();
+    let (head, new, range) = if paste {
+        let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) else { return };
+        let (head, md) = if untitled && text.trim().is_empty() { markdown::tidy(&clip) } else { (None, markdown::tidy_body(&clip)) };
+        let new = format!("{}{md}{}", &text[..sel.start], &text[sel.end..]);
+        let at = sel.start + md.len();
+        (head, new, at..at)
+    } else if !sel.is_empty() {
+        let md = markdown::tidy_body(&text[sel.clone()]);
+        let new = format!("{}{md}{}", &text[..sel.start], &text[sel.end..]);
+        let range = sel.start..sel.start + md.len();
+        (None, new, range)
+    } else {
+        let (head, md) = if untitled { markdown::tidy(&text) } else { (None, markdown::tidy_body(&text)) };
+        let end = md.len();
+        (head, md, end..end)
+    };
+    if let Some(head) = head {
+        title.update(cx, |i, cx| i.set_value(head, window, cx));
+    }
+    body.update(cx, |i, cx| replace_changed(i, &text, &new, range, window, cx));
+}
+
+/// Writes `new` over `old` in a text area where they differ, as one undo
+/// step, then selects `sel`.
+fn replace_changed(i: &mut TextareaState, old: &str, new: &str, sel: std::ops::Range<usize>, window: &mut Window, cx: &mut Context<TextareaState>) {
+    let pre: usize = old.chars().zip(new.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum();
+    let suf: usize =
+        old[pre..].chars().rev().zip(new[pre..].chars().rev()).take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum();
+    if old != new {
+        i.set_selected_range(pre..old.len() - suf, cx);
+        i.replace(new[pre..new.len() - suf].to_string(), window, cx);
+    }
+    i.set_selected_range(sel, cx);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -985,14 +1099,16 @@ impl Folio {
         self.finish_edit(cx);
         let before = self.board.clone();
         let id = self.board.fresh_id();
-        let paper = next_paper(self.sheet(), self.board.settings.default_paper);
-        let font = self.board.settings.default_font;
+        let set = &self.board.settings;
+        let paper = self.sheet().next_paper(set.default_paper);
+        let (style, font) = self.sheet().next_look(set.default_style, set.default_font);
         let (w, h) = (240., 120.);
         self.board.sheet_mut().stickers.push(Sticker {
             id,
             rect: Rect { x: at.x - w / 2., y: at.y - 30., w, h },
             paper,
             font,
+            style,
             edited: now(),
             ..Default::default()
         });
@@ -1023,6 +1139,11 @@ impl Folio {
             return;
         }
         let (title, body) = (s.title.clone(), s.body.clone());
+        let hint = match s.style {
+            NoteStyle::Cheat => "Key terms in **bold** · > for a Remember box · | for a table",
+            NoteStyle::Index => "One thing per line · - [ ] for a task",
+            _ => "Write… - [ ] for a task, #tag, **bold**",
+        };
         if self.before.is_none() {
             self.before = Some(self.board.clone());
         }
@@ -1030,6 +1151,7 @@ impl Folio {
         // The cursor goes to the end of the text, ready to add to it.
         let end = body.len();
         self.body_input.update(cx, |i, cx| {
+            i.set_placeholder(hint, window, cx);
             i.set_value(body, window, cx);
             i.set_selected_range(end..end, cx);
         });
@@ -1103,21 +1225,90 @@ impl Folio {
         self.change_note(id, cx, |s| s.body = toggle_task(&s.body, n));
     }
 
-    /// Adds a task line to the note being typed into, or to `id`.
+    /// Adds a task line to the note being typed into (the line the cursor
+    /// is on becomes a task), or to `id`.
     pub fn add_task(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {
         if self.editing.map(|e| e.id) == Some(id) {
-            let v = self.body_input.read(cx).value().to_string();
-            let sep = if v.is_empty() || v.ends_with('\n') { "" } else { "\n" };
-            self.body_input.update(cx, |i, cx| {
-                i.set_value(format!("{v}{sep}- [ ] "), window, cx);
-                i.focus(window, cx);
-            });
+            self.format_editing(Format::Tasks, window, cx);
         } else {
             self.change_note(id, cx, |s| {
                 let sep = if s.body.is_empty() || s.body.ends_with('\n') { "" } else { "\n" };
                 s.body = format!("{}{sep}- [ ] New task", s.body);
             });
         }
+    }
+
+    /// A writing command from the edit bar: on the note's text, which
+    /// keeps the cursor.
+    pub fn format_editing(&mut self, f: Format, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_none() {
+            return;
+        }
+        format_input(&self.title_input, &self.body_input, f, window, cx);
+        self.body_input.update(cx, |i, cx| i.focus(window, cx));
+        cx.notify();
+    }
+
+    /// A writing shortcut in the note being typed into.
+    pub fn format_key(&mut self, f: Format, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            format_key_input(&self.title_input, &self.body_input, f, window, cx);
+            cx.notify();
+        }
+    }
+
+    /// Sets the type of these notes (the one being typed into, while
+    /// editing) as one undoable step.
+    pub fn set_style(&mut self, ids: &[Id], style: NoteStyle, cx: &mut Context<Self>) {
+        if let Some(ed) = self.editing {
+            self.change_note(ed.id, cx, |s| s.style = style);
+            return;
+        }
+        let t = now();
+        self.change(cx, |b| {
+            for id in ids {
+                if let Some(s) = b.find_note_mut(*id) {
+                    s.style = style;
+                    s.edited = t;
+                }
+            }
+        });
+    }
+
+    /// S on the sheet: the selected notes take the next type.
+    pub fn cycle_style(&mut self, cx: &mut Context<Self>) {
+        let ids = self.selected_notes();
+        let Some(first) = ids.first().and_then(|id| self.board.find_note(*id)) else { return };
+        let next = first.style.next();
+        self.set_style(&ids, next, cx);
+        self.notify(format!("{} · S for the next type", next.label()), cx);
+    }
+
+    /// Text into Markdown, on these notes: an untitled note's first line
+    /// becomes its title.
+    pub fn markdown_notes(&mut self, ids: &[Id], cx: &mut Context<Self>) {
+        let t = now();
+        let mut changed = 0;
+        self.change(cx, |b| {
+            for id in ids {
+                let Some(s) = b.find_note_mut(*id) else { continue };
+                let (head, body) = if s.title.trim().is_empty() { markdown::tidy(&s.body) } else { (None, markdown::tidy_body(&s.body)) };
+                if body != s.body || head.is_some() {
+                    s.body = body;
+                    if let Some(h) = head {
+                        s.title = h;
+                    }
+                    s.edited = t;
+                    changed += 1;
+                }
+            }
+        });
+        let msg = match changed {
+            0 => "Nothing to change: already Markdown".to_string(),
+            1 => format!("Turned into Markdown · {} to undo", shortcut("Z")),
+            n => format!("{n} notes turned into Markdown · {} to undo", shortcut("Z")),
+        };
+        self.notify(msg, cx);
     }
 
     pub fn delete_selection(&mut self, cx: &mut Context<Self>) {
@@ -1375,8 +1566,8 @@ impl Folio {
     }
 
     /// Paste: a picture becomes a picture note, a web address a link card,
-    /// other text a note.
-    pub fn paste(&mut self, cx: &mut Context<Self>) {
+    /// other text a note; with `tidy`, its text turned into Markdown.
+    pub fn paste(&mut self, tidy: bool, cx: &mut Context<Self>) {
         let Some(item) = cx.read_from_clipboard() else { return };
         let (w, h) = self.viewport_size();
         let at = self.sheet().camera.to_world(v2(w / 2., h / 2.));
@@ -1412,20 +1603,29 @@ impl Folio {
                         return;
                     }
                     let mut new_id = 0;
-                    let def = self.board.settings.default_paper;
+                    let set = self.board.settings.clone();
+                    let structured = !tidy && markdown::looks_structured(&text);
+                    let (title, body) = if tidy { markdown::tidy(&text) } else { (None, text) };
                     self.change(cx, |b| {
                         new_id = b.fresh_id();
-                        let paper = next_paper(b.sheet(), def);
+                        let paper = b.sheet().next_paper(set.default_paper);
+                        let (style, font) = b.sheet().next_look(set.default_style, set.default_font);
                         b.sheet_mut().stickers.push(Sticker {
                             id: new_id,
                             rect: Rect { x: at.x - 120., y: at.y - 60., w: 240., h: 120. },
                             paper,
-                            body: text,
+                            style,
+                            font,
+                            title: title.unwrap_or_default(),
+                            body,
                             edited: now(),
                             ..Default::default()
                         });
                     });
                     self.select(Selection::Sticker(new_id));
+                    if structured {
+                        self.notify(format!("Pasted as it was · {} pastes it as Markdown", shortcut("Shift+V")), cx);
+                    }
                     return;
                 }
             }
@@ -1779,12 +1979,6 @@ fn template_default_name(t: Template) -> String {
 
 /// The paper after the newest note's, so a run of new notes alternates;
 /// the first follows the default.
-fn next_paper(sheet: &Category, default: Paper) -> Paper {
-    let Some(last) = sheet.stickers.last().map(|s| s.paper) else { return default };
-    let i = Paper::ALL.iter().position(|p| *p == last).unwrap_or(0);
-    Paper::ALL[(i + 1) % (Paper::ALL.len() - 1)]
-}
-
 fn image_sticker(id: Id, at: Vec2, file: String, title: String) -> Sticker {
     Sticker {
         id,

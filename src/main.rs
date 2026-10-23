@@ -9,6 +9,7 @@ mod fonts;
 mod greeting;
 mod desktop;
 mod links;
+mod markdown;
 mod merge;
 mod model;
 mod store;
@@ -69,10 +70,26 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("c", ToolConnect, Some("Board")),
         KeyBinding::new("f", ToolFrame, Some("Board")),
         KeyBinding::new("e", ToolEraser, Some("Board")),
+        KeyBinding::new("s", CycleStyle, Some("Board")),
+        KeyBinding::new("secondary-shift-t", ToMarkdown, Some("Board")),
+        KeyBinding::new("secondary-shift-v", PasteMarkdown, Some("Board")),
         // Typing into a note, a dialog, the palette: ahead of the text
         // fields' own Ctrl+Enter, Escape and arrows.
         KeyBinding::new("secondary-enter", SaveNote, Some("NoteEdit > Input")),
         KeyBinding::new("escape", Dismiss, Some("NoteEdit > Input")),
+        // Writing in a note: Ctrl+B is bold here, the drawer everywhere else.
+        KeyBinding::new("secondary-b", Bold, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-i", Italic, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-shift-x", Strike, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-e", InlineCode, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-shift-m", Highlight, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-shift-8", Bullets, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-shift-7", Numbers, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-shift-9", Tasks, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-shift-.", Callout, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-shift-t", ToMarkdown, Some("NoteEdit > Input")),
+        KeyBinding::new("secondary-shift-v", PasteMarkdown, Some("NoteEdit > Input")),
+        KeyBinding::new("enter", NewLine, Some("NoteEdit > Input")),
         KeyBinding::new("secondary-enter", SaveNote, Some("Dialog")),
         KeyBinding::new("secondary-enter", SaveNote, Some("Dialog > Input")),
         KeyBinding::new("escape", Dismiss, Some("Dialog > Input")),

@@ -294,7 +294,7 @@ impl Folio {
                     row("m-paste", "icons/clipboard-paste.svg", "Paste", Some(shortcut("V")), &t)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.menu = None;
-                            this.paste(cx)
+                            this.paste(false, cx)
                         }))
                         .into_any_element(),
                 );
