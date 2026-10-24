@@ -608,6 +608,25 @@ impl Folio {
                         .border_color(t.colors.selection),
                 )
             })
+            // One of several selected: a tick in its corner, as a file
+            // window marks what's picked.
+            .when(selected && self.selection.len() > 1, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(-t.size.icon_lg / 2. + px(2.))
+                        .left(-t.size.icon_lg / 2. + px(2.))
+                        .size(t.size.icon_lg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.full)
+                        .bg(t.colors.selection)
+                        .border_2()
+                        .border_color(t.colors.canvas)
+                        .child(icon("icons/check.svg", t.size.icon_sm * 0.8, t.colors.primary_fg)),
+                )
+            })
             .children(grip)
             .into_any_element()
     }

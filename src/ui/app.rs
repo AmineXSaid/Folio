@@ -734,6 +734,28 @@ impl Folio {
         self.selection = vec![s];
     }
 
+    /// What an action on note `id` applies to: every selected note when
+    /// `id` is one of them, otherwise just `id`.
+    pub fn targets(&self, id: Id) -> Vec<Id> {
+        if self.is_selected(Selection::Sticker(id)) {
+            self.selected_notes()
+        } else {
+            vec![id]
+        }
+    }
+
+    /// Adds `s` to the selection, or takes it out if it's there (Ctrl or
+    /// Shift and a click). Says whether it's selected now.
+    pub fn toggle_selected(&mut self, s: Selection) -> bool {
+        if self.is_selected(s) {
+            self.selection.retain(|x| *x != s);
+            false
+        } else {
+            self.selection.push(s);
+            true
+        }
+    }
+
     // ---------- Theme ----------
 
     pub fn dark(&self) -> bool {
@@ -1573,18 +1595,53 @@ impl Folio {
         }
     }
 
-    pub fn bin_note(&mut self, id: Id, archived: bool, cx: &mut Context<Self>) {
+    /// Puts notes in the Trash (or the Archive), as one undo step.
+    pub fn bin_notes(&mut self, ids: &[Id], archived: bool, cx: &mut Context<Self>) {
         self.menu = None;
-        if self.editing.map(|e| e.id) == Some(id) {
+        if self.editing.is_some_and(|e| ids.contains(&e.id)) {
             self.finish_edit(cx);
         }
         let t = now();
         self.change(cx, |b| {
-            b.bin_note(id, archived, t);
+            for &id in ids {
+                b.bin_note(id, archived, t);
+            }
         });
-        self.selection.retain(|s| *s != Selection::Sticker(id));
-        let what = if archived { "Archived" } else { "Moved to Trash" };
+        self.selection.retain(|s| !matches!(s, Selection::Sticker(id) if ids.contains(id)));
+        let what = match (archived, ids.len()) {
+            (true, 1) => "Archived".to_string(),
+            (true, n) => format!("{n} notes archived"),
+            (false, 1) => "Moved to Trash".to_string(),
+            (false, n) => format!("{n} notes moved to Trash"),
+        };
         self.notify(format!("{what} · {} to undo", shortcut("Z")), cx);
+    }
+
+    /// Changes every note in `ids` as one undo step.
+    pub fn change_notes(&mut self, ids: &[Id], cx: &mut Context<Self>, f: impl Fn(&mut Sticker)) {
+        if let [id] = ids {
+            return self.change_note(*id, cx, f);
+        }
+        self.finish_edit(cx);
+        let t = now();
+        self.change(cx, |b| {
+            for &id in ids {
+                if let Some(s) = b.find_note_mut(id) {
+                    f(s);
+                    s.edited = t;
+                }
+            }
+        });
+    }
+
+    /// Locks the notes, or unlocks them when they're all locked already.
+    pub fn lock_notes(&mut self, ids: &[Id], cx: &mut Context<Self>) {
+        self.menu = None;
+        let lock = !ids.iter().all(|id| self.board.find_note(*id).is_some_and(|s| s.locked));
+        self.change_notes(ids, cx, |s| s.locked = lock);
+        if ids.len() > 1 {
+            self.notify(format!("{} notes {}", ids.len(), if lock { "locked" } else { "unlocked" }), cx);
+        }
     }
 
     pub fn duplicate_selection(&mut self, cx: &mut Context<Self>) {
@@ -1614,20 +1671,27 @@ impl Folio {
         self.selection = new;
     }
 
-    pub fn move_note_to(&mut self, id: Id, to: usize, cx: &mut Context<Self>) {
+    /// Moves notes to sheet `to`, as one undo step.
+    pub fn move_notes_to(&mut self, ids: &[Id], to: usize, cx: &mut Context<Self>) {
         self.menu = None;
+        self.finish_edit(cx);
         let name = self.board.categories.get(to).map(|c| c.name.clone()).unwrap_or_default();
-        let mut ok = false;
-        self.change(cx, |b| ok = b.move_note(id, to));
-        if ok {
-            self.selection.retain(|s| *s != Selection::Sticker(id));
-            self.notify(format!("Moved to “{name}”"), cx);
+        let mut moved = 0;
+        self.change(cx, |b| moved = ids.iter().filter(|&&id| b.move_note(id, to)).count());
+        if moved > 0 {
+            self.selection.retain(|s| !matches!(s, Selection::Sticker(id) if ids.contains(id)));
+            let what = if moved == 1 { "Moved".to_string() } else { format!("Moved {moved} notes") };
+            self.notify(format!("{what} to “{name}”"), cx);
         }
     }
 
     pub fn set_reminder(&mut self, id: Id, due: Option<u64>, cx: &mut Context<Self>) {
+        self.set_reminders(&[id], due, cx);
+    }
+
+    pub fn set_reminders(&mut self, ids: &[Id], due: Option<u64>, cx: &mut Context<Self>) {
         self.menu = None;
-        self.change_note(id, cx, |s| {
+        self.change_notes(ids, cx, |s| {
             s.due = due;
             s.reminded = false;
         });
@@ -1636,10 +1700,12 @@ impl Folio {
         }
     }
 
-    pub fn copy_note(&mut self, id: Id, cx: &mut Context<Self>) {
+    /// The notes' text on the clipboard, one after another.
+    pub fn copy_notes_text(&mut self, ids: &[Id], cx: &mut Context<Self>) {
         self.menu = None;
-        if let Some(s) = self.board.find_note(id) {
-            cx.write_to_clipboard(ClipboardItem::new_string(s.text()));
+        let text: Vec<String> = ids.iter().filter_map(|id| self.board.find_note(*id)).map(|s| s.text()).collect();
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.join("\n\n")));
             self.notify("Copied as text", cx);
         }
     }

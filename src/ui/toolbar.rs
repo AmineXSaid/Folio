@@ -62,6 +62,7 @@ impl Folio {
             .flex()
             .flex_col()
             .items_center()
+            .children(self.render_selection_bar(&t, cx))
             .child(
                 dock(&t)
                     .id("dock")
@@ -224,7 +225,7 @@ impl Folio {
 
 /// The glass the dock is made of: a translucent body, a lit top edge, a
 /// deep soft shadow, generous rounding.
-fn dock(t: &crate::theme::Theme) -> gpui::Div {
+pub(super) fn dock(t: &crate::theme::Theme) -> gpui::Div {
     div()
         .flex()
         .items_center()

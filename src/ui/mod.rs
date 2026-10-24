@@ -16,6 +16,7 @@ mod palette;
 mod pins;
 pub mod popout;
 pub mod quick;
+mod selection;
 mod settings;
 mod sticker;
 mod sync;

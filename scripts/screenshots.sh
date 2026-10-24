@@ -14,6 +14,7 @@
 #   welcome-look  the same note, picking a face
 #   drawer  the sheets drawer         sheet   a sheet
 #   edit    typing into a note        menu    a note's right-click menu
+#   select  three notes picked with Ctrl+click, and the selection bar
 #   palette Ctrl+K                    settings
 #   types   the cheatsheet sheet: taped notes, cheat cards, index cards
 #   background  the sheet menu's Background page: patterns, colours, a picture
@@ -82,6 +83,10 @@ for mode in light dark; do
   shot sheet
   # A note's menu, then typing into it.
   xdotool mousemove 150 260 click 3; shot menu; key Escape
+  # Several notes: Ctrl+click, the ticks and the selection bar.
+  xdotool mousemove 160 240 click 1; xdotool keydown ctrl
+  xdotool mousemove 490 330 click 1; xdotool mousemove 870 300 click 1; xdotool keyup ctrl
+  xdotool mousemove 640 420; shot select; key Escape
   xdotool mousemove 580 600 click --repeat 2 --delay 80 1; sleep 1.2
   xdotool type --delay 25 " Edited in place."; shot edit; key Escape
   key ctrl+k; xdotool type --delay 20 "seed"; shot palette; key Escape

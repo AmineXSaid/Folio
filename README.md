@@ -154,6 +154,7 @@ set to its address.
 | Right-click | A note's, the sheet's, an area's or a card's menu |
 | Drag a note's edge or corner | Resize it from that side |
 | Drag the empty sheet | Select a group; Space+drag, middle-drag or the wheel pans |
+| Ctrl+click or Shift+click | Add a note to the selection, or take it out (Ctrl or Shift and a drag adds a box); the bar above the tools then locks, duplicates, moves, archives or trashes them all, and a selected note's right-click menu acts on all of them |
 | Ctrl+wheel | Zoom |
 | `V H P M T C F E` | Select, pan, pen, marker, text, connect, area, eraser |
 | Arrows | Move between notes |

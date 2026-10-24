@@ -138,6 +138,23 @@ impl Folio {
         match (kind, page) {
             (MenuKind::Note(id), MenuPage::Main) => {
                 let Some(s) = self.board.find_note(id).cloned() else { return None };
+                // Everything here applies to every selected note when this
+                // one is among them; what only makes sense for one note
+                // isn't offered for several.
+                let targets = self.targets(id);
+                let many = targets.len() > 1;
+                if many {
+                    items.push(
+                        div()
+                            .px(t.space.sm)
+                            .pt(t.space.xs)
+                            .text_size(t.text.caption)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(t.colors.brand_on_tint)
+                            .child(format!("{} notes selected", targets.len()))
+                            .into_any_element(),
+                    );
+                }
                 // Twelve papers as small circles: the same width six squares took.
                 let papers = div().flex().items_center().gap(px(3.)).px(t.space.sm).py(t.space.xs).children(Paper::ALL.iter().map(|&p| {
                     div()
@@ -150,7 +167,10 @@ impl Folio {
                         .border_color(t.colors.border)
                         .cursor_pointer()
                         .when(s.paper == p, |d| d.border_2().border_color(t.colors.brand))
-                        .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.paper = p)))
+                        .on_click({
+                            let targets = targets.clone();
+                            cx.listener(move |this, _, _, cx| this.change_notes(&targets, cx, |s| s.paper = p))
+                        })
                 }));
                 let fonts = div().flex().gap(px(4.)).px(t.space.sm).pb(t.space.xs).children(NoteFont::ALL.iter().map(|&f| {
                     let on = s.font == f;
@@ -167,7 +187,10 @@ impl Folio {
                         .text_size(t.text.caption)
                         .cursor_pointer()
                         .child(f.label())
-                        .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.font = f)))
+                        .on_click({
+                            let targets = targets.clone();
+                            cx.listener(move |this, _, _, cx| this.change_notes(&targets, cx, |s| s.font = f))
+                        })
                 }).chain(TextSize::ALL.iter().map(|&z| {
                     let on = s.text_size == z;
                     div()
@@ -183,10 +206,12 @@ impl Folio {
                         .text_size(t.text.caption)
                         .cursor_pointer()
                         .child(z.label())
-                        .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.text_size = z)))
+                        .on_click({
+                            let targets = targets.clone();
+                            cx.listener(move |this, _, _, cx| this.change_notes(&targets, cx, |s| s.text_size = z))
+                        })
                 })));
-                // The note's type; for every selected note when it's one of them.
-                let targets = if self.is_selected(super::app::Selection::Sticker(id)) { self.selected_notes() } else { vec![id] };
+                // The note's type.
                 let styles = div().flex().gap(px(4.)).px(t.space.sm).pb(t.space.xs).children(NoteStyle::ALL.iter().map(|&st| {
                     let on = s.style == st;
                     let targets = targets.clone();
@@ -197,41 +222,47 @@ impl Folio {
                 items.push(fonts.into_any_element());
                 items.push(styles.into_any_element());
                 items.push(sep(&t).into_any_element());
-                items.push(
-                    row("m-edit", "icons/pencil.svg", "Edit", Some("Enter".into()), &t)
-                        .on_click(cx.listener(move |this, _, window, cx| this.begin_edit(id, false, window, cx)))
-                        .into_any_element(),
-                );
-                items.push(
-                    row("m-task", "icons/list-checks.svg", "Add a task", None, &t)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.menu = None;
-                            this.add_task(id, window, cx)
-                        }))
-                        .into_any_element(),
-                );
-                let targets = if self.is_selected(super::app::Selection::Sticker(id)) { self.selected_notes() } else { vec![id] };
+                if !many {
+                    items.push(
+                        row("m-edit", "icons/pencil.svg", "Edit", Some("Enter".into()), &t)
+                            .on_click(cx.listener(move |this, _, window, cx| this.begin_edit(id, false, window, cx)))
+                            .into_any_element(),
+                    );
+                    items.push(
+                        row("m-task", "icons/list-checks.svg", "Add a task", None, &t)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.menu = None;
+                                this.add_task(id, window, cx)
+                            }))
+                            .into_any_element(),
+                    );
+                }
                 items.push(
                     row("m-markdown", "icons/wand-sparkles.svg", "Turn into Markdown", Some(shortcut("Shift+T")), &t)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.menu = None;
-                            this.markdown_notes(&targets, cx)
-                        }))
+                        .on_click({
+                            let targets = targets.clone();
+                            cx.listener(move |this, _, _, cx| {
+                                this.menu = None;
+                                this.markdown_notes(&targets, cx)
+                            })
+                        })
                         .into_any_element(),
                 );
                 let pinned = s.pin.map_or("None", |p| p.shape.label());
                 items.push(row("m-pin", "icons/pin.svg", "Pin", Some(format!("{pinned}  ›")), &t).on_click(cx.listener(goto(MenuPage::Pin))).into_any_element());
-                items.push(
-                    row("m-pic", "icons/image.svg", if s.image.is_some() { "Replace picture…" } else { "Add picture…" }, None, &t)
-                        .on_click(cx.listener(move |this, _, _, cx| this.pick_image(id, cx)))
-                        .into_any_element(),
-                );
+                if !many {
+                    items.push(
+                        row("m-pic", "icons/image.svg", if s.image.is_some() { "Replace picture…" } else { "Add picture…" }, None, &t)
+                            .on_click(cx.listener(move |this, _, _, cx| this.pick_image(id, cx)))
+                            .into_any_element(),
+                    );
+                }
                 let remind = match s.due {
                     Some(d) => format!("Reminder · {}", time::due_label(d, now())),
                     None => "Remind me…".into(),
                 };
                 items.push(row("m-remind", "icons/bell.svg", remind, Some("›".into()), &t).on_click(cx.listener(goto(MenuPage::Remind))).into_any_element());
-                if let Some(l) = &s.link {
+                if let Some(l) = s.link.as_ref().filter(|_| !many) {
                     let url = l.url.clone();
                     items.push(
                         row("m-open", "icons/external-link.svg", "Open link", None, &t)
@@ -243,7 +274,7 @@ impl Folio {
                     );
                 }
                 items.push(sep(&t).into_any_element());
-                items.push(if s.popped.is_some() {
+                items.extend((!many).then(|| if s.popped.is_some() {
                     row("m-dock", "icons/minimize-2.svg", "Take back from the desktop", None, &t)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.menu = None;
@@ -254,47 +285,58 @@ impl Folio {
                     row("m-pop", "icons/picture-in-picture-2.svg", "Pin to the desktop", None, &t)
                         .on_click(cx.listener(move |this, _, window, cx| this.pop_out(id, window, cx)))
                         .into_any_element()
-                });
+                }));
                 items.push(row("m-move", "icons/folder-input.svg", "Move to sheet", Some("›".into()), &t).on_click(cx.listener(goto(MenuPage::MoveTo))).into_any_element());
                 items.push(
                     row("m-dup", "icons/copy.svg", "Duplicate", Some(shortcut("D")), &t)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.menu = None;
-                            this.select(super::app::Selection::Sticker(id));
+                            if !this.is_selected(super::app::Selection::Sticker(id)) {
+                                this.select(super::app::Selection::Sticker(id));
+                            }
                             this.duplicate_selection(cx)
                         }))
                         .into_any_element(),
                 );
                 items.push(
                     row("m-copy", "icons/file-text.svg", "Copy as text", None, &t)
-                        .on_click(cx.listener(move |this, _, _, cx| this.copy_note(id, cx)))
+                        .on_click({
+                            let targets = targets.clone();
+                            cx.listener(move |this, _, _, cx| this.copy_notes_text(&targets, cx))
+                        })
                         .into_any_element(),
                 );
-                let locked = s.locked;
+                // Lock unless they're all locked already.
+                let locked = targets.iter().all(|id| self.board.find_note(*id).is_some_and(|s| s.locked));
                 items.push(
                     row("m-lock", if locked { "icons/lock-open.svg" } else { "icons/lock.svg" }, if locked { "Unlock" } else { "Lock" }, None, &t)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.menu = None;
-                            this.change_note(id, cx, |s| s.locked = !locked)
-                        }))
+                        .on_click({
+                            let targets = targets.clone();
+                            cx.listener(move |this, _, _, cx| this.lock_notes(&targets, cx))
+                        })
                         .into_any_element(),
                 );
-                let fixed = s.fixed;
+                let fixed = targets.iter().all(|id| self.board.find_note(*id).is_some_and(|s| s.fixed));
                 items.push(
                     row("m-fit", if fixed { "icons/maximize-2.svg" } else { "icons/minimize-2.svg" }, if fixed { "Grow with the text" } else { "Keep this height" }, None, &t)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.menu = None;
-                            let h = this.board.find_note(id).map(|s| this.note_rect(s).h);
-                            this.change_note(id, cx, |s| {
-                                s.fixed = !fixed;
-                                if let (false, Some(h)) = (fixed, h) {
-                                    s.rect.h = h;
-                                }
+                        .on_click({
+                            let targets = targets.clone();
+                            cx.listener(move |this, _, _, cx| {
+                                this.menu = None;
+                                // Each keeps the height it's drawn at now.
+                                let heights: std::collections::HashMap<Id, f32> =
+                                    targets.iter().filter_map(|id| this.board.find_note(*id).map(|s| (*id, this.note_rect(s).h))).collect();
+                                this.change_notes(&targets, cx, |s| {
+                                    s.fixed = !fixed;
+                                    if let (false, Some(h)) = (fixed, heights.get(&s.id)) {
+                                        s.rect.h = *h;
+                                    }
+                                })
                             })
-                        }))
+                        })
                         .into_any_element(),
                 );
-                if s.is_stale(now()) {
+                if !many && s.is_stale(now()) {
                     items.push(
                         row("m-fresh", "icons/sparkles.svg", "Still relevant (keep fresh)", None, &t)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -317,19 +359,22 @@ impl Folio {
                 items.push(sep(&t).into_any_element());
                 items.push(
                     row("m-archive", "icons/archive.svg", "Archive", None, &t)
-                        .on_click(cx.listener(move |this, _, _, cx| this.bin_note(id, true, cx)))
+                        .on_click({
+                            let targets = targets.clone();
+                            cx.listener(move |this, _, _, cx| this.bin_notes(&targets, true, cx))
+                        })
                         .into_any_element(),
                 );
                 items.push(
                     row("m-trash", "icons/trash.svg", "Move to Trash", Some("Del".into()), &t)
                         .text_color(t.colors.danger)
-                        .on_click(cx.listener(move |this, _, _, cx| this.bin_note(id, false, cx)))
+                        .on_click(cx.listener(move |this, _, _, cx| this.bin_notes(&targets, false, cx)))
                         .into_any_element(),
                 );
             }
             (MenuKind::Note(id), MenuPage::Pin) => {
                 let Some(s) = self.board.find_note(id).cloned() else { return None };
-                let targets = if self.is_selected(super::app::Selection::Sticker(id)) { self.selected_notes() } else { vec![id] };
+                let targets = self.targets(id);
                 let current = s.pin;
                 items.push(back("Pin", cx).into_any_element());
                 items.push(sep(&t).into_any_element());
@@ -426,6 +471,7 @@ impl Folio {
                 items.push(back("Move to sheet", cx).into_any_element());
                 items.push(sep(&t).into_any_element());
                 let here = self.board.sheet_of(id);
+                let targets = self.targets(id);
                 for ix in self.board.ordered() {
                     if Some(ix) == here {
                         continue;
@@ -434,26 +480,33 @@ impl Folio {
                     let label = if c.icon.is_empty() { c.name.clone() } else { format!("{} {}", c.icon, c.name) };
                     items.push(
                         row(format!("m-to-{ix}"), "icons/folder-input.svg", label, None, &t)
-                            .on_click(cx.listener(move |this, _, _, cx| this.move_note_to(id, ix, cx)))
+                            .on_click({
+                                let targets = targets.clone();
+                                cx.listener(move |this, _, _, cx| this.move_notes_to(&targets, ix, cx))
+                            })
                             .into_any_element(),
                     );
                 }
             }
             (MenuKind::Note(id), MenuPage::Remind) => {
+                let targets = self.targets(id);
                 items.push(back("Remind me", cx).into_any_element());
                 items.push(sep(&t).into_any_element());
                 for (i, (label, when)) in time::presets(now()).into_iter().enumerate() {
                     items.push(
                         row(format!("m-at-{i}"), "icons/clock.svg", label, None, &t)
-                            .on_click(cx.listener(move |this, _, _, cx| this.set_reminder(id, Some(when), cx)))
+                            .on_click({
+                                let targets = targets.clone();
+                                cx.listener(move |this, _, _, cx| this.set_reminders(&targets, Some(when), cx))
+                            })
                             .into_any_element(),
                     );
                 }
-                if self.board.find_note(id).is_some_and(|s| s.due.is_some()) {
+                if targets.iter().any(|id| self.board.find_note(*id).is_some_and(|s| s.due.is_some())) {
                     items.push(sep(&t).into_any_element());
                     items.push(
                         row("m-clear", "icons/bell-off.svg", "Clear reminder", None, &t)
-                            .on_click(cx.listener(move |this, _, _, cx| this.set_reminder(id, None, cx)))
+                            .on_click(cx.listener(move |this, _, _, cx| this.set_reminders(&targets, None, cx)))
                             .into_any_element(),
                     );
                 }

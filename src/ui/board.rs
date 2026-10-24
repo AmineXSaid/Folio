@@ -976,7 +976,10 @@ impl Folio {
         let cam = self.sheet().camera;
         let world = cam.to_world(at);
         let double = ev.click_count >= 2;
-        let shift = ev.modifiers.shift;
+        // Ctrl (Cmd on a Mac) or Shift and a click adds to the selection or
+        // takes out of it, as in a file window; a box drawn with either
+        // adds to it.
+        let shift = ev.modifiers.shift || ev.modifiers.secondary();
         let pan = Gesture::Pan { start: at, pan: cam.pan };
         // A click on the sheet's name renames it, right there.
         if !self.space && matches!(self.tool, Tool::Select | Tool::Text) && self.on_title(at) {
@@ -1014,10 +1017,11 @@ impl Folio {
                         return;
                     }
                     if shift {
-                        if self.is_selected(sel) {
-                            self.selection.retain(|s| *s != sel);
-                        } else {
-                            self.selection.push(sel);
+                        if !self.toggle_selected(sel) {
+                            // Taken out: nothing to drag.
+                            self.gesture = Gesture::None;
+                            cx.notify();
+                            return;
                         }
                     } else if !self.is_selected(sel) {
                         self.select(sel);
@@ -1031,10 +1035,14 @@ impl Folio {
                         self.edit_label(id, false, window, cx);
                         return;
                     }
-                    if !self.is_selected(sel) && !shift {
+                    if shift {
+                        if !self.toggle_selected(sel) {
+                            self.gesture = Gesture::None;
+                            cx.notify();
+                            return;
+                        }
+                    } else if !self.is_selected(sel) {
                         self.select(sel);
-                    } else if shift && !self.is_selected(sel) {
-                        self.selection.push(sel);
                     }
                     self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
                 } else if let Some(id) = self.frame_bar_at(world) {
@@ -1044,12 +1052,14 @@ impl Folio {
                         self.rename_frame(id, window, cx);
                         return;
                     }
-                    if !self.is_selected(sel) {
-                        if shift {
-                            self.selection.push(sel);
-                        } else {
-                            self.select(sel);
+                    if shift {
+                        if !self.toggle_selected(sel) {
+                            self.gesture = Gesture::None;
+                            cx.notify();
+                            return;
                         }
+                    } else if !self.is_selected(sel) {
+                        self.select(sel);
                     }
                     self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
                 } else if double {
