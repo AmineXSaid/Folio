@@ -416,6 +416,63 @@ fn put_head(c: &mut Category, h: &Category) {
     c.backdrop = h.backdrop.clone();
 }
 
+/// The board as an edit found it, for its undo step: copies of the sheets
+/// the edit can change and what's board-wide. A press on the sheet or
+/// typing into a note can only change the open sheet, so only that one is
+/// copied (a drag that drops notes onto another sheet keeps that sheet
+/// too, before it changes); copying the whole board on every press was the
+/// cost of a click on a big board.
+#[derive(Clone, Debug)]
+pub struct Before {
+    sheets: Vec<Category>,
+    active: usize,
+    next_id: Id,
+}
+
+impl Before {
+    /// The open sheet as it is now.
+    pub fn open(board: &Board) -> Self {
+        Before { sheets: board.categories.get(board.active).cloned().into_iter().collect(), active: board.active, next_id: board.next_id }
+    }
+
+    /// Keeps sheet `ix` as it is now too; call it before changing that sheet.
+    pub fn keep(&mut self, board: &Board, ix: usize) {
+        if let Some(c) = board.categories.get(ix) {
+            if !self.sheets.iter().any(|s| s.id == c.id) {
+                self.sheets.push(c.clone());
+            }
+        }
+    }
+
+    fn sheet(&self, id: Id) -> Option<&Category> {
+        self.sheets.iter().find(|c| c.id == id)
+    }
+
+    /// Takes on what isn't an edit from `board`: which sheet is open, where
+    /// the sheets are scrolled to, and the notes' order when a click only
+    /// brought one to the front.
+    pub fn settle(&mut self, board: &Board) {
+        self.active = board.active;
+        for c in &mut self.sheets {
+            let Some(now) = board.categories.iter().find(|n| n.id == c.id) else { continue };
+            c.camera = now.camera;
+            if c.stickers.len() == now.stickers.len() {
+                let was: HashMap<Id, &Sticker> = c.stickers.iter().map(|s| (s.id, s)).collect();
+                if now.stickers.iter().all(|s| was.get(&s.id).is_some_and(|w| *w == s)) {
+                    c.stickers = now.stickers.clone();
+                }
+            }
+        }
+    }
+
+    /// Something it holds is different in `board`, undoable or not.
+    pub fn differs(&self, board: &Board) -> bool {
+        board.active != self.active
+            || board.next_id != self.next_id
+            || self.sheets.iter().any(|c| board.categories.iter().find(|n| n.id == c.id) != Some(c))
+    }
+}
+
 /// One undo step.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Change {
@@ -467,9 +524,35 @@ impl Change {
         }
     }
 
+    /// What changed from `before` to `after` in the sheets `before` kept
+    /// (the rest weren't changed by the edit it was taken for).
+    pub fn since(before: &Before, after: &Board) -> Self {
+        let inside = before
+            .sheets
+            .iter()
+            .filter_map(|c| after.categories.iter().find(|n| n.id == c.id).and_then(|now| SheetChange::diff(c, now)))
+            .collect();
+        Change {
+            sheets: Edits::default(),
+            inside,
+            bin: Edits::default(),
+            active: (before.active, after.active),
+            next_id: before.next_id.max(after.next_id),
+        }
+    }
+
+    /// As `restamp`, from the sheets `before` kept.
+    pub fn restamp_since(&mut self, before: &Before, after: &Board, id: Id) {
+        self.restamp_was(before.sheet(id), after, id);
+    }
+
     /// Takes in a new `edited` time on sheet `id`, set on `after` once the
     /// step was made, so the step needn't be worked out again.
     pub fn restamp(&mut self, before: &Board, after: &Board, id: Id) {
+        self.restamp_was(before.categories.iter().find(|c| c.id == id), after, id);
+    }
+
+    fn restamp_was(&mut self, was: Option<&Category>, after: &Board, id: Id) {
         let Some(now) = after.categories.iter().find(|c| c.id == id) else { return };
         if let Some((_, after)) = &mut self.sheets.whole {
             if let Some(c) = after.iter_mut().find(|c| c.id == id) {
@@ -481,7 +564,7 @@ impl Change {
             c.edited = now.edited;
             return;
         }
-        let Some(was) = before.categories.iter().find(|c| c.id == id) else { return };
+        let Some(was) = was else { return };
         let changed = (!same_head(was, now)).then(|| (head(was), head(now)));
         match self.inside.iter_mut().find(|s| s.id == id) {
             Some(s) => s.head = changed,
@@ -548,6 +631,49 @@ mod tests {
         b.sheet_mut().stickers = (0..n).map(|i| note(100 + i, i as f32 * 10.)).collect();
         b.next_id = 100 + n;
         b
+    }
+
+    #[test]
+    fn a_copy_of_the_open_sheet_makes_the_same_step() {
+        let mut b = board(50);
+        b.add_sheet("Other");
+        b.active = 0;
+        let whole = b.clone();
+        let mut before = Before::open(&b);
+        assert_eq!(before.sheets.len(), 1, "only the open sheet is copied");
+
+        // A note moved, one added: the same step either way, and it undoes.
+        b.sheet_mut().stickers[3].rect.x += 40.;
+        let id = b.fresh_id();
+        b.sheet_mut().stickers.push(note(id, 5.));
+        let step = Change::since(&before, &b);
+        assert_eq!(step, Change::diff(&whole, &b));
+        let mut back = b.clone();
+        step.apply(&mut back, Way::Back);
+        assert_eq!(content(&back), content(&whole));
+
+        // Notes dropped onto another sheet: that sheet is kept before it changes.
+        let after_move = b.clone();
+        before = Before::open(&b);
+        before.keep(&b, 1);
+        assert!(b.move_note(id, 1));
+        let step = Change::since(&before, &b);
+        assert_eq!(step, Change::diff(&after_move, &b));
+        step.apply(&mut b, Way::Back);
+        assert_eq!(content(&b), content(&after_move));
+    }
+
+    #[test]
+    fn a_pan_or_a_click_to_the_front_is_no_step() {
+        let mut b = board(5);
+        let mut before = Before::open(&b);
+        b.sheet_mut().camera.pan.x += 300.;
+        b.sheet_mut().bring_to_front(101);
+        before.settle(&b);
+        assert!(Change::since(&before, &b).is_empty());
+        assert!(!before.differs(&b), "nothing to save either");
+        b.sheet_mut().stickers[0].title = "Changed".into();
+        assert!(before.differs(&b));
     }
 
     /// The sheets as undo sees them: without cameras.

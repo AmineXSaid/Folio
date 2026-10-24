@@ -19,6 +19,7 @@ use std::time::Instant;
 use super::app::{Folio, Format, Gesture, MenuKind, MenuPage, Selection, Tool};
 use super::sticker::size_factor;
 use super::*;
+use crate::history::Before;
 use crate::model::*;
 use crate::theme::{theme, Theme};
 
@@ -982,7 +983,7 @@ impl Folio {
             self.start_naming(window, cx);
             return;
         }
-        self.before = Some(self.board.clone());
+        self.before = Some(Before::open(&self.board));
         if self.space {
             self.gesture = pan;
             cx.notify();
@@ -1355,7 +1356,7 @@ impl Folio {
     fn release(&mut self, cx: &mut Context<Self>) {
         let gesture = std::mem::replace(&mut self.gesture, Gesture::None);
         self.guides.clear();
-        let before = self.before.take();
+        let mut before = self.before.take();
         match gesture {
             Gesture::None => {
                 // The editor or a dialog took over this press; keep its snapshot.
@@ -1384,6 +1385,10 @@ impl Folio {
                                 s.rect.y = from.y;
                             }
                         }
+                    }
+                    // The other sheet changes too: keep it as it was first.
+                    if let Some(b) = before.as_mut() {
+                        b.keep(&self.board, to);
                     }
                     for id in &ids {
                         self.board.move_note(*id, to);
@@ -1429,32 +1434,23 @@ impl Folio {
             }
             _ => {}
         }
-        if let Some(before) = before {
-            // Commit compares content, so a pan alone records nothing.
-            let mut b = before;
-            b.active = self.board.active;
-            for (c, now) in b.categories.iter_mut().zip(&self.board.categories) {
-                if c.id == now.id {
-                    c.camera = now.camera;
-                    // Bringing to front on a click isn't a change.
-                    if c.stickers.len() == now.stickers.len() && c.stickers.iter().all(|s| now.stickers.contains(s)) {
-                        c.stickers = now.stickers.clone();
-                    }
-                }
-            }
-            self.commit(b, cx);
+        if let Some(mut b) = before {
+            // A pan alone, or a click bringing a note to the front, records
+            // nothing.
+            b.settle(&self.board);
+            self.commit_since(b, cx);
         }
         cx.notify();
     }
 
     /// A new area over `r`, named next.
     pub fn new_frame(&mut self, r: Rect, cx: &mut Context<Self>) {
-        let before = self.before.take().unwrap_or_else(|| self.board.clone());
+        let before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
         let id = self.board.fresh_id();
         let n = self.sheet().frames.len();
         let accent = Accent::ALL[(n + 1) % Accent::ALL.len()];
         self.board.sheet_mut().frames.insert(0, Frame { id, rect: r, title: String::new(), accent });
-        self.commit(before, cx);
+        self.commit_since(before, cx);
         self.select(Selection::Frame(id));
         self.dialog = Some(super::app::Dialog::RenameFrame(id));
         cx.notify();

@@ -16,7 +16,7 @@ use gpui::{
     SharedString, Task, Window,
 };
 
-use crate::history::{Change, Way};
+use crate::history::{Before, Change, Way};
 use crate::markdown::{self, Prefix};
 use crate::model::*;
 use crate::store;
@@ -380,8 +380,9 @@ pub struct Folio {
     /// Windows the system does it).
     pub bar_drag: bool,
     pub drop_sheet: Option<usize>,
-    /// The undo snapshot taken when the current gesture began.
-    pub before: Option<Board>,
+    /// The undo snapshot taken when the current gesture or edit began: the
+    /// sheets it can change, not the whole board.
+    pub before: Option<Before>,
     pub selection: Vec<Selection>,
     pub hovered: Option<Id>,
     /// The note or area edge under the pointer, for the resize arrow.
@@ -786,10 +787,23 @@ impl Folio {
 
     /// Records `before` as an undo step, and saves soon.
     pub fn commit(&mut self, before: Board, cx: &mut Context<Self>) {
-        let mut step = Change::diff(&before, &self.board);
+        let step = Change::diff(&before, &self.board);
+        let moved = step.is_empty() && before != self.board;
+        self.record(step, moved, cx, |step, board, id| step.restamp(&before, board, id));
+    }
+
+    /// As `commit`, from a copy of only the sheets the edit could change.
+    pub fn commit_since(&mut self, before: Before, cx: &mut Context<Self>) {
+        let step = Change::since(&before, &self.board);
+        let moved = step.is_empty() && before.differs(&self.board);
+        self.record(step, moved, cx, |step, board, id| step.restamp_since(&before, board, id));
+    }
+
+    /// Keeps `step` for undo and saves. An empty step that `moved` the view
+    /// or the settings is saved, with nothing to undo.
+    fn record(&mut self, mut step: Change, moved: bool, cx: &mut Context<Self>, restamp: impl FnOnce(&mut Change, &Board, Id)) {
         if step.is_empty() {
-            // The view or the settings: saved, but nothing to undo.
-            if before != self.board {
+            if moved {
                 self.schedule_save(cx);
                 self.desktop_sync(cx);
             }
@@ -801,7 +815,7 @@ impl Folio {
         if let Some(c) = self.board.categories.get_mut(active) {
             c.edited = t;
             let id = c.id;
-            step.restamp(&before, &self.board, id);
+            restamp(&mut step, &self.board, id);
         }
         self.push_undo(step);
         self.schedule_save(cx);
@@ -1277,7 +1291,7 @@ impl Folio {
     /// A new note with its top-left near `at` (world), ready to type into.
     pub fn new_note_at(&mut self, at: Vec2, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_edit(cx);
-        let before = self.board.clone();
+        let before = Before::open(&self.board);
         let id = self.board.fresh_id();
         let set = &self.board.settings;
         let paper = self.sheet().next_paper(set.default_paper);
@@ -1347,7 +1361,7 @@ impl Folio {
             _ => "Write… - [ ] for a task, #tag, **bold**",
         };
         if self.before.is_none() {
-            self.before = Some(self.board.clone());
+            self.before = Some(Before::open(&self.board));
         }
         self.title_input.update(cx, |i, cx| i.set_value(title.clone(), window, cx));
         // The cursor goes to the end of the text, ready to add to it.
@@ -1378,7 +1392,7 @@ impl Folio {
         let Some(ed) = self.editing.take() else { return };
         let title = self.title_input.read(cx).value().trim().to_string();
         let body = self.body_input.read(cx).value().trim_end().to_string();
-        let before = self.before.take().unwrap_or_else(|| self.board.clone());
+        let before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
         let t = now();
         let empty = title.is_empty() && body.trim().is_empty();
         if let Some(ix) = self.board.sheet_of(ed.id) {
@@ -1395,7 +1409,7 @@ impl Folio {
                 }
             }
         }
-        self.commit(before, cx);
+        self.commit_since(before, cx);
         cx.notify();
     }
 
@@ -1403,7 +1417,11 @@ impl Folio {
     pub fn change_note(&mut self, id: Id, cx: &mut Context<Self>, f: impl FnOnce(&mut Sticker)) {
         let t = now();
         if self.editing.is_some() {
-            // The edit's snapshot covers it.
+            // The edit's snapshot covers it (a note on another sheet, from
+            // its desktop window, gets its sheet kept first).
+            if let (Some(b), Some(ix)) = (self.before.as_mut(), self.board.sheet_of(id)) {
+                b.keep(&self.board, ix);
+            }
             if let Some(s) = self.board.find_note_mut(id) {
                 f(s);
                 s.edited = t;
@@ -1648,7 +1666,7 @@ impl Folio {
 
     /// Starts writing a label on the sheet at `at` (world).
     pub fn new_label_at(&mut self, at: Vec2, window: &mut Window, cx: &mut Context<Self>) {
-        let before = self.board.clone();
+        let before = Before::open(&self.board);
         let id = self.board.fresh_id();
         let ink = self.ink;
         let label = Label::new(id, v2(at.x, at.y - LabelSize::M.line() / 2.), ink);
@@ -1665,7 +1683,7 @@ impl Folio {
         let text = l.text.clone();
         self.finish_label(cx);
         if self.before.is_none() {
-            self.before = Some(self.board.clone());
+            self.before = Some(Before::open(&self.board));
         }
         self.label_edit = Some(id);
         self.menu = None;
@@ -1685,14 +1703,14 @@ impl Folio {
         let Some(id) = self.label_edit.take() else { return };
         self.label_palette = false;
         let text = self.label_input.read(cx).value().trim_end().to_string();
-        let before = self.before.take().unwrap_or_else(|| self.board.clone());
+        let before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
         let sheet = self.board.sheet_mut();
         if text.trim().is_empty() {
             sheet.labels.retain(|l| l.id != id);
         } else if let Some(l) = sheet.labels.iter_mut().find(|l| l.id == id) {
             l.text = text;
         }
-        self.commit(before, cx);
+        self.commit_since(before, cx);
         cx.notify();
     }
 

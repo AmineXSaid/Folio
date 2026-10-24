@@ -187,7 +187,10 @@ model, front-most first. Grip corner → resize; sticker → move (double-click
 on any child element behaves exactly like a press on the model it shows.
 Because of this, Markdown inside a sticker is rendered non-selectable.
 
-When a press starts, the board is snapshotted. When it ends, the snapshot
+When a press starts (or typing into a note or on the sheet begins), the
+open sheet is copied (`history::Before`), not the whole board: that is
+all a press or an edit can change, and a drag that drops notes on another
+sheet copies that one too just before they land. When it ends, the copy
 is compared with the board, and what changed becomes one undo step
 (`history::Change`): the notes, strokes, text, links, frames, sheets and
 Trash entries it touched, each before and after, and where any came, went or
