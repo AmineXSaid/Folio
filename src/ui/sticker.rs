@@ -91,21 +91,26 @@ pub(super) fn md_view_in(id: u64, text: &str, ink: gpui::Hsla, t: &Theme) -> Tex
 
 /// A note's content: link card, title, then its text, with task lines as
 /// checkboxes (`on_toggle` gets the task's number), `>` lines as a
-/// Remember box and tables on the paper. `k` scales sizes.
+/// Remember box and tables on the paper. `k` scales sizes. With
+/// `selectable` its text can be picked out with the mouse and copied.
 pub fn note_body(
     s: &Sticker,
     k: f32,
     t: &Theme,
     media: &std::path::Path,
     md_ids: Option<u64>,
+    selectable: bool,
     on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
 ) -> NoteParts {
+    let md_view = |id: u64, text: &str, t: &Theme| md_view(id, text, t).selectable(selectable);
     let lh = line_height(s.style);
     let ruled = s.style == NoteStyle::Index;
     let mut body: Vec<AnyElement> = Vec::new();
     let base = md_ids.unwrap_or(s.id) * 1024;
     if let Some(l) = &s.link {
         let title = if l.title.is_empty() { l.url.clone() } else { l.title.clone() };
+        let url = l.url.clone();
+        let tip = format!("Open {}", l.site);
         body.push(
             div()
                 .flex()
@@ -122,7 +127,24 @@ pub fn note_body(
                             Some(name) => img(media.join(name)).size(px(14. * k)).rounded(px(3.)).into_any_element(),
                             None => icon("icons/globe.svg", px(12. * k), t.colors.text_subtle).into_any_element(),
                         })
-                        .child(l.site.clone()),
+                        .child(div().flex_1().min_w_0().truncate().child(l.site.clone()))
+                        // Opens the page; pressing it never picks up the note.
+                        .child(
+                            div()
+                                .id(("open-link", s.id))
+                                .flex_none()
+                                .size(px(22. * k))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(6. * k))
+                                .cursor_pointer()
+                                .hover(|d| d.bg(t.colors.hover))
+                                .child(icon("icons/arrow-up-right.svg", px(13. * k), t.colors.text_muted))
+                                .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(move |_, _, cx| cx.open_url(&url)),
+                        ),
                 )
                 .child(
                     div()
@@ -367,7 +389,10 @@ impl Folio {
         let me = cx.entity();
         let toggle = move |n: usize, _: &mut Window, cx: &mut App| me.update(cx, |f, cx| f.toggle_task(id, n, cx));
         let parts = if detail {
-            note_body(s, k, t, &crate::store::media_dir(&self.dir), None, toggle)
+            // The one selected note's text can be selected: a first click
+            // picks the note, a press on its text then picks words.
+            let reading = selected && self.selection.len() == 1 && !matches!(self.gesture, Gesture::Move { moved: true, .. });
+            note_body(s, k, t, &crate::store::media_dir(&self.dir), None, reading, toggle)
         } else {
             let title = div()
                 .text_size(px(15. / DETAIL_ZOOM * z))

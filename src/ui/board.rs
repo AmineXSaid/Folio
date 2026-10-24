@@ -303,6 +303,8 @@ impl Folio {
                 None => {}
             }))
             .on_action(cx.listener(|this, _: &Paste, _, cx| this.paste(false, cx)))
+            .on_action(cx.listener(|this, _: &CopyNotes, window, cx| this.copy_selection(window, cx)))
+            .on_action(cx.listener(|this, _: &CutNotes, _, cx| this.cut_selection(cx)))
             .on_action(cx.listener(|this, _: &PasteMarkdown, _, cx| this.paste(true, cx)))
             .on_action(cx.listener(|this, _: &ToMarkdown, _, cx| {
                 let ids = this.selected_notes();
@@ -1009,6 +1011,13 @@ impl Folio {
                 } else if let Some((id, grip)) = self.frame_grip_at(at) {
                     let rect = self.sheet().frames.iter().find(|f| f.id == id).map(|f| f.rect).unwrap();
                     self.gesture = Gesture::ResizeFrame { id, start: world, rect, grip };
+                } else if !shift && !double && gpui::base::TextSelection::is_selectable_at(ev.position, window, cx) {
+                    // The words of the one selected note: the press picks
+                    // out text (Ctrl+C copies it); the note moves by its
+                    // title, its edges or anywhere else on it.
+                    self.gesture = Gesture::None;
+                    cx.notify();
+                    return;
                 } else if let Some(id) = self.note_at(world) {
                     let sel = Selection::Sticker(id);
                     if double {

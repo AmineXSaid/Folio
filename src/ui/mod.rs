@@ -52,6 +52,8 @@ gpui::actions!(
         EditSelection,
         SelectAll,
         Paste,
+        CopyNotes,
+        CutNotes,
         Escape,
         ZoomIn,
         ZoomOut,

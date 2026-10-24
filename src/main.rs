@@ -53,6 +53,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-a", SelectAll, Some("Board")),
         KeyBinding::new("enter", EditSelection, Some("Board")),
         KeyBinding::new("secondary-v", Paste, Some("Board")),
+        KeyBinding::new("secondary-c", CopyNotes, Some("Board")),
+        KeyBinding::new("secondary-x", CutNotes, Some("Board")),
         KeyBinding::new("escape", Escape, Some("Board")),
         KeyBinding::new("secondary-=", ZoomIn, Some("Board")),
         KeyBinding::new("secondary-+", ZoomIn, Some("Board")),

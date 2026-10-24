@@ -313,6 +313,21 @@ pub enum MenuPage {
     Pin,
 }
 
+/// Notes (and text on the sheet) copied or cut in Folio, as they were:
+/// Ctrl+V makes them again whole, paper, type, pin and the links between
+/// them, while the clipboard still holds the text written with them. Other
+/// apps get that text.
+#[derive(Clone)]
+pub struct Clip {
+    text: String,
+    notes: Vec<Sticker>,
+    links: Vec<Link>,
+    labels: Vec<Label>,
+    /// Cut, not copied: the first paste takes the notes back out of the
+    /// Trash, where cutting put them.
+    cut: bool,
+}
+
 #[derive(Clone)]
 pub struct Menu {
     /// Window position.
@@ -380,6 +395,8 @@ pub struct Folio {
     /// Windows the system does it).
     pub bar_drag: bool,
     pub drop_sheet: Option<usize>,
+    /// Notes copied or cut here, for Ctrl+V to make again whole.
+    pub clip: Option<Clip>,
     /// The undo snapshot taken when the current gesture or edit began: the
     /// sheets it can change, not the whole board.
     pub before: Option<Before>,
@@ -605,6 +622,7 @@ impl Folio {
             drop_tray: false,
             bar_drag: false,
             drop_sheet: None,
+            clip: None,
             before: None,
             selection: Vec::new(),
             hovered: None,
@@ -1700,14 +1718,109 @@ impl Folio {
         }
     }
 
-    /// The notes' text on the clipboard, one after another.
-    pub fn copy_notes_text(&mut self, ids: &[Id], cx: &mut Context<Self>) {
-        self.menu = None;
-        let text: Vec<String> = ids.iter().filter_map(|id| self.board.find_note(*id)).map(|s| s.text()).collect();
-        if !text.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(text.join("\n\n")));
-            self.notify("Copied as text", cx);
+    /// Ctrl+C: words picked out of a note's text if there are any, else
+    /// the selected notes and text on the sheet.
+    pub fn copy_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if gpui::base::TextSelection::has_selection(window, cx) {
+            let text = gpui::base::TextSelection::selected_text(window, cx);
+            if !text.is_empty() {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                self.notify("Copied", cx);
+                return;
+            }
         }
+        if let Some((notes, texts)) = self.copy_notes(false, cx) {
+            self.notify(format!("Copied {} · {} pastes", things(notes, texts), shortcut("V")), cx);
+        }
+    }
+
+    /// Ctrl+X: the selected notes and text go on the clipboard and off the
+    /// sheet (the notes into the Trash, until they're pasted).
+    pub fn cut_selection(&mut self, cx: &mut Context<Self>) {
+        let Some((notes, texts)) = self.copy_notes(true, cx) else { return };
+        self.delete_selection(cx);
+        self.notify(format!("Cut {} · {} pastes", things(notes, texts), shortcut("V")), cx);
+    }
+
+    /// Puts the selected notes and text on the clipboard: their text for
+    /// other apps, the notes themselves for Folio. How many notes and
+    /// texts, if any.
+    pub fn copy_notes(&mut self, cut: bool, cx: &mut Context<Self>) -> Option<(usize, usize)> {
+        self.menu = None;
+        self.finish_edit(cx);
+        let sheet = self.sheet();
+        let notes: Vec<Sticker> = sheet.stickers.iter().filter(|s| self.is_selected(Selection::Sticker(s.id))).cloned().collect();
+        let labels: Vec<Label> = sheet.labels.iter().filter(|l| self.is_selected(Selection::Label(l.id))).cloned().collect();
+        if notes.is_empty() && labels.is_empty() {
+            return None;
+        }
+        let ids: std::collections::HashSet<Id> = notes.iter().map(|s| s.id).collect();
+        let links = sheet.links.iter().filter(|l| ids.contains(&l.from) && ids.contains(&l.to)).cloned().collect();
+        let mut text = notes.iter().map(|s| s.text()).chain(labels.iter().map(|l| l.text.clone())).filter(|t| !t.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
+        if text.is_empty() {
+            // Pictures alone: still something to paste, and to know as ours.
+            text = things(notes.len(), labels.len());
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        let n = (notes.len(), labels.len());
+        self.clip = Some(Clip { text, notes, links, labels, cut });
+        Some(n)
+    }
+
+    /// Makes the copied notes again, centred where the pointer is (or the
+    /// middle of the view), selected, as one undo step.
+    fn paste_clip(&mut self, cx: &mut Context<Self>) {
+        let Some(clip) = self.clip.as_mut() else { return };
+        let cut = std::mem::take(&mut clip.cut);
+        let clip = clip.clone();
+        let (w, h) = self.viewport_size();
+        let inside = self.cursor.x > 0. && self.cursor.y > 0. && self.cursor.x < w && self.cursor.y < h;
+        let cam = self.sheet().camera;
+        let target = cam.to_world(if inside { self.cursor } else { v2(w / 2., h / 2.) });
+        let Some(bounds) = clip.notes.iter().map(|s| s.rect).chain(clip.labels.iter().map(label_rect)).reduce(|a, b| a.union(&b)) else { return };
+        let d = target.sub(bounds.center());
+        let t = now();
+        let mut picked = Vec::new();
+        self.change(cx, |b| {
+            if cut {
+                let gone: std::collections::HashSet<Id> = clip.notes.iter().map(|s| s.id).collect();
+                b.bin.retain(|x| !matches!(&x.item, BinItem::Note { sticker, .. } if gone.contains(&sticker.id)));
+            }
+            let mut ids = HashMap::new();
+            for s in &clip.notes {
+                let id = b.fresh_id();
+                ids.insert(s.id, id);
+                let mut n = s.clone();
+                n.id = id;
+                n.rect.x += d.x;
+                n.rect.y += d.y;
+                n.edited = t;
+                n.popped = None;
+                if !cut {
+                    // A copy, like a duplicate, has no reminder of its own.
+                    n.due = None;
+                    n.reminded = false;
+                }
+                b.sheet_mut().stickers.push(n);
+                picked.push(Selection::Sticker(id));
+            }
+            for l in &clip.links {
+                if let (Some(&from), Some(&to)) = (ids.get(&l.from), ids.get(&l.to)) {
+                    let id = b.fresh_id();
+                    b.sheet_mut().links.push(Link { id, from, to, ink: l.ink });
+                }
+            }
+            for l in &clip.labels {
+                let mut n = l.clone();
+                n.id = b.fresh_id();
+                n.at = n.at.add(d);
+                picked.push(Selection::Label(n.id));
+                b.sheet_mut().labels.push(n);
+            }
+        });
+        self.selection = picked;
+        self.notify(format!("Pasted {}", things(clip.notes.len(), clip.labels.len())), cx);
+        cx.notify();
     }
 
     /// Lays the selected notes (or every note) out in tidy rows.
@@ -1968,6 +2081,11 @@ impl Folio {
     /// other text a note; with `tidy`, its text turned into Markdown.
     pub fn paste(&mut self, tidy: bool, cx: &mut Context<Self>) {
         let Some(item) = cx.read_from_clipboard() else { return };
+        // Notes copied here, while the clipboard still holds their text.
+        if !tidy && self.clip.as_ref().is_some_and(|c| item.text().as_deref() == Some(c.text.as_str())) {
+            self.paste_clip(cx);
+            return;
+        }
         let (w, h) = self.viewport_size();
         let at = self.sheet().camera.to_world(v2(w / 2., h / 2.));
         for entry in item.entries() {
@@ -2450,4 +2568,15 @@ fn is_text_file(path: &std::path::Path) -> bool {
         path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
         Some("md" | "markdown" | "txt")
     )
+}
+
+/// What was copied, in words: "the note", "3 notes", "the text", "4 things".
+fn things(notes: usize, texts: usize) -> String {
+    match (notes, texts) {
+        (1, 0) => "the note".into(),
+        (n, 0) => format!("{n} notes"),
+        (0, 1) => "the text".into(),
+        (0, n) => format!("{n} texts"),
+        (a, b) => format!("{} things", a + b),
+    }
 }

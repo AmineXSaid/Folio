@@ -158,6 +158,9 @@ set to its address.
 | Ctrl+wheel | Zoom |
 | `V H P M T C F E` | Select, pan, pen, marker, text, connect, area, eraser |
 | Arrows | Move between notes |
+| Ctrl+C / Ctrl+X / Ctrl+V | Copy, cut and paste notes (whole: paper, type, pin, the links between them; other apps get their text). Cut notes wait in the Trash until pasted |
+| Click a selected note's words | Select text in it; Ctrl+C copies the words. The note still drags by its title or edges |
+| Click a link in a note | Open it; a pasted link card has an ↗ button that opens its page |
 | Ctrl+K | Search: commands, sheets and notes |
 | Ctrl+F | Search notes |
 | Ctrl+Alt+N | Quick note from any app |

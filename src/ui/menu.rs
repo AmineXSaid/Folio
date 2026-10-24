@@ -298,12 +298,16 @@ impl Folio {
                         }))
                         .into_any_element(),
                 );
+                // The note goes on the clipboard whole (its text for other
+                // apps); a right-click picked it if it wasn't selected.
                 items.push(
-                    row("m-copy", "icons/file-text.svg", "Copy as text", None, &t)
-                        .on_click({
-                            let targets = targets.clone();
-                            cx.listener(move |this, _, _, cx| this.copy_notes_text(&targets, cx))
-                        })
+                    row("m-copy", "icons/file-text.svg", "Copy", Some(shortcut("C")), &t)
+                        .on_click(cx.listener(|this, _, window, cx| this.copy_selection(window, cx)))
+                        .into_any_element(),
+                );
+                items.push(
+                    row("m-cut", "icons/scissors.svg", "Cut", Some(shortcut("X")), &t)
+                        .on_click(cx.listener(|this, _, _, cx| this.cut_selection(cx)))
                         .into_any_element(),
                 );
                 // Lock unless they're all locked already.
