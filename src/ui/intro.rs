@@ -8,10 +8,11 @@ use gpui::{canvas, div, point, prelude::*, px, rgb, rgba, Bounds, Context, Hsla,
 
 use super::app::{Folio, Intro};
 
-const PINK: u32 = 0xe5487a;
-const CREAM: u32 = 0xf1ebdd;
-const PEEL: u32 = 0xddd5c4;
-const INK: u32 = 0x111111;
+// The logo's own colours (assets/brand/folio-icon.svg).
+const PINK: u32 = 0xf30d6a;
+const CREAM: u32 = 0xf5f2e9;
+const PEEL: u32 = 0xf4f0e2;
+const INK: u32 = 0x000000;
 
 /// When the opening starts to fade out, and how long the fade takes.
 const OUT: f32 = 3.4;
@@ -49,7 +50,7 @@ struct Pose {
     drop: f32,
     pin: f32,
     wipe: f32,
-    lines: [f32; 3],
+    lines: [f32; 2],
     peel: f32,
     zoom: f32,
 }
@@ -60,13 +61,14 @@ fn pose(t: f32) -> Pose {
         drop: span(t, 0.7, 1.45),
         pin: back_out(span(t, 1.35, 1.75)),
         wipe: ease_out(span(t, 1.55, 1.95)),
-        lines: [span(t, 1.6, 1.95), span(t, 1.78, 2.12), span(t, 1.92, 2.25)],
+        lines: [span(t, 1.62, 1.98), span(t, 1.82, 2.18)],
         peel: back_out(span(t, 1.9, 2.35)),
         zoom: 1. + 0.25 * ease_out(span(t, OUT, OUT + FADE)),
     }
 }
 
-/// The note's fall: from above and tilted, overshooting, then settling.
+/// The note's fall: from above and turned, overshooting, then settling
+/// straight. (How far down, how many degrees.)
 fn fall(k: f32) -> (f32, f32) {
     if k <= 0. {
         return (-260., -30.);
@@ -179,84 +181,132 @@ impl Folio {
     }
 }
 
-/// Paints the logo, `size` across at rest, centred in `b`.
+/// Paints the logo (the drawing in assets/brand/folio-icon.svg, in its
+/// 512 units), `size` across at rest, centred in `b`.
 fn paint_logo(b: Bounds<Pixels>, p: Pose, size: f32, window: &mut Window) {
     let c = b.center();
     let k = size / 512. * p.zoom;
-    let to_screen = |x: f32, y: f32| point(c.x + px((x - 256.) * k), c.y + px((y - 250.) * k));
+    let to_screen = |x: f32, y: f32| point(c.x + px((x - 256.) * k), c.y + px((y - 256.) * k));
 
-    // The tile: a rounded square, scaled from its centre.
+    // The tile: a rounded square, springing out from its centre.
     if p.tile > 0. {
         let s = p.tile.max(0.);
-        let half = 242. * k * s;
-        let centre = to_screen(256., 250.);
+        let half = 256. * k * s;
+        let centre = to_screen(256., 256.);
         let bounds = Bounds::new(point(centre.x - px(half), centre.y - px(half)), gpui::size(px(half * 2.), px(half * 2.)));
-        window.paint_quad(gpui::fill(bounds, rgba(PINK << 8 | (255. * clamp01(p.tile * 1.4)) as u32)).corner_radii(px(112. * k * s)));
+        window.paint_quad(gpui::fill(bounds, rgba(PINK << 8 | (255. * clamp01(p.tile * 1.4)) as u32)).corner_radii(px(100. * k * s)));
     }
     if p.drop <= 0. {
         return;
     }
-    // The note, in its own space (the SVG's): turned -6°, plus the fall.
-    let (dy, extra) = fall(p.drop);
-    let angle = (-6. + extra).to_radians();
-    let (sin, cos) = angle.sin_cos();
+    // The note falls in turned a little and lands straight.
+    let (dy, turn) = fall(p.drop);
+    let (sin, cos) = turn.to_radians().sin_cos();
     let note = |x: f32, y: f32| -> Point<Pixels> {
         let (rx, ry) = (x - 256., y - 256.);
-        let (qx, qy) = (rx * cos - ry * sin + 256., rx * sin + ry * cos + 256. + dy);
-        to_screen((qx - 256.) * 1.2 + 256., (qy - 256.) * 1.2 + 262.)
+        to_screen(rx * cos - ry * sin + 256., rx * sin + ry * cos + 256. + dy)
     };
-    let stroke = |w: f32| px(w * 1.2 * k);
-    let poly = |pts: &[(f32, f32)], fill: u32, line: f32, window: &mut Window| {
+    // A filled shape in the note's space; `map` moves each point first
+    // (the fold and the pin grow into place).
+    let fill = |start: (f32, f32), segs: &[Seg], color: u32, map: &dyn Fn(f32, f32) -> (f32, f32), window: &mut Window| {
+        let at = |(x, y): (f32, f32)| {
+            let (x, y) = map(x, y);
+            note(x, y)
+        };
         let mut f = PathBuilder::fill();
-        let mut s = PathBuilder::stroke(stroke(line));
-        for (i, (x, y)) in pts.iter().enumerate() {
-            let q = note(*x, *y);
-            if i == 0 {
-                f.move_to(q);
-                s.move_to(q);
-            } else {
-                f.line_to(q);
-                s.line_to(q);
+        f.move_to(at(start));
+        for seg in segs {
+            match *seg {
+                Seg::L(x, y) => f.line_to(at((x, y))),
+                Seg::Q(c, to) => f.curve_to(at(to), at(c)),
+                Seg::C(a, b, to) => f.cubic_bezier_to(at(to), at(a), at(b)),
             }
         }
         f.close();
-        s.close();
         if let Ok(path) = f.build() {
-            window.paint_path(path, rgb(fill));
-        }
-        if let Ok(path) = s.build() {
-            window.paint_path(path, rgb(INK));
+            window.paint_path(path, rgb(color));
         }
     };
-    poly(&[(128., 128.), (384., 128.), (384., 318.), (318., 384.), (128., 384.)], CREAM, 14., window);
+    let same = |x: f32, y: f32| (x, y);
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| ((x0, y0), [Seg::L(x1, y0), Seg::L(x1, y1), Seg::L(x0, y1)]);
+
+    // The note: its black edge (the outline's outer side, corners round),
+    // then the paper inside it, the corner cut where it folds.
+    use Seg::*;
+    fill(
+        (97., 88.),
+        &[
+            L(417., 88.),
+            Q((441., 88.), (441., 112.)),
+            L(441., 336.),
+            Q((441., 342.), (437., 346.)),
+            L(343., 440.),
+            Q((339., 443.), (334., 443.)),
+            L(97., 443.),
+            Q((73., 443.), (73., 419.)),
+            L(73., 112.),
+            Q((73., 88.), (97., 88.)),
+        ],
+        INK,
+        &same,
+        window,
+    );
+    fill((106., 121.), &[L(408., 121.), L(408., 326.2), L(324.2, 410.), L(106., 410.)], CREAM, &same, window);
+    // The highlight wipes across, then the lines write themselves.
     if p.wipe > 0. {
-        let w = 168. * p.wipe;
-        poly(&[(160., 204.), (160. + w, 204.), (160. + w, 238.), (160., 238.)], PINK, 10., window);
+        let (start, segs) = rect(137., 160., 137. + 240. * p.wipe, 231.);
+        fill(start, &segs, PINK, &same, window);
     }
-    for (i, (x0, x1, y)) in [(168., 300., 176.), (168., 286., 276.), (168., 248., 322.)].iter().enumerate() {
+    for (i, (x1, y0, y1)) in [(281., 273., 306.), (230., 347., 378.)].iter().enumerate() {
         let f = p.lines[i];
-        if f <= 0. {
-            continue;
-        }
-        let mut s = PathBuilder::stroke(stroke(14.));
-        s.move_to(note(*x0, *y));
-        s.line_to(note(x0 + (x1 - x0) * f, *y));
-        if let Ok(path) = s.build() {
-            window.paint_path(path, rgb(INK));
+        if f > 0. {
+            let (start, segs) = rect(137., *y0, 137. + (x1 - 137.) * f, *y1);
+            fill(start, &segs, INK, &same, window);
         }
     }
     if p.peel > 0. {
-        // The folded corner grows out of the note's bottom-right.
-        let g = |x: f32, y: f32| (384. + (x - 384.) * p.peel, 318. + (y - 318.) * p.peel);
-        let pts = [g(384., 318.), g(330., 318.), g(318., 330.), g(318., 384.)];
-        poly(&pts, PEEL, 14., window);
+        // The folded corner grows out of the note's bottom-right: its
+        // black edge, round where it turns, and the paper showing inside.
+        let k = p.peel;
+        let grow = move |x: f32, y: f32| (424.5 + (x - 424.5) * k, 426.5 + (y - 426.5) * k);
+        fill(
+            (314.5, 443.),
+            &[L(314.5, 352.), Q((314.5, 316.5), (350., 316.5)), L(441., 316.5), L(441., 339.8), L(337.8, 443.)],
+            INK,
+            &grow,
+            window,
+        );
+        fill((347.5, 349.5), &[L(384.7, 349.5), L(347.5, 386.7)], PEEL, &grow, window);
     }
     if p.pin > 0. {
-        let centre = to_screen(256., (128. - 256.) * 1.2 + 262. + 0.);
-        let r = 24. * 1.2 * k * p.pin.max(0.);
-        let bounds = Bounds::new(point(centre.x - px(r), centre.y - px(r)), gpui::size(px(r * 2.), px(r * 2.)));
-        window.paint_quad(gpui::fill(bounds, rgb(INK)).corner_radii(px(r)));
+        // The pin pops into its notch: a round head running straight
+        // down into a tab that sits in the paper.
+        let k = p.pin.max(0.);
+        let pop = move |x: f32, y: f32| (258. + (x - 258.) * k, 105. + (y - 105.) * k);
+        let c = 52. * 0.5523;
+        fill(
+            (206., 90.),
+            &[
+                C((206., 90. - c), (258. - c, 38.), (258., 38.)),
+                C((258. + c, 38.), (310., 90. - c), (310., 90.)),
+                L(310., 118.),
+                Q((310., 136.), (292., 136.)),
+                L(224., 136.),
+                Q((206., 136.), (206., 118.)),
+            ],
+            INK,
+            &pop,
+            window,
+        );
     }
+}
+
+/// A piece of a shape's edge: a line, a quadratic curve (its control
+/// point, then where it ends), or a cubic one (two controls, the end).
+enum Seg {
+    L(f32, f32),
+    Q((f32, f32), (f32, f32)),
+    C((f32, f32), (f32, f32), (f32, f32)),
 }
 
 #[cfg(test)]
@@ -269,7 +319,7 @@ mod tests {
         assert!(dy.abs() < 1e-3 && turn.abs() < 1e-3);
         assert!(fall(0.).0 < -200.);
         let p = pose(5.);
-        assert!((p.tile - 1.).abs() < 1e-4 && p.wipe == 1. && p.lines == [1.; 3]);
+        assert!((p.tile - 1.).abs() < 1e-4 && p.wipe == 1. && p.lines == [1.; 2]);
         assert!(back_out(0.7) > 1., "the spring overshoots");
     }
 }

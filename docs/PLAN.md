@@ -324,10 +324,14 @@ any board size. It is also the foundation for sync (§6).
 - **Tokens** live in `src/theme.rs`: colours (light/dark), the type scale
   (11–26), space (2–32), radii (6/8/12/16), sizes and shadows. Views never
   use raw values from elsewhere.
-- **Palette** (from the mockup): forest primary `#315C4B`, paper canvas
+- **Palette:** one brand pink, the logo's `#F30D6A`, for the main
+  buttons, selection, the search's ring, highlights of what's chosen, the
+  index card's margin, the pink pin and the opening (hover `#D9085C`, a
+  `#FEE6EF` tint with `#B5084F` text on it; in dark, `#FF3D86` for hover
+  and selection, a `#3D1424` tint with `#FF8CB6` on it). Paper canvas
   `#F6F7F3` with a `#D6DCD4` dot grid, ink `#18211F`. Sticker papers:
-  butter, sage, sky, blush, lilac, plain. Each has a dark twin with the
-  same hue at about 20 % lightness.
+  butter, sage, sky, blush, lilac, plain and more, each with a dark twin
+  of the same hue at about 20 % lightness.
 - **Type:** Hanken Grotesk (OFL) for UI and notes; JetBrains Mono for code.
 - **Logo** (`assets/brand/`): a cream sticky note in a heavy, rounded
   black outline, pinned at the top (the pin sits in a notch in the

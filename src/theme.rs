@@ -267,18 +267,18 @@ impl Theme {
                 text_body: c(0x45524a),
                 text_muted: c(0x6b7871),
                 text_subtle: c(0x939e97),
-                primary: c(0xe5487a),
-                primary_hover: c(0xd23a6b),
+                primary: c(0xf30d6a),
+                primary_hover: c(0xd9085c),
                 primary_fg: c(0xffffff),
-                primary_tint: c(0xfdeaf0),
-                selection: c(0xe5487a),
+                primary_tint: c(0xfee6ef),
+                selection: c(0xf30d6a),
                 scrim: ca(0x18211f55),
                 toast: c(0x22392f),
                 toast_fg: c(0xffffff),
                 danger: c(0xb5473a),
-                brand: c(0xe5487a),
-                brand_tint: c(0xfdeaf0),
-                brand_on_tint: c(0xb8285a),
+                brand: c(0xf30d6a),
+                brand_tint: c(0xfee6ef),
+                brand_on_tint: c(0xb5084f),
                 alert: c(0xd03b3b),
                 ok: c(0x2f8f5b),
                 window_close: c(0xc42b1c),
@@ -287,8 +287,8 @@ impl Theme {
                 wash: ca(0xffffff9e),
                 rule: ca(0x18251f38),
                 ruled: ca(0x3f68b033),
-                margin: ca(0xe5487a66),
-                head_rule: ca(0xe5487a9e),
+                margin: ca(0xf30d6a5c),
+                head_rule: ca(0xf30d6a94),
                 curl: ca(0x18251f0d),
                 google: [c(0x4285f4), c(0x34a853), c(0xfbbc05), c(0xea4335)],
             },
@@ -318,18 +318,18 @@ impl Theme {
                 text_body: c(0xc3ccc6),
                 text_muted: c(0x95a29b),
                 text_subtle: c(0x6f7c75),
-                primary: c(0xe5487a),
-                primary_hover: c(0xf0628f),
+                primary: c(0xf30d6a),
+                primary_hover: c(0xff3d86),
                 primary_fg: c(0xffffff),
-                primary_tint: c(0x3a1a26),
-                selection: c(0xf0628f),
+                primary_tint: c(0x3d1424),
+                selection: c(0xff3d86),
                 scrim: ca(0x00000088),
                 toast: c(0xe6efe9),
                 toast_fg: c(0x16201b),
                 danger: c(0xe07a6c),
-                brand: c(0xe5487a),
-                brand_tint: c(0x3a1a26),
-                brand_on_tint: c(0xff8fb3),
+                brand: c(0xf30d6a),
+                brand_tint: c(0x3d1424),
+                brand_on_tint: c(0xff8cb6),
                 alert: c(0xff7b6e),
                 ok: c(0x5cc98a),
                 window_close: c(0xc42b1c),
@@ -338,8 +338,8 @@ impl Theme {
                 wash: ca(0xffffff12),
                 rule: ca(0xffffff33),
                 ruled: ca(0x82a6e626),
-                margin: ca(0xf0628f57),
-                head_rule: ca(0xf0628f99),
+                margin: ca(0xff3d8657),
+                head_rule: ca(0xff3d8699),
                 curl: ca(0x00000029),
                 google: [c(0x4285f4), c(0x34a853), c(0xfbbc05), c(0xea4335)],
             },
@@ -409,7 +409,7 @@ impl Theme {
     pub fn pin_tone(&self, tone: PinTone) -> [u32; 3] {
         match tone {
             PinTone::Red => [0xe5484d, 0xa8232a, 0xff9b9e],
-            PinTone::Pink => [0xe5487a, 0xa8204f, 0xffb3cb],
+            PinTone::Pink => [0xf30d6a, 0xa8074a, 0xff9cc2],
             PinTone::Yellow => [0xf5c22e, 0xc48d10, 0xffe7a0],
             PinTone::Green => [0x3d9a6d, 0x22653f, 0xb9ecd0],
             PinTone::Blue => [0x4b6fd0, 0x2a4596, 0xc9d8ff],
@@ -576,7 +576,7 @@ impl Theme {
             c.canvas_line = rgb(0x343c38).into();
             c.rule = rgba(0xffffff80).into();
             c.ruled = rgba(0x82a6e666).into();
-            c.margin = rgba(0xf0628fb3).into();
+            c.margin = rgba(0xff3d86b3).into();
         } else {
             c.text = rgb(0x000000).into();
             c.text_body = rgb(0x111815).into();
@@ -587,7 +587,7 @@ impl Theme {
             c.canvas_line = rgb(0xc4ccc5).into();
             c.rule = rgba(0x18251f80).into();
             c.ruled = rgba(0x3f68b066).into();
-            c.margin = rgba(0xe5487ab3).into();
+            c.margin = rgba(0xf30d6ab3).into();
         }
         self.high_contrast = true;
         self

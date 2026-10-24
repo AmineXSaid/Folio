@@ -9,6 +9,7 @@
 # (FOLIO_DATA_DIR) and FOLIO_DEMO=1, so it opens on the sample sheets, and saves, as
 # <name>-light.png and <name>-dark.png:
 #   intro   the opening, mid-way      home    the home screen
+#   intro-late  the opening, the logo drawn
 #   drawer  the sheets drawer         sheet   a sheet
 #   edit    typing into a note        menu    a note's right-click menu
 #   palette Ctrl+K                    settings
@@ -54,7 +55,8 @@ for mode in light dark; do
   xdotool windowmove "$WID" 0 0 windowsize "$WID" 1280 800
   xdotool windowfocus --sync "$WID" 2>/dev/null || true
   sleep 1.6; import -window root "$OUT/intro-$mode.png"
-  sleep 3
+  sleep 1.2; import -window root "$OUT/intro-late-$mode.png"
+  sleep 3.3
   # The first run asks your name, then your look: "Start writing".
   xdotool type --delay 30 "Sam"; key Return; sleep 0.8
   xdotool mousemove 670 588 click 1; sleep 1.5
