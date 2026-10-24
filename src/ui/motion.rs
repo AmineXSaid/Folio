@@ -31,9 +31,13 @@ pub fn reduced() -> bool {
 /// one frame of a transition (scripts/screenshots.sh can't catch it
 /// otherwise).
 pub fn ms(base: u64) -> u64 {
+    if reduced() { 1 } else { base * slow() }
+}
+
+/// How many times slower than life (FOLIO_SLOW_MOTION, 1 without it).
+pub fn slow() -> u64 {
     static SLOW: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    let slow = *SLOW.get_or_init(|| std::env::var("FOLIO_SLOW_MOTION").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1));
-    if reduced() { 1 } else { base * slow }
+    *SLOW.get_or_init(|| std::env::var("FOLIO_SLOW_MOTION").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1))
 }
 
 /// Arriving: fast, then settling.

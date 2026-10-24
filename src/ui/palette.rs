@@ -648,7 +648,7 @@ impl Folio {
                     }
                 }
                 Cmd::Profile => self.open_welcome(false, window, cx),
-                Cmd::Intro => self.intro = Some(super::app::Intro { start: std::time::Instant::now() }),
+                Cmd::Intro => self.intro = Some(super::app::Intro { start: std::time::Instant::now(), word: Default::default() }),
                 Cmd::Back => self.go_back(window, cx),
                 Cmd::Forward => self.go_forward(window, cx),
             },

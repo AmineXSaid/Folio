@@ -237,6 +237,9 @@ pub enum Selection {
 /// The opening, playing (every launch).
 pub struct Intro {
     pub start: Instant,
+    /// Where the opening's "folio." is drawn (window px), measured, for
+    /// its flight into the top bar.
+    pub word: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
 /// Somewhere you can go back to.
@@ -417,6 +420,9 @@ pub struct Folio {
     pub heights: Rc<RefCell<HashMap<Id, f32>>>,
     /// The edit bar's size as last drawn (screen px), to find it a place.
     pub edit_bar_size: Rc<Cell<(f32, f32)>>,
+    /// Where the top bar's "folio." sits (window px): the opening's
+    /// wordmark lands there.
+    pub mark_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Each label's size (world units), measured as it's drawn.
     pub label_sizes: Rc<RefCell<HashMap<Id, (f32, f32)>>>,
     /// Where the sheet's name is drawn (window), for clicks and renaming.
@@ -641,6 +647,7 @@ impl Folio {
             viewport: Rc::new(Cell::new(Bounds::default())),
             heights: Rc::new(RefCell::new(HashMap::new())),
             edit_bar_size: Rc::new(Cell::new((700., 76.))),
+            mark_at: Rc::default(),
             label_sizes: Rc::new(RefCell::new(HashMap::new())),
             head_name: Rc::default(),
             undo,
@@ -656,7 +663,7 @@ impl Folio {
             palette_reveal: false,
             emoji_tab: 0,
             // The opening plays in full at every launch.
-            intro: Some(Intro { start: Instant::now() }),
+            intro: Some(Intro { start: Instant::now(), word: Rc::default() }),
             welcome: None,
             welcome_input,
             sort: Sort::Recent,

@@ -9,7 +9,7 @@
 //! Everything clickable in the bar blocks the drag area under it.
 
 use gpui::component::InteractiveElementExt;
-use gpui::{div, prelude::*, px, AnimationExt as _, Context, MouseButton, Window, WindowControlArea};
+use gpui::{canvas, div, prelude::*, px, AnimationExt as _, Context, MouseButton, Window, WindowControlArea};
 
 use super::app::{Folio, Screen};
 use super::*;
@@ -160,20 +160,26 @@ impl Folio {
                     })),
             )
             .child(div().w(px(1.)).h(px(16.)).mx(t.space.xs).bg(t.colors.border))
-            .child(
+            .child({
+                let at = self.mark_at.clone();
                 div()
                     .id("home-mark")
                     .occlude()
+                    .relative()
                     .px(t.space.xs)
                     .flex()
                     .items_center()
                     .cursor_pointer()
                     .text_size(px(15.))
                     .font_weight(gpui::FontWeight::BOLD)
+                    // The opening's wordmark flies in here; until it lands,
+                    // this one waits unseen.
+                    .when(self.intro.as_ref().is_some_and(|i| !i.landed()), |d| d.opacity(0.))
                     .child("folio")
                     .child(div().text_color(t.colors.brand).child("."))
-                    .on_click(cx.listener(|this, _, _, cx| this.go_home(cx))),
-            )
+                    .child(canvas(move |b, _, _| at.set(Some(b)), |_, _, _, _| {}).absolute().inset_0())
+                    .on_click(cx.listener(|this, _, _, cx| this.go_home(cx)))
+            })
             .children(here.map(|name| {
                 let icon_text = (self.screen == Screen::Sheet).then(|| self.sheet().icon.clone()).filter(|i| !i.is_empty());
                 div()
