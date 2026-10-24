@@ -66,6 +66,11 @@ pub struct DriveSync {
     forced: Option<Keep>,
     /// The sync under way sends a merge's result.
     after_merge: bool,
+    /// The board's text as last made for Drive, and the count of changes
+    /// it was made at: while nothing changes it's sent again as it is.
+    text: Option<(u64, Arc<String>)>,
+    /// The count of changes when the sync under way began.
+    began_at: u64,
 }
 
 impl DriveSync {
@@ -249,22 +254,30 @@ impl Folio {
         self.sync.soon = None;
         self.sync.state = DriveState::Syncing;
         self.sync.forced = force;
-        let text = self.board_text();
+        // The board is turned to text off the UI thread; with nothing
+        // changed since the last sync, that text goes again as it is.
+        let edits = self.edits;
+        self.sync.began_at = edits;
+        let made = self.sync.text.as_ref().filter(|(n, _)| *n == edits).map(|(_, t)| t.clone());
+        let board = made.is_none().then(|| self.board.clone());
         let media = store::media_dir(&self.dir);
-        let sent = text.clone();
         let job = cx.background_executor().spawn(async move {
-            let mut d = drive.lock().map_err(|_| "Sync stopped".to_string())?;
-            d.sync(&sent, &media, force)
+            let text = made.unwrap_or_else(|| Arc::new(board.map(|b| serde_json::to_string(&b).unwrap_or_default()).unwrap_or_default()));
+            let result = drive.lock().map_err(|_| "Sync stopped".to_string()).and_then(|mut d| d.sync(&text, &media, force));
+            (text, result)
         });
         cx.spawn(async move |this, cx| {
-            let result = job.await;
-            let _ = this.update(cx, |this, cx| this.drive_done(result, text, cx));
+            let (text, result) = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.sync.text = Some((edits, text.clone()));
+                this.drive_done(result, &text, cx)
+            });
         })
         .detach();
         cx.notify();
     }
 
-    fn drive_done(&mut self, outcome: Result<Outcome, String>, sent: String, cx: &mut Context<Self>) {
+    fn drive_done(&mut self, outcome: Result<Outcome, String>, sent: &str, cx: &mut Context<Self>) {
         if !self.sync.signed_in() {
             return;
         }
@@ -275,14 +288,14 @@ impl Folio {
         match outcome {
             Ok(Outcome::Same) => {
                 if !had_base {
-                    let _ = store::save_sync_base(&self.dir, &sent);
+                    let _ = store::save_sync_base(&self.dir, sent);
                 }
                 if forced.is_some() && !after_merge {
                     self.notify("Already the same as Google Drive · nothing to change", cx);
                 }
             }
             Ok(Outcome::Pushed) => {
-                let _ = store::save_sync_base(&self.dir, &sent);
+                let _ = store::save_sync_base(&self.dir, sent);
                 if after_merge {
                     // The merge already said what happened.
                 } else if forced == Some(Keep::ThisComputer) {
@@ -296,7 +309,7 @@ impl Folio {
                 self.sync.again = true;
             }
             Ok(Outcome::Pulled(remote, rev)) => {
-                if self.board_text() != sent || self.editing.is_some() {
+                if self.edits != self.sync.began_at || self.editing.is_some() {
                     // Edited here while Drive's came down: merge the two.
                     self.drive_merge(remote, cx);
                 } else {

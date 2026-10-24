@@ -307,8 +307,10 @@ ink.
    tiles.
 3. **Smaller saves.** Saving is off the UI thread (done), but it still
    copies the whole board there and writes all of it. Once the board is in
-   SQLite, write only the rows that changed. Drive sync still turns the
-   board to text on the UI thread.
+   SQLite, write only the rows that changed. Drive sync turns the board to
+   text off the UI thread (only a copy is taken there), sends the same text
+   again while nothing changed, and lists Drive's pictures only when the
+   board or the pictures here changed.
 4. **Picture mipmaps.** Decode large pictures to a downscaled copy at import,
    matched to the largest size a sticker shows them at, so a 24 MP photo
    doesn't sit in GPU memory at full size.

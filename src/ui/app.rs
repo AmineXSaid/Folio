@@ -455,6 +455,9 @@ pub struct Folio {
     /// Writes the board off the UI thread; saves started so far.
     saver: store::Saver,
     saves: u64,
+    /// Counts changes to the board (each one saved): Drive's sync tells by
+    /// it whether anything changed while it ran.
+    pub edits: u64,
     /// The view (where each sheet is scrolled to), saved on its own.
     view_task: Option<Task<()>>,
     view_saves: u64,
@@ -654,6 +657,7 @@ impl Folio {
             save_task: None,
             saver,
             saves: 0,
+            edits: 0,
             view_task: None,
             view_saves: 0,
             _ticker: ticker,
@@ -870,6 +874,7 @@ impl Folio {
     }
 
     pub fn schedule_save(&mut self, cx: &mut Context<Self>) {
+        self.edits += 1;
         self.saved = false;
         self.save_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_millis(350)).await;
@@ -880,6 +885,7 @@ impl Folio {
     /// Saves now, off the UI thread: the board is copied here, turned to
     /// text and written to the disk in the background.
     pub fn save_now(&mut self, cx: &mut Context<Self>) {
+        self.edits += 1;
         self.save_task = None;
         self.saved = false;
         self.saves += 1;
