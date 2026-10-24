@@ -31,7 +31,7 @@ and what is still to come.
 | Reminders | ✅ presets (in an hour, this evening, tomorrow morning, Monday); Windows notification + in-app toast; Today strip on the home screen; overdue in red | custom date and time; repeat |
 | Search | ✅ every note on every sheet, by text, `#tag` (the tags on the home screen) or note colour (`paper:sage`); jumps to the note; Ctrl+K palette for commands, sheets and notes (the search field shows it on hover) | |
 | Right-click menus | ✅ note, empty sheet, area, label, sheet card; Move to sheet | |
-| Safety | ✅ undo (100 steps; the last 30 survive a restart), Trash (30 days), Archive, a daily backup (14 kept) restorable whole or one sheet at a time; "untouched for weeks" hint with keep-fresh or snooze for a week | |
+| Safety | ✅ undo (100 steps, each only what changed; up to 2 MB of them survive a restart), Trash (30 days), Archive, a daily backup (14 kept) restorable whole or one sheet at a time; "untouched for weeks" hint with keep-fresh or snooze for a week | |
 | Google Drive | ✅ optional one-click "Continue with Google" (browser, PKCE, `drive.file` only; the client is built in from `google-client.env`, see `docs/GOOGLE_SIGN_IN.md`); board and pictures kept in a Folio folder in Drive, synced after changes, every minute, at start-up and quit; three-way merge per item from the last shared version, ids renumbered where two computers collide; first sync asks merge / keep mine / use Drive's; start over either way (`src/cloud.rs`, `src/merge.rs`, `src/ui/sync.rs`) | merge inside a note's text (today the newest edit wins); verified Google app (needed beyond 100 test users) |
 | Export & import | ✅ chosen sheets to Markdown (a folder, one `.md` per sheet, pictures alongside) or a `.folio` file (pictures inside); import a `.folio` as new sheets, from the screen or by dropping it (`src/export.rs`, `src/ui/transfer.rs`) | PNG/PDF of a sheet |
 | Settings | ✅ theme (light/dark/follow Windows), interface size, high contrast, reduce motion, default paper and font, guides, map, open on home/last sheet, start with Windows, quick-note shortcut, data folder, backups | |
@@ -103,11 +103,14 @@ src/
   main.rs        window, key bindings
   model.rs       Board → Category (sheet) → Sticker, Stroke, Label, Link; Camera;
                  geometry: hit tests, link curves, RDP simplify, fit  (no GPUI)
-  store.rs       data folder, atomic JSON save/load, media import
+  store.rs       data folder, atomic JSON save/load (fsync, then rename),
+                 the background saver, undo steps on disk, media import
+  history.rs     undo steps as changes: what an edit did, item by item,
+                 played back either way  (no GPUI)
   demo.rs        the first-run board
   theme.rs       tokens: colour (light/dark), type, space, radius, shadows
   assets.rs      embedded icons, fonts, logo
-  ui/app.rs      Folio view: state, tools, gestures, undo/redo, debounced save
+  ui/app.rs      Folio view: state, tools, gestures, undo/redo, saving
   ui/board.rs    the sheet: pointer handling, culling, painting dots/ink/links
   markdown.rs    a note's text as blocks (text, tasks, Remember boxes, tables),
                  the edit bar's formatting, text into Markdown  (no GPUI)
@@ -185,16 +188,25 @@ on any child element behaves exactly like a press on the model it shows.
 Because of this, Markdown inside a sticker is rendered non-selectable.
 
 When a press starts, the board is snapshotted. When it ends, the snapshot
-becomes one undo step if the content changed. A pan alone records nothing.
+is compared with the board, and what changed becomes one undo step
+(`history::Change`): the notes, strokes, text, links, frames, sheets and
+Trash entries it touched, each before and after, and where any came, went or
+moved to. The snapshot is then dropped. A pan alone records nothing.
 
 ### 3.4 Persistence
 
 - `board.json` in the data folder (`%APPDATA%\Folio`, `~/Library/Application
   Support/Folio`, `$XDG_DATA_HOME/folio`, or `FOLIO_DATA_DIR`).
-- Saves are **debounced** (350 ms after the last change) and **atomic**:
-  write `board.json.tmp`, then rename it over the old file. A file that
-  won't parse is kept as `board.json.bad` and the app starts on the demo,
-  so nothing is lost silently.
+- Saves are **debounced** (350 ms after the last change), **off the UI
+  thread** and **atomic**. The UI thread copies the board; a background
+  task turns it to text, writes `board.json.tmp`, flushes it to the disk
+  and renames it over the old file. Saves are numbered, and one that started
+  earlier never lands over a later one. Quitting saves and waits for the
+  disk. A file that won't parse is kept as `board.json.bad` and the app
+  starts on the demo, so nothing is lost silently.
+- `history.json` beside it holds the newest undo steps (up to 100 and
+  2 MB), so undo works after a restart. They're kept only if the newest
+  still fits the board. The older file of whole boards is dropped.
 - Pictures are **copied** into `media/` as `<id>.<ext>`. Moving or deleting
   the original never breaks a note.
 
@@ -273,7 +285,10 @@ ink.
   screen pixel are skipped.
 - One `canvas` element paints all ink and links (one element, many paths)
   instead of thousands of elements.
-- Debounced saves, so a drag writes the file once, not on every frame.
+- Debounced saves, so a drag writes the file once, not on every frame;
+  written off the UI thread.
+- Undo steps hold only what changed: moving one note among 2,000 is a few
+  hundred bytes, where a copy of the board was 4 MB.
 - Optimised dependencies in dev builds; thin LTO in release.
 
 ### 5.3 Next steps, in order of payoff
@@ -285,9 +300,10 @@ ink.
    frame. Cache the `Path` per stroke in screen space and rebuild it only
    when zoom changes (pan is a translation), or rasterise settled ink into
    tiles.
-3. **Off-thread saving.** Serialise on the UI thread (fast), write on GPUI's
-   background executor. Once the board is in SQLite, write only the rows
-   that changed.
+3. **Smaller saves.** Saving is off the UI thread (done), but it still
+   copies the whole board there and writes all of it. Once the board is in
+   SQLite, write only the rows that changed. Drive sync still turns the
+   board to text on the UI thread.
 4. **Picture mipmaps.** Decode large pictures to a downscaled copy at import,
    matched to the largest size a sticker shows them at, so a 24 MP photo
    doesn't sit in GPU memory at full size.
@@ -296,14 +312,9 @@ ink.
 
 ### 5.4 Memory
 
-Undo snapshots copy the whole board (simple and correct). At 100 steps
-that's fine for personal-sized boards; see 5.5.
-
-### 5.5 Undo, later
-
-Replace snapshots with a command log of inverse operations (`Move{id, from,
-to}`, `AddStroke{stroke}`, …). It costs a few bytes per step and works for
-any board size. It is also the foundation for sync (§6).
+Undo steps hold only what an edit changed (`history.rs`), so 100 of them
+cost little on any size of board. A step that throws away a whole sheet
+holds that sheet, as the Trash does.
 
 ---
 
@@ -401,7 +412,7 @@ optional Google Drive sync with merging, and export to Markdown or a
 Folio file.
 
 **v0.3: data and scale.** SQLite store with full-text search; R-tree;
-cached ink tessellation; picture mipmaps; command-based undo; reorder
+cached ink tessellation; picture mipmaps; reorder
 sheets by drag.
 
 **v0.4: richer content.** Coloured text; WYSIWYG while typing; shape

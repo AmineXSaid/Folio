@@ -7,6 +7,7 @@ mod demo;
 mod export;
 mod fonts;
 mod greeting;
+mod history;
 mod desktop;
 mod links;
 mod markdown;

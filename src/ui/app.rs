@@ -7,6 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::component::input::{InputEvent, InputState, TextareaState};
@@ -15,6 +16,7 @@ use gpui::{
     SharedString, Task, Window,
 };
 
+use crate::history::{Change, Way};
 use crate::markdown::{self, Prefix};
 use crate::model::*;
 use crate::store;
@@ -397,8 +399,9 @@ pub struct Folio {
     pub heights: Rc<RefCell<HashMap<Id, f32>>>,
     /// Each label's size (world units), measured as it's drawn.
     pub label_sizes: Rc<RefCell<HashMap<Id, (f32, f32)>>>,
-    pub undo: Vec<Board>,
-    pub redo: Vec<Board>,
+    /// Undo and redo steps: what each edit changed, not copies of the board.
+    pub undo: Vec<Arc<Change>>,
+    pub redo: Vec<Arc<Change>>,
     pub editing: Option<Edit>,
     pub menu: Option<Menu>,
     pub dialog: Option<Dialog>,
@@ -447,6 +450,9 @@ pub struct Folio {
     pub export: super::transfer::ExportChoice,
     toast_task: Option<Task<()>>,
     save_task: Option<Task<()>>,
+    /// Writes the board off the UI thread; saves started so far.
+    saver: store::Saver,
+    saves: u64,
     _ticker: Task<()>,
     _subs: Vec<gpui::Subscription>,
 }
@@ -567,6 +573,8 @@ impl Folio {
             }
         });
 
+        let undo = store::load_history(&dir, &board);
+        let saver = store::Saver::new(&dir);
         let mut f = Folio {
             board,
             dir,
@@ -598,7 +606,7 @@ impl Folio {
             viewport: Rc::new(Cell::new(Bounds::default())),
             heights: Rc::new(RefCell::new(HashMap::new())),
             label_sizes: Rc::new(RefCell::new(HashMap::new())),
-            undo: store::load_history(&store::data_dir()),
+            undo,
             redo: Vec::new(),
             editing: None,
             menu: None,
@@ -638,6 +646,8 @@ impl Folio {
             export: Default::default(),
             toast_task: None,
             save_task: None,
+            saver,
+            saves: 0,
             _ticker: ticker,
             _subs: subs,
         };
@@ -650,8 +660,8 @@ impl Folio {
         }
         // However Folio ends (Quit, the tray, the last window closed): the
         // board saved, and a last push to Google Drive.
-        f._subs.push(cx.on_app_quit(|this, cx| {
-            this.save_now(cx);
+        f._subs.push(cx.on_app_quit(|this, _| {
+            this.save_and_wait();
             this.drive_flush();
             async {}
         }));
@@ -764,7 +774,13 @@ impl Folio {
 
     /// Records `before` as an undo step, and saves soon.
     pub fn commit(&mut self, before: Board, cx: &mut Context<Self>) {
-        if before == self.board {
+        let mut step = Change::diff(&before, &self.board);
+        if step.is_empty() {
+            // The view or the settings: saved, but nothing to undo.
+            if before != self.board {
+                self.schedule_save(cx);
+                self.desktop_sync(cx);
+            }
             return;
         }
         // Whatever changed was edited now.
@@ -772,14 +788,21 @@ impl Folio {
         let active = self.board.active;
         if let Some(c) = self.board.categories.get_mut(active) {
             c.edited = t;
+            let id = c.id;
+            step.restamp(&before, &self.board, id);
         }
-        self.undo.push(before);
+        self.push_undo(step);
+        self.schedule_save(cx);
+        self.desktop_sync(cx);
+    }
+
+    /// A new undo step; redo is over.
+    pub fn push_undo(&mut self, step: Change) {
+        self.undo.push(Arc::new(step));
         if self.undo.len() > UNDO_DEPTH {
             self.undo.remove(0);
         }
         self.redo.clear();
-        self.schedule_save(cx);
-        self.desktop_sync(cx);
     }
 
     /// Runs `f` on the board as one undoable step.
@@ -790,27 +813,14 @@ impl Folio {
         cx.notify();
     }
 
-    /// Puts `snapshot` in place, keeping each sheet's camera and the
-    /// settings: undo is about content.
-    fn restore_snapshot(&mut self, mut snapshot: Board) -> Board {
-        for c in &mut snapshot.categories {
-            if let Some(now) = self.board.categories.iter().find(|n| n.id == c.id) {
-                c.camera = now.camera;
-            }
-        }
-        snapshot.settings = self.board.settings.clone();
-        snapshot.at_home = self.board.at_home;
-        self.selection.clear();
-        std::mem::replace(&mut self.board, snapshot)
-    }
-
     pub fn undo(&mut self, cx: &mut Context<Self>) {
         if self.editing.is_some() {
             return;
         }
-        if let Some(prev) = self.undo.pop() {
-            let now = self.restore_snapshot(prev);
-            self.redo.push(now);
+        if let Some(step) = self.undo.pop() {
+            step.apply(&mut self.board, Way::Back);
+            self.selection.clear();
+            self.redo.push(step);
             self.schedule_save(cx);
             self.desktop_sync(cx);
             cx.notify();
@@ -820,9 +830,10 @@ impl Folio {
     }
 
     pub fn redo(&mut self, cx: &mut Context<Self>) {
-        if let Some(next) = self.redo.pop() {
-            let now = self.restore_snapshot(next);
-            self.undo.push(now);
+        if let Some(step) = self.redo.pop() {
+            step.apply(&mut self.board, Way::Forward);
+            self.selection.clear();
+            self.undo.push(step);
             self.schedule_save(cx);
             self.desktop_sync(cx);
             cx.notify();
@@ -837,17 +848,45 @@ impl Folio {
         }));
     }
 
+    /// Saves now, off the UI thread: the board is copied here, turned to
+    /// text and written to the disk in the background.
     pub fn save_now(&mut self, cx: &mut Context<Self>) {
         self.save_task = None;
-        let _ = store::save_history(&self.dir, &self.undo);
-        match store::save(&self.dir, &self.board) {
-            Ok(()) => {
+        self.saved = false;
+        self.saves += 1;
+        let n = self.saves;
+        let board = self.board.clone();
+        let steps = self.undo.clone();
+        let saver = self.saver.clone();
+        let job = cx.background_executor().spawn(async move { saver.write(n, &board, &steps) });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| this.saved_now(n, result, cx));
+        })
+        .detach();
+    }
+
+    fn saved_now(&mut self, n: u64, result: std::io::Result<bool>, cx: &mut Context<Self>) {
+        match result {
+            // Saved, and nothing newer is on its way.
+            Ok(_) if n == self.saves && self.save_task.is_none() => {
                 self.saved = true;
                 self.drive_after_save(cx);
             }
+            Ok(_) => {}
             Err(e) => self.notify(format!("Couldn't save: {e}"), cx),
         }
         cx.notify();
+    }
+
+    /// Saves before Folio closes, waiting for the disk: nothing is left in
+    /// the background.
+    pub fn save_and_wait(&mut self) {
+        self.save_task = None;
+        self.saves += 1;
+        if self.saver.write(self.saves, &self.board, &self.undo).is_ok() {
+            self.saved = true;
+        }
     }
 
     pub fn notify(&mut self, msg: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -2186,7 +2225,7 @@ impl Render for Folio {
             .on_action(cx.listener(|_, _: &QuickNote, _, cx| crate::desktop::open_quick_note(cx.entity(), cx)))
             .on_action(cx.listener(|this, _: &Quit, _, cx| {
                 this.finish_edit(cx);
-                this.save_now(cx);
+                this.save_and_wait();
                 cx.quit();
             }))
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| {

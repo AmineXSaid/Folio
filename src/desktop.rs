@@ -331,7 +331,7 @@ mod tray {
             } else if e.id == quick {
                 super::open_quick_note(folio.clone(), cx);
             } else if e.id == quit {
-                folio.update(cx, |f, cx| f.save_now(cx));
+                folio.update(cx, |f, _| f.save_and_wait());
                 cx.quit();
             }
         }

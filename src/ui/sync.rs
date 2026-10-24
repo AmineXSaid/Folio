@@ -388,8 +388,10 @@ impl Folio {
         b.at_home = self.board.at_home;
         b.active = b.active.min(b.categories.len().saturating_sub(1));
         let before = std::mem::replace(&mut self.board, b);
-        self.undo.push(before);
-        self.redo.clear();
+        let step = crate::history::Change::diff(&before, &self.board);
+        if !step.is_empty() {
+            self.push_undo(step);
+        }
         self.selection.clear();
         if self.board.categories.is_empty() {
             self.screen = Screen::Home;

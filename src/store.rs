@@ -4,8 +4,12 @@
 //! copied into `media/` beside it, so the folder is the whole workspace.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
 
 use crate::demo;
+use crate::history::Change;
 use crate::model::Board;
 
 /// `FOLIO_DATA_DIR` if set; otherwise the platform's per-user data folder.
@@ -61,41 +65,122 @@ pub fn load(dir: &Path) -> Board {
     }
 }
 
+/// Saves `board` here and now (the app saves through `Saver`).
+#[cfg(test)]
 pub fn save(dir: &Path, board: &Board) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join("board.json.tmp");
     let text = serde_json::to_string(board).map_err(std::io::Error::other)?;
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, board_file(dir))
+    write_whole(&board_file(dir), &text)
 }
 
-/// Undo steps kept on disk, so undo works after a restart.
-pub const HISTORY_KEPT: usize = 30;
+/// Writes `text` to a temporary file, makes sure it's on the disk, then
+/// renames it over `path`: after a crash or a power cut the old file or the
+/// new one is there, never half of one.
+fn write_whole(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    let tmp = path.with_file_name(name);
+    let mut f = std::fs::File::create(&tmp)?;
+    f.write_all(text.as_bytes())?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)?;
+    // The rename itself, on the disk too.
+    #[cfg(unix)]
+    if let Some(d) = path.parent() {
+        let _ = std::fs::File::open(d).and_then(|d| d.sync_all());
+    }
+    Ok(())
+}
+
+/// Saves the board and its undo steps away from the UI thread, in order: a
+/// save that started earlier never lands over one that started later.
+#[derive(Clone)]
+pub struct Saver {
+    dir: PathBuf,
+    /// The number of the newest save on the disk.
+    written: Arc<Mutex<u64>>,
+}
+
+impl Saver {
+    pub fn new(dir: &Path) -> Self {
+        Saver { dir: dir.to_path_buf(), written: Arc::default() }
+    }
+
+    /// Writes `board` and `steps` as save number `n`, unless a later one is
+    /// already on the disk (then `Ok(false)`). The board is turned to text
+    /// before waiting for an earlier save to finish.
+    pub fn write(&self, n: u64, board: &Board, steps: &[Arc<Change>]) -> std::io::Result<bool> {
+        let text = serde_json::to_string(board).map_err(std::io::Error::other)?;
+        let history = history_text(steps);
+        let mut written = self.written.lock().unwrap_or_else(|e| e.into_inner());
+        if n <= *written {
+            return Ok(false);
+        }
+        std::fs::create_dir_all(&self.dir)?;
+        write_whole(&board_file(&self.dir), &text)?;
+        *written = n;
+        // The board is safe; undo after a restart is a bonus.
+        let _ = write_whole(&history_file(&self.dir), &history);
+        Ok(true)
+    }
+}
+
+pub fn history_file(dir: &Path) -> PathBuf {
+    dir.join("history.json")
+}
+
+/// Undo steps kept on disk, so undo works after a restart: the newest, up to
+/// this many and this many bytes.
+pub const HISTORY_KEPT: usize = 100;
+pub const HISTORY_BYTES: usize = 2 << 20;
+
+/// What `history.json` holds. The file once held whole boards in a list;
+/// that's read as no steps.
+#[derive(Serialize, Deserialize)]
+struct History {
+    steps: Vec<Change>,
+}
+
+/// The newest undo steps as `history.json`'s text.
+fn history_text(steps: &[Arc<Change>]) -> String {
+    let mut kept = Vec::new();
+    let mut bytes = 0;
+    for step in steps.iter().rev().take(HISTORY_KEPT) {
+        let Ok(t) = serde_json::to_string(&**step) else { break };
+        bytes += t.len() + 1;
+        if bytes > HISTORY_BYTES {
+            break;
+        }
+        kept.push(t);
+    }
+    kept.reverse();
+    format!("{{\"steps\":[{}]}}", kept.join(","))
+}
 
 /// Writes the newest undo steps to `history.json`.
-pub fn save_history(dir: &Path, undo: &[Board]) -> std::io::Result<()> {
+#[cfg(test)]
+pub fn save_history(dir: &Path, steps: &[Arc<Change>]) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let keep = &undo[undo.len().saturating_sub(HISTORY_KEPT)..];
-    let text = serde_json::to_string(keep).map_err(std::io::Error::other)?;
-    let tmp = dir.join("history.json.tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, dir.join("history.json"))
+    write_whole(&history_file(dir), &history_text(steps))
 }
 
-/// The undo steps from the last session (none if unreadable).
-pub fn load_history(dir: &Path) -> Vec<Board> {
-    std::fs::read_to_string(dir.join("history.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<Vec<Board>>(&t).ok())
-        .map(|v| {
-            v.into_iter()
-                .map(|mut b| {
-                    b.normalize();
-                    b
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+/// The undo steps from the last run, if the newest of them fits `board`
+/// (none if the file is unreadable, from an older Folio, or belongs to a
+/// board that changed since).
+pub fn load_history(dir: &Path, board: &Board) -> Vec<Arc<Change>> {
+    let path = history_file(dir);
+    let Ok(text) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let Ok(h) = serde_json::from_str::<History>(&text) else {
+        // Whole boards, from before steps: they go.
+        let _ = std::fs::remove_file(&path);
+        return Vec::new();
+    };
+    match h.steps.last() {
+        Some(last) if last.fits(board) => h.steps.into_iter().map(Arc::new).collect(),
+        _ => Vec::new(),
+    }
 }
 
 pub fn backup_dir(dir: &Path) -> PathBuf {
@@ -310,15 +395,48 @@ mod tests {
     #[test]
     fn undo_history_survives_a_restart() {
         let dir = temp_dir("history");
-        let steps: Vec<Board> = (0..40).map(|i| {
-            let mut b = demo::board();
-            b.next_id += i;
-            b
-        }).collect();
+        let mut board = demo::board();
+        let mut steps = Vec::new();
+        for i in 0..120 {
+            let before = board.clone();
+            board.sheet_mut().stickers[0].body = format!("Edit {i}");
+            steps.push(Arc::new(Change::diff(&before, &board)));
+        }
         save_history(&dir, &steps).unwrap();
-        let back = load_history(&dir);
+        let back = load_history(&dir, &board);
         assert_eq!(back.len(), HISTORY_KEPT);
         assert_eq!(back.last(), steps.last());
+        // Small steps make a small file.
+        let size = std::fs::metadata(history_file(&dir)).unwrap().len();
+        assert!(size < 200_000, "history.json is {size} bytes");
+        // Steps that belong to another board are dropped.
+        let mut other = board.clone();
+        other.sheet_mut().stickers.remove(0);
+        assert!(load_history(&dir, &other).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn whole_boards_from_older_history_are_dropped() {
+        let dir = temp_dir("old-history");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = serde_json::to_string(&vec![demo::board(), demo::board()]).unwrap();
+        std::fs::write(history_file(&dir), old).unwrap();
+        assert!(load_history(&dir, &demo::board()).is_empty());
+        assert!(!history_file(&dir).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_older_save_never_lands_over_a_newer_one() {
+        let dir = temp_dir("saver");
+        let saver = Saver::new(&dir);
+        let mut newer = demo::board();
+        newer.sheet_mut().name = "Newer".into();
+        assert!(saver.write(2, &newer, &[]).unwrap());
+        assert!(!saver.write(1, &demo::board(), &[]).unwrap());
+        assert_eq!(load(&dir).sheet().name, "Newer");
+        assert!(!dir.join("board.json.tmp").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
