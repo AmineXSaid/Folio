@@ -10,6 +10,8 @@
 # <name>-light.png and <name>-dark.png:
 #   intro   the opening, mid-way      home    the home screen
 #   intro-late  the opening, the logo drawn
+#   welcome  the first run's note asking your name
+#   welcome-look  the same note, picking a face
 #   drawer  the sheets drawer         sheet   a sheet
 #   edit    typing into a note        menu    a note's right-click menu
 #   palette Ctrl+K                    settings
@@ -58,9 +60,10 @@ for mode in light dark; do
   sleep 1.2; import -window root "$OUT/intro-late-$mode.png"
   sleep 3.3
   # The first run asks your name, then your look: "Start writing".
-  xdotool type --delay 30 "Sam"; key Return; sleep 0.8
-  xdotool mousemove 670 588 click 1; sleep 1.5
   [ "$mode" = dark ] && key ctrl+shift+l
+  xdotool type --delay 30 "Sam"; shot welcome
+  key Return; shot welcome-look
+  xdotool mousemove 831 540 click 1; sleep 1.5
   shot home
   key ctrl+b; shot drawer; key Escape
   # The first sheet, from the palette.

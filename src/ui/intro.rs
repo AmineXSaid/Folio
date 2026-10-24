@@ -2,7 +2,7 @@
 //! in, the note drops onto it and settles, the pin pops, the highlight
 //! wipes across, the lines write themselves, the corner peels, and
 //! "folio." rises letter by letter. It plays in full at every launch and
-//! can't be skipped; the credit sits along the bottom.
+//! can't be skipped; the author's credit sits in the bottom-left corner.
 
 use gpui::{canvas, div, point, prelude::*, px, rgb, rgba, Bounds, Context, Hsla, PathBuilder, Pixels, Point, Window};
 
@@ -120,6 +120,7 @@ impl Folio {
         let tag = ease_out(span(t, 2.35, 2.9));
         let glow = ease_out(span(t, 0.3, 2.0));
         let pink: Hsla = rgb(PINK).into();
+        let ui = crate::theme::theme(cx).clone();
 
         div()
             .id("intro")
@@ -165,17 +166,14 @@ impl Folio {
                     .child("Sticky notes on endless sheets"),
             )
             .child(
+                // The credit, in the corner where the welcome keeps it: a
+                // glassy card of the logo's cream on the dark.
                 div()
                     .absolute()
-                    .bottom(px(26.))
-                    .left_0()
-                    .right_0()
-                    .flex()
-                    .justify_center()
-                    .text_size(px(12.))
-                    .text_color(rgb(0x7d8682))
+                    .left(ui.space.xl)
+                    .bottom(ui.space.xl)
                     .opacity(tag)
-                    .child("Created and designed by M. Amine Said"),
+                    .child(super::author_badge(&ui, rgba(CREAM << 8 | 0x0f).into(), rgb(CREAM).into())),
             )
             .into_any_element()
     }

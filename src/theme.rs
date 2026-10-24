@@ -105,6 +105,9 @@ pub struct Sizes {
     pub dialog_w: Pixels,  // 460
     pub drawer: Pixels,    // 304: the sheets drawer
     pub card_min: Pixels,  // 270: a home card's least width
+    pub welcome: Pixels,   // 540: the welcome's note
+    pub welcome_h: Pixels, // 380: the room it grows down into, so its pin stays put
+    pub avatar: Pixels,    // 56: an avatar to pick
     pub grip: Pixels,      // 14: the resize corner
     pub dot_grid: f32,     // 22: world units between canvas dots
 }
@@ -247,6 +250,9 @@ const SIZE: Sizes = Sizes {
     dialog_w: px(460.),
     drawer: px(304.),
     card_min: px(270.),
+    welcome: px(540.),
+    welcome_h: px(380.),
+    avatar: px(56.),
     grip: px(14.),
     dot_grid: 22.,
 };
@@ -617,7 +623,7 @@ impl Theme {
         for p in [
             &mut z.sidebar, &mut z.topbar, &mut z.control, &mut z.icon_sm, &mut z.icon, &mut z.icon_lg, &mut z.dot,
             &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.card_min,
-            &mut z.search, &mut z.search_open,
+            &mut z.search, &mut z.search_open, &mut z.welcome, &mut z.welcome_h, &mut z.avatar,
         ] {
             m(p);
         }

@@ -326,9 +326,9 @@ pub fn toast_leaving(t: &Theme, msg: SharedString, n: usize) -> impl IntoElement
     ))
 }
 
-/// Crisp rather than soft: small corners, a hairline edge, a lit top edge
-/// and a brand mark, sitting on a tight shadow.
-fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
+/// Crisp rather than soft: small corners, a hairline edge, a lit top edge,
+/// sitting on a tight shadow. The toast and the author's credit.
+fn crisp(t: &Theme, bg: Hsla, fg: Hsla) -> gpui::Div {
     div()
         .flex()
         .items_center()
@@ -336,18 +336,15 @@ fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
         .pl(t.space.sm)
         .pr(t.space.lg)
         .py(t.space.sm)
-        .max_w(px(420.))
         .rounded(t.radius.small)
-        .bg(t.colors.toast)
+        .bg(bg)
         .border_1()
-        .border_color(t.colors.toast_fg.opacity(0.1))
-        .text_color(t.colors.toast_fg)
-        .text_size(t.text.caption)
-        .font_weight(gpui::FontWeight::MEDIUM)
+        .border_color(fg.opacity(0.1))
+        .text_color(fg)
         .shadow({
             let mut s = t.shadow_float();
             s.push(gpui::BoxShadow {
-                color: t.colors.toast_fg.opacity(0.08),
+                color: fg.opacity(0.08),
                 offset: gpui::point(px(0.), px(1.)),
                 blur_radius: px(0.),
                 spread_radius: px(0.),
@@ -355,19 +352,46 @@ fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
             });
             s
         })
-        .child(
-            div()
-                .size(px(22.))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(t.radius.small)
-                .bg(t.colors.brand)
-                .child(icon("icons/bell.svg", px(12.), t.colors.primary_fg)),
-        )
+}
+
+/// The brand mark a crisp card leads with: `path` on a pink tile `d` across.
+fn brand_tile(path: &'static str, d: Pixels, t: &Theme) -> gpui::Div {
+    div()
+        .size(d)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(t.radius.small)
+        .bg(t.colors.brand)
+        .child(icon(path, d * 0.55, t.colors.primary_fg))
+}
+
+fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
+    crisp(t, t.colors.toast, t.colors.toast_fg)
+        .max_w(px(420.))
+        .text_size(t.text.caption)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .child(brand_tile("icons/bell.svg", px(22.), t))
         .child(div().w(px(1.)).h(px(14.)).bg(t.colors.toast_fg.opacity(0.14)))
         .child(div().flex_1().min_w_0().child(msg))
+}
+
+/// Who made Folio, in the toast's crisp style: a pen on the pink tile,
+/// then the credit over the name. For the opening and the welcome, in
+/// the bottom-left corner; `bg` and `fg` are the card's colours there.
+pub fn author_badge(t: &Theme, bg: Hsla, fg: Hsla) -> gpui::Div {
+    crisp(t, bg, fg)
+        .child(brand_tile("icons/user-round-pen.svg", t.size.control, t))
+        .child(div().w(px(1.)).h(t.size.icon_lg).bg(fg.opacity(0.14)))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(t.space.xxs)
+                .child(div().text_size(t.text.micro).text_color(fg.opacity(0.6)).child("Created and designed by"))
+                .child(div().text_size(t.text.body).font_weight(gpui::FontWeight::SEMIBOLD).child("M. Amine Said")),
+        )
 }
 
 /// Keeps gpui-component's inputs and markdown in Folio's colours and type.
