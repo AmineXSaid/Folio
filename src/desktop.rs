@@ -123,13 +123,24 @@ impl Folio {
         let x = f32::from(wb.origin.x + origin.x) + at.x + 24.;
         let y = f32::from(wb.origin.y + origin.y) + at.y + 24.;
         let (w, h) = (r.w.clamp(200., 420.), (r.h + 40.).clamp(140., 520.));
-        self.change_note(id, cx, |s| s.popped = Some(Popped { x, y, w, h, see_through: false }));
+        self.set_popped(id, Some(Popped { x, y, w, h, see_through: false }), cx);
         self.notify("Pinned to the desktop", cx);
     }
 
     /// Takes note `id` off the desktop.
     pub fn dock(&mut self, id: Id, cx: &mut gpui::Context<Self>) {
-        self.change_note(id, cx, |s| s.popped = None);
+        self.set_popped(id, None, cx);
+    }
+
+    /// A note's desktop window is the window's business, not the note's:
+    /// saved, but not an undo step (`history.rs` leaves it alone).
+    fn set_popped(&mut self, id: Id, popped: Option<Popped>, cx: &mut gpui::Context<Self>) {
+        if let Some(s) = self.board.find_note_mut(id) {
+            s.popped = popped;
+        }
+        self.schedule_save(cx);
+        self.desktop_sync(cx);
+        cx.notify();
     }
 
     /// Opens a desktop window for each popped note that has none, and

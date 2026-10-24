@@ -399,6 +399,8 @@ pub struct Folio {
     pub heights: Rc<RefCell<HashMap<Id, f32>>>,
     /// Each label's size (world units), measured as it's drawn.
     pub label_sizes: Rc<RefCell<HashMap<Id, (f32, f32)>>>,
+    /// Where the sheet's name is drawn (window), for clicks and renaming.
+    pub head_name: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Undo and redo steps: what each edit changed, not copies of the board.
     pub undo: Vec<Arc<Change>>,
     pub redo: Vec<Arc<Change>>,
@@ -606,6 +608,7 @@ impl Folio {
             viewport: Rc::new(Cell::new(Bounds::default())),
             heights: Rc::new(RefCell::new(HashMap::new())),
             label_sizes: Rc::new(RefCell::new(HashMap::new())),
+            head_name: Rc::default(),
             undo,
             redo: Vec::new(),
             editing: None,
@@ -1273,10 +1276,21 @@ impl Folio {
         }
         let (w, h) = self.viewport_size();
         let (w, h) = if w < 10. { (1000., 600.) } else { (w, h) };
+        // In the middle of the view, or the nearest free place around it:
+        // never on top of another note or text.
         let cam = self.sheet().camera;
-        let n = self.sheet().stickers.len() as f32 % 6.;
-        let at = cam.to_world(v2(w / 2. + n * 18., h / 2. + n * 18.));
-        self.new_note_at(at, window, cx);
+        let c = cam.to_world(v2(w / 2., h / 2.));
+        let (a, b) = (cam.to_world(v2(24., 90.)), cam.to_world(v2(w - 24., h - 110.)));
+        let view = Rect { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
+        let taken: Vec<Rect> = self
+            .sheet()
+            .stickers
+            .iter()
+            .map(|s| self.note_rect(s))
+            .chain(self.sheet().labels.iter().map(|l| self.label_box(l)))
+            .collect();
+        let spot = open_spot(&taken, Rect { x: c.x - 120., y: c.y - 75., w: 240., h: 150. }, view);
+        self.new_note_at(v2(spot.x + 120., spot.y + 30.), window, cx);
     }
 
     /// Starts typing into note `id` on the sheet.

@@ -16,8 +16,15 @@ use serde::{Deserialize, Serialize};
 use crate::model::{Binned, Board, Category, Frame, Id, Label, Link, Sticker, Stroke};
 
 /// Something kept in a list by its id.
-pub trait Keyed {
+pub trait Keyed: Clone + PartialEq {
     fn key(&self) -> Id;
+    /// The same as far as undo goes.
+    fn same(&self, o: &Self) -> bool {
+        self == o
+    }
+    /// Before undo or redo puts `self` in place of `now`: takes what undo
+    /// leaves alone from `now`.
+    fn keep(&mut self, _now: &Self) {}
 }
 
 macro_rules! keyed {
@@ -29,7 +36,34 @@ macro_rules! keyed {
         })*
     };
 }
-keyed!(Sticker, Stroke, Label, Link, Frame, Binned, Category);
+keyed!(Stroke, Label, Link, Frame, Binned, Category);
+
+/// A note's desktop window (where it is, see-through) and whether its
+/// reminder was shown change outside undo, by the window and the clock:
+/// undo leaves them as they are, as the merge with Drive does. Otherwise
+/// undoing a drag could close a desktop window or show a reminder again.
+impl Keyed for Sticker {
+    fn key(&self) -> Id {
+        self.id
+    }
+    fn same(&self, o: &Self) -> bool {
+        if self == o {
+            return true;
+        }
+        if self.popped == o.popped && (self.reminded == o.reminded || self.due != o.due) {
+            return false;
+        }
+        let mut a = self.clone();
+        a.keep(o);
+        a == *o
+    }
+    fn keep(&mut self, now: &Self) {
+        self.popped = now.popped;
+        if self.due == now.due {
+            self.reminded = now.reminded;
+        }
+    }
+}
 
 /// Which way a step is played.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +103,7 @@ impl<T> Default for Edits<T> {
     }
 }
 
-impl<T: Keyed + Clone + PartialEq> Edits<T> {
+impl<T: Keyed> Edits<T> {
     pub fn is_empty(&self) -> bool {
         self.changed.is_empty() && self.placed.is_empty() && self.whole.is_none()
     }
@@ -87,7 +121,7 @@ impl<T: Keyed + Clone + PartialEq> Edits<T> {
         let mut changed = Vec::new();
         for x in before {
             match now.get(&x.key()) {
-                Some(y) if *y == x => {}
+                Some(y) if y.same(x) => {}
                 y => changed.push((x.key(), Some(x.clone()), y.map(|y| (*y).clone()))),
             }
         }
@@ -131,7 +165,11 @@ impl<T: Keyed + Clone + PartialEq> Edits<T> {
                 continue;
             }
             match (at.get(id), to) {
-                (Some(&i), Some(v)) => list[i] = v.clone(),
+                (Some(&i), Some(v)) => {
+                    let mut v = v.clone();
+                    v.keep(&list[i]);
+                    list[i] = v;
+                }
                 (Some(_), None) => {
                     gone.insert(*id);
                 }
@@ -148,10 +186,15 @@ impl<T: Keyed + Clone + PartialEq> Edits<T> {
             .iter()
             .filter_map(|(id, before, after)| {
                 let i = (*way.pick(before, after))?;
-                let item = match target.get(id) {
-                    Some(to) => (*to).clone(),
-                    None => lifted.remove(id),
-                }?;
+                let item = match (target.get(id), lifted.remove(id)) {
+                    (Some(Some(to)), Some(now)) => {
+                        let mut to = to.clone();
+                        to.keep(&now);
+                        to
+                    }
+                    (Some(to), _) => (*to).clone()?,
+                    (None, now) => now?,
+                };
                 Some((i, item))
             })
             .collect();
@@ -666,6 +709,33 @@ mod tests {
         later.categories.last_mut().unwrap().edited = 5;
         step.restamp(&after, &later, id);
         assert_eq!(step, Change::diff(&after, &later));
+    }
+
+    #[test]
+    fn desktop_windows_and_shown_reminders_stay_out_of_undo() {
+        let mut before = board(3);
+        before.sheet_mut().stickers[0].due = Some(10);
+        let mut after = before.clone();
+        after.sheet_mut().stickers[1].body = "edited".into();
+        // Mid-edit, the clock shows a reminder and a desktop window moves.
+        after.sheet_mut().stickers[0].reminded = true;
+        after.sheet_mut().stickers[2].popped = Some(crate::model::Popped { x: 1., y: 2., w: 3., h: 4., see_through: false });
+        let step = Change::diff(&before, &after);
+        assert_eq!(step.inside[0].stickers.changed.len(), 1);
+        let mut b = after.clone();
+        step.apply(&mut b, Way::Back);
+        assert_eq!(b.categories[0].stickers[1].body, "");
+        assert!(b.categories[0].stickers[0].reminded);
+        assert!(b.categories[0].stickers[2].popped.is_some());
+        // A new time for the reminder is content: undo brings the old one
+        // back, shown or not as it was.
+        let mut later = b.clone();
+        later.sheet_mut().stickers[0].due = Some(99);
+        later.sheet_mut().stickers[0].reminded = false;
+        let step = Change::diff(&b, &later);
+        let mut c = later.clone();
+        step.apply(&mut c, Way::Back);
+        assert_eq!((c.categories[0].stickers[0].due, c.categories[0].stickers[0].reminded), (Some(10), true));
     }
 
     #[test]

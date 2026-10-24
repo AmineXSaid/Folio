@@ -1283,6 +1283,43 @@ pub fn simplify(points: &[Vec2], epsilon: f32) -> Vec<Vec2> {
     points.iter().zip(keep).filter(|(_, k)| *k).map(|(p, _)| *p).collect()
 }
 
+/// Where a new note the size of `want` goes: at `want` if nothing is there,
+/// otherwise the nearest free place on a grid of note-sized steps around
+/// it (right, below, left, above, then further out), inside `view` if one
+/// is free there. Never on top of what's in `taken`.
+pub fn open_spot(taken: &[Rect], want: Rect, view: Rect) -> Rect {
+    const GAP: f32 = 24.;
+    let free = |r: &Rect| {
+        let room = Rect { x: r.x - GAP / 2., y: r.y - GAP / 2., w: r.w + GAP, h: r.h + GAP };
+        !taken.iter().any(|t| t.intersects(&room))
+    };
+    let inside = |r: &Rect| r.x >= view.x && r.y >= view.y && r.x + r.w <= view.x + view.w && r.y + r.h <= view.y + view.h;
+    let (dx, dy) = (want.w + GAP, want.h + GAP);
+    let mut outside = None;
+    for ring in 0..=8i32 {
+        let mut spots: Vec<(i32, f32, Rect)> = Vec::new();
+        for i in -ring..=ring {
+            for j in -ring..=ring {
+                if i.abs().max(j.abs()) == ring {
+                    // Clockwise from the right: right, below, left, above.
+                    let turn = (j as f32).atan2(i as f32).rem_euclid(std::f32::consts::TAU);
+                    spots.push((i * i + j * j, turn, Rect { x: want.x + i as f32 * dx, y: want.y + j as f32 * dy, ..want }));
+                }
+            }
+        }
+        spots.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        for (_, _, r) in spots {
+            if free(&r) {
+                if inside(&r) {
+                    return r;
+                }
+                outside.get_or_insert(r);
+            }
+        }
+    }
+    outside.unwrap_or(want)
+}
+
 /// The whole workspace, as saved.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Board {
@@ -1963,6 +2000,26 @@ mod tests {
         assert!(c.erase_at(v2(50., 4.), 4.));
         assert_eq!(c.strokes.len(), 1);
         assert!(!c.erase_at(v2(50., 30.), 4.));
+    }
+
+    #[test]
+    fn new_notes_find_room_beside_the_others() {
+        let view = Rect { x: -1000., y: -1000., w: 2000., h: 2000. };
+        let want = Rect { x: 0., y: 0., w: 240., h: 150. };
+        let mut taken = Vec::new();
+        for _ in 0..12 {
+            let r = open_spot(&taken, want, view);
+            assert!(taken.iter().all(|t: &Rect| !t.intersects(&r)), "{r:?} lands on another note");
+            taken.push(r);
+        }
+        // The first where asked, the second to its right, the third below.
+        assert_eq!((taken[0].x, taken[0].y), (0., 0.));
+        assert_eq!((taken[1].x, taken[1].y), (264., 0.));
+        assert_eq!((taken[2].x, taken[2].y), (0., 174.));
+        // With no room in view, the nearest free place outside it.
+        let small = Rect { x: 0., y: 0., w: 260., h: 160. };
+        let r = open_spot(&[want], want, small);
+        assert!(!r.intersects(&want));
     }
 
     #[test]

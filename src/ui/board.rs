@@ -264,6 +264,7 @@ impl Folio {
                 (Gesture::Resize { grip, .. } | Gesture::ResizeFrame { grip, .. }, _) => resize_cursor(*grip),
                 (Gesture::LabelWidth { .. }, _) => gpui::CursorStyle::ResizeLeftRight,
                 (Gesture::None, _) if self.label_grip_at(self.cursor).is_some() => gpui::CursorStyle::ResizeLeftRight,
+                (Gesture::None, _) if self.on_title(self.cursor) => gpui::CursorStyle::IBeam,
                 (Gesture::None, _) if self.grip_at(self.cursor).is_some() || self.frame_grip_at(self.cursor).is_some() => {
                     let grip = self.grip_at(self.cursor).or(self.frame_grip_at(self.cursor)).map(|(_, g)| g).unwrap_or_default();
                     resize_cursor(grip)
@@ -374,6 +375,8 @@ impl Folio {
             .children(picture)
             .child(underlay)
             .children(frames)
+            // Written on the sheet: under the notes, moving with them.
+            .child(self.render_sheet_head(&t))
             .children(labels)
             .children(stickers)
             .children(gone)
@@ -410,7 +413,7 @@ impl Folio {
             .child(board)
             // Outside the sheet's key context, so typing a new name never
             // trips a one-letter tool key.
-            .child(self.render_sheet_head(&t, cx))
+            .children(self.render_name_field(&t))
             .children(self.render_label_edit(&t, cx))
             .children(edit_layer)
             .children(edit_bar_leaving)
@@ -419,8 +422,15 @@ impl Folio {
             .when(self.board.settings.minimap && !empty, |d| d.child(self.render_minimap(&t, cx)))
     }
 
-    fn render_sheet_head(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The sheet's name, blurb, note count and save state, written at the
+    /// sheet's top-left: it pans and zooms with the sheet and notes go over
+    /// it, so nothing slides under it. A click on the name renames it in
+    /// place (`press`, `render_name_field`).
+    fn render_sheet_head(&self, t: &Theme) -> impl IntoElement {
         let sheet = self.sheet();
+        let cam = sheet.camera;
+        let z = cam.zoom;
+        let at = cam.to_screen(head_at(t));
         let n = sheet.stickers.len();
         let meta = format!(
             "{}{} note{} · {}",
@@ -430,59 +440,81 @@ impl Folio {
             if self.saved { "Saved" } else { "Saving…" }
         );
         let icon_text = sheet.icon.clone();
-        // The name: click it to rename the sheet right there.
-        let title = if self.naming {
-            // Typed into in place: same size, same weight, no box; only the
-            // caret says it's being edited.
+        let measured = self.head_name.clone();
+        let name = div()
+            .relative()
+            .text_size(t.text.heading * z)
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(t.colors.text)
+            // Typed into in place: the field sits where the name was.
+            .when(self.naming, |d| d.invisible())
+            .child(sheet.name.clone())
+            .child(canvas(move |b, _, _| measured.set(Some(b)), |_, _, _, _| {}).absolute().inset_0());
+        div()
+            .absolute()
+            .left(px(at.x))
+            .top(px(at.y))
+            .flex()
+            .flex_col()
+            .gap(t.space.xxs * z)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(t.space.sm * z)
+                    .when(!icon_text.is_empty(), |d| {
+                        d.child(if is_monogram(&icon_text) {
+                            mark(&icon_text, 34. * z, t).into_any_element()
+                        } else {
+                            div().text_size(t.text.heading * z).child(icon_text).into_any_element()
+                        })
+                    })
+                    .child(name),
+            )
+            .child(div().whitespace_nowrap().text_size(t.text.caption * z).text_color(t.colors.text_muted).child(meta))
+    }
+
+    /// The sheet's name being typed into, over where it's written: same
+    /// size, same weight, no box; only the caret says it's being edited.
+    fn render_name_field(&self, t: &Theme) -> Option<impl IntoElement> {
+        if !self.naming {
+            return None;
+        }
+        let z = self.sheet().camera.zoom;
+        let b = self.head_name.get()?;
+        let o = self.viewport.get().origin;
+        Some(
             div()
                 .id("sheet-name")
                 .key_context("SheetName")
-                .w(px(560.))
-                .h(px(34.))
-                .ml(px(-8.))
+                .absolute()
+                .left(b.origin.x - o.x - px(8. * z))
+                .top(b.origin.y - o.y)
+                .w(px(560. * z))
+                .h(b.size.height)
                 .flex()
                 .items_center()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(t.colors.text)
                 // The field's small text is 0.875rem: a rem that makes it
                 // the heading's size.
-                .child(rem_scaled(t.text.heading / 0.875, Input::new(&self.name_input).appearance(false).small()))
-                .into_any_element()
-        } else {
-            div()
-                .id("sheet-name")
-                .occlude()
-                .cursor(gpui::CursorStyle::IBeam)
-                .text_size(t.text.heading)
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(t.colors.text)
-                .child(sheet.name.clone())
-                .on_click(cx.listener(|this, _, window, cx| this.start_naming(window, cx)))
-                .into_any_element()
+                .child(rem_scaled(t.text.heading * z / 0.875, Input::new(&self.name_input).appearance(false).small())),
+        )
+    }
+
+    /// `at` (sheet-local) is on the sheet's name, with no note or text
+    /// over it.
+    pub fn on_title(&self, at: Vec2) -> bool {
+        let Some(b) = self.head_name.get() else { return false };
+        let o = self.viewport.get().origin;
+        let r = Rect {
+            x: f32::from(b.origin.x - o.x),
+            y: f32::from(b.origin.y - o.y),
+            w: f32::from(b.size.width),
+            h: f32::from(b.size.height),
         };
-        div()
-            .absolute()
-            .top(t.space.xl)
-            .left(t.space.xxl)
-            .flex()
-            .flex_col()
-            .gap(t.space.xxs)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(t.space.xs)
-                    .gap(t.space.sm)
-                    .when(!icon_text.is_empty(), |d| {
-                        d.child(if is_monogram(&icon_text) {
-                            mark(&icon_text, 34., t).into_any_element()
-                        } else {
-                            div().text_size(t.text.heading).child(icon_text).into_any_element()
-                        })
-                    })
-                    .child(title),
-            )
-            .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(meta))
+        let world = self.sheet().camera.to_world(at);
+        r.contains(at) && self.note_at(world).is_none() && self.label_at(world).is_none()
     }
 
     /// The note being typed into, drawn over the sheet, with its edit bar
@@ -945,6 +977,11 @@ impl Folio {
         let double = ev.click_count >= 2;
         let shift = ev.modifiers.shift;
         let pan = Gesture::Pan { start: at, pan: cam.pan };
+        // A click on the sheet's name renames it, right there.
+        if !self.space && matches!(self.tool, Tool::Select | Tool::Text) && self.on_title(at) {
+            self.start_naming(window, cx);
+            return;
+        }
         self.before = Some(self.board.clone());
         if self.space {
             self.gesture = pan;
@@ -1628,4 +1665,11 @@ fn empty_state(t: &Theme) -> impl IntoElement {
                 .text_color(t.colors.text_subtle)
                 .child("Double-click anywhere for a note, drop a picture, or right-click for more"),
         )
+}
+
+/// Where the sheet's name is written (world): where a fresh sheet's camera
+/// shows it in the top-left corner.
+fn head_at(t: &Theme) -> Vec2 {
+    let home = Camera::default().pan;
+    v2(f32::from(t.space.xxl) - home.x, f32::from(t.space.xl) - home.y)
 }
