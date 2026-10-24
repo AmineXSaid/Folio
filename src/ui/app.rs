@@ -415,6 +415,8 @@ pub struct Folio {
     pub viewport: Rc<Cell<Bounds<Pixels>>>,
     /// Each note's natural height (world units), measured as it's drawn.
     pub heights: Rc<RefCell<HashMap<Id, f32>>>,
+    /// The edit bar's size as last drawn (screen px), to find it a place.
+    pub edit_bar_size: Rc<Cell<(f32, f32)>>,
     /// Each label's size (world units), measured as it's drawn.
     pub label_sizes: Rc<RefCell<HashMap<Id, (f32, f32)>>>,
     /// Where the sheet's name is drawn (window), for clicks and renaming.
@@ -464,6 +466,8 @@ pub struct Folio {
     pub label_edit: Option<Id>,
     /// Every ink, open under the bar of the text being written.
     pub label_palette: bool,
+    /// The edit bar's papers are open.
+    pub edit_papers: bool,
     pub label_input: Entity<TextareaState>,
     pub desktop: crate::desktop::Desktop,
     pub sync: super::sync::DriveSync,
@@ -632,6 +636,7 @@ impl Folio {
             cursor: v2(0., 0.),
             viewport: Rc::new(Cell::new(Bounds::default())),
             heights: Rc::new(RefCell::new(HashMap::new())),
+            edit_bar_size: Rc::new(Cell::new((700., 76.))),
             label_sizes: Rc::new(RefCell::new(HashMap::new())),
             head_name: Rc::default(),
             undo,
@@ -668,6 +673,7 @@ impl Folio {
             secret_input,
             label_edit: None,
             label_palette: false,
+            edit_papers: false,
             label_input,
             desktop: crate::desktop::Desktop::default(),
             sync: Default::default(),
@@ -1430,6 +1436,7 @@ impl Folio {
     /// Ends typing: keeps the text (an empty new note goes away).
     pub fn finish_edit(&mut self, cx: &mut Context<Self>) {
         let Some(ed) = self.editing.take() else { return };
+        self.edit_papers = false;
         let title = self.title_input.read(cx).value().trim().to_string();
         let body = self.body_input.read(cx).value().trim_end().to_string();
         let before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
