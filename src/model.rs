@@ -994,6 +994,10 @@ pub struct Category {
     #[serde(default)]
     pub blurb: String,
     pub accent: Accent,
+    /// Where the sheet is scrolled to on this computer. Kept in
+    /// `view.json`, not in the board: read from older boards, never
+    /// written into it.
+    #[serde(default, skip_serializing)]
     pub camera: Camera,
     /// Back to front.
     pub stickers: Vec<Sticker>,

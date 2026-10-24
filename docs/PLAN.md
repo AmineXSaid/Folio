@@ -204,6 +204,11 @@ moved to. The snapshot is then dropped. A pan alone records nothing.
   earlier never lands over a later one. Quitting saves and waits for the
   disk. A file that won't parse is kept as `board.json.bad` and the app
   starts on the demo, so nothing is lost silently.
+- `view.json` beside it holds where each sheet is scrolled to, on this
+  computer only. Panning and zooming write just this small file, a moment
+  after you stop, off the UI thread: the board isn't saved and nothing goes
+  to Drive. A board from before it still opens where it was (its cameras
+  are read, never written back).
 - `history.json` beside it holds the newest undo steps (up to 100 and
   2 MB), so undo works after a restart. They're kept only if the newest
   still fits the board. The older file of whole boards is dropped.

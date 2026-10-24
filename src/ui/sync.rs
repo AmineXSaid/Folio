@@ -381,12 +381,23 @@ impl Folio {
         self.sync.after_merge = true;
     }
 
-    /// Puts a board in place as one undo step, keeping this computer's
-    /// settings and view.
-    fn drive_put(&mut self, mut b: Board) {
+    /// Drive's board as this computer has it: its settings, which sheet is
+    /// open and where each sheet is scrolled to stay this computer's.
+    fn keep_local(&self, b: &mut Board) {
         b.settings = self.board.settings.clone();
         b.at_home = self.board.at_home;
         b.active = b.active.min(b.categories.len().saturating_sub(1));
+        for c in &mut b.categories {
+            if let Some(here) = self.board.categories.iter().find(|h| h.id == c.id) {
+                c.camera = here.camera;
+            }
+        }
+    }
+
+    /// Puts a board in place as one undo step, keeping this computer's
+    /// settings and view.
+    fn drive_put(&mut self, mut b: Board) {
+        self.keep_local(&mut b);
         let before = std::mem::replace(&mut self.board, b);
         let step = crate::history::Change::diff(&before, &self.board);
         if !step.is_empty() {
@@ -459,9 +470,7 @@ impl Folio {
         let mut b: Board = serde_json::from_str(remote).map_err(|_| "Drive's board couldn't be read".to_string())?;
         b.normalize();
         let mut same = b.clone();
-        same.settings = self.board.settings.clone();
-        same.at_home = self.board.at_home;
-        same.active = same.active.min(same.categories.len().saturating_sub(1));
+        self.keep_local(&mut same);
         if same != self.board {
             self.drive_put(b);
             self.save_now(cx);

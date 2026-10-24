@@ -455,6 +455,9 @@ pub struct Folio {
     /// Writes the board off the UI thread; saves started so far.
     saver: store::Saver,
     saves: u64,
+    /// The view (where each sheet is scrolled to), saved on its own.
+    view_task: Option<Task<()>>,
+    view_saves: u64,
     _ticker: Task<()>,
     _subs: Vec<gpui::Subscription>,
 }
@@ -651,6 +654,8 @@ impl Folio {
             save_task: None,
             saver,
             saves: 0,
+            view_task: None,
+            view_saves: 0,
             _ticker: ticker,
             _subs: subs,
         };
@@ -843,6 +848,27 @@ impl Folio {
         }
     }
 
+    /// After the view moved (a pan, a zoom): where the sheets are scrolled
+    /// to is written a moment after it stops, to its own small file. The
+    /// board isn't saved and nothing goes to Drive.
+    pub fn schedule_view_save(&mut self, cx: &mut Context<Self>) {
+        self.view_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(350)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.view_task = None;
+                let (n, text) = this.next_view();
+                let saver = this.saver.clone();
+                cx.background_executor().spawn(async move { saver.write_view(n, &text) }).detach();
+            });
+        }));
+    }
+
+    /// The view's next save number, and its text.
+    fn next_view(&mut self) -> (u64, String) {
+        self.view_saves += 1;
+        (self.view_saves, store::view_text(&self.board))
+    }
+
     pub fn schedule_save(&mut self, cx: &mut Context<Self>) {
         self.saved = false;
         self.save_task = Some(cx.spawn(async move |this, cx| {
@@ -861,7 +887,11 @@ impl Folio {
         let board = self.board.clone();
         let steps = self.undo.clone();
         let saver = self.saver.clone();
-        let job = cx.background_executor().spawn(async move { saver.write(n, &board, &steps) });
+        let (view_n, view) = self.next_view();
+        let job = cx.background_executor().spawn(async move {
+            let _ = saver.write_view(view_n, &view);
+            saver.write(n, &board, &steps)
+        });
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| this.saved_now(n, result, cx));
@@ -886,6 +916,9 @@ impl Folio {
     /// the background.
     pub fn save_and_wait(&mut self) {
         self.save_task = None;
+        self.view_task = None;
+        let (view_n, view) = self.next_view();
+        let _ = self.saver.write_view(view_n, &view);
         self.saves += 1;
         if self.saver.write(self.saves, &self.board, &self.undo).is_ok() {
             self.saved = true;
@@ -1065,6 +1098,7 @@ impl Folio {
             cam.zoom = cam.zoom.max(0.8);
             let c = r.center();
             cam.pan = v2(w / 2. - c.x * cam.zoom, h / 2. - c.y * cam.zoom);
+            self.schedule_view_save(cx);
         }
         self.select(Selection::Sticker(id));
         cx.notify();
@@ -1972,7 +2006,7 @@ impl Folio {
     pub fn zoom_by(&mut self, factor: f32, cx: &mut Context<Self>) {
         let (w, h) = self.viewport_size();
         self.board.sheet_mut().camera.zoom_at(v2(w / 2., h / 2.), factor);
-        self.schedule_save(cx);
+        self.schedule_view_save(cx);
         cx.notify();
     }
 
@@ -1989,7 +2023,7 @@ impl Folio {
             }
             None => sheet.camera = Camera::default(),
         }
-        self.schedule_save(cx);
+        self.schedule_view_save(cx);
         cx.notify();
     }
 
@@ -2012,7 +2046,7 @@ impl Folio {
                 let c = r.center();
                 let cam = &mut self.board.sheet_mut().camera;
                 cam.pan = v2(w / 2. - c.x * cam.zoom, h / 2. - c.y * cam.zoom);
-                self.schedule_save(cx);
+                self.schedule_view_save(cx);
             }
         }
         cx.notify();

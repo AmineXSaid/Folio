@@ -3,6 +3,7 @@
 //! crash mid-save never leaves half a file. Pictures dropped on a sheet are
 //! copied into `media/` beside it, so the folder is the whole workspace.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::demo;
 use crate::history::Change;
-use crate::model::Board;
+use crate::model::{Board, Camera, Id};
 
 /// `FOLIO_DATA_DIR` if set; otherwise the platform's per-user data folder.
 pub fn data_dir() -> PathBuf {
@@ -55,6 +56,7 @@ pub fn load(dir: &Path) -> Board {
     };
     match serde_json::from_str::<Board>(&text) {
         Ok(mut b) => {
+            apply_view(dir, &mut b);
             b.normalize();
             b
         }
@@ -65,11 +67,12 @@ pub fn load(dir: &Path) -> Board {
     }
 }
 
-/// Saves `board` here and now (the app saves through `Saver`).
+/// Saves `board` and its view here and now (the app saves through `Saver`).
 #[cfg(test)]
 pub fn save(dir: &Path, board: &Board) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let text = serde_json::to_string(board).map_err(std::io::Error::other)?;
+    write_whole(&view_file(dir), &view_text(board))?;
     write_whole(&board_file(dir), &text)
 }
 
@@ -94,18 +97,63 @@ fn write_whole(path: &Path, text: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Where each sheet is scrolled to, on this computer only. It sits beside
+/// the board rather than in it, so panning and zooming never rewrite the
+/// notes or send them to Drive.
+pub fn view_file(dir: &Path) -> PathBuf {
+    dir.join("view.json")
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct View {
+    #[serde(default)]
+    cameras: BTreeMap<Id, Camera>,
+}
+
+/// The view's text: each sheet's camera, by sheet.
+pub fn view_text(board: &Board) -> String {
+    let view = View { cameras: board.categories.iter().map(|c| (c.id, c.camera)).collect() };
+    serde_json::to_string(&view).unwrap_or_default()
+}
+
+/// Puts the saved view on `board`'s sheets. With no view file (a board
+/// from before it, or a new folder) the cameras stay as they were read.
+fn apply_view(dir: &Path, board: &mut Board) {
+    let Some(view) = std::fs::read_to_string(view_file(dir)).ok().and_then(|t| serde_json::from_str::<View>(&t).ok()) else { return };
+    for c in &mut board.categories {
+        if let Some(cam) = view.cameras.get(&c.id) {
+            c.camera = *cam;
+        }
+    }
+}
+
 /// Saves the board and its undo steps away from the UI thread, in order: a
-/// save that started earlier never lands over one that started later.
+/// save that started earlier never lands over one that started later. The
+/// view is numbered on its own, as it's saved on its own too.
 #[derive(Clone)]
 pub struct Saver {
     dir: PathBuf,
     /// The number of the newest save on the disk.
     written: Arc<Mutex<u64>>,
+    view_written: Arc<Mutex<u64>>,
 }
 
 impl Saver {
     pub fn new(dir: &Path) -> Self {
-        Saver { dir: dir.to_path_buf(), written: Arc::default() }
+        Saver { dir: dir.to_path_buf(), written: Arc::default(), view_written: Arc::default() }
+    }
+
+    /// Writes the view as view save number `n`, unless a later one is
+    /// already on the disk.
+    pub fn write_view(&self, n: u64, text: &str) -> std::io::Result<bool> {
+        let mut written = self.view_written.lock().unwrap_or_else(|e| e.into_inner());
+        if n <= *written {
+            return Ok(false);
+        }
+        std::fs::create_dir_all(&self.dir)?;
+        write_whole(&view_file(&self.dir), text)?;
+        *written = n;
+        Ok(true)
     }
 
     /// Writes `board` and `steps` as save number `n`, unless a later one is
@@ -341,6 +389,32 @@ mod tests {
         let board = demo::board();
         save(&dir, &board).unwrap();
         assert_eq!(load(&dir), board);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn where_sheets_are_scrolled_to_stays_out_of_the_board() {
+        let dir = temp_dir("view");
+        let mut board = demo::board();
+        board.categories[0].camera = Camera { pan: crate::model::v2(-300., 42.), zoom: 1.75 };
+        save(&dir, &board).unwrap();
+        let text = std::fs::read_to_string(board_file(&dir)).unwrap();
+        assert!(!text.contains("\"camera\""), "the board file holds no cameras");
+        assert_eq!(load(&dir).categories[0].camera, board.categories[0].camera);
+
+        // Only the view saved: the board file isn't touched.
+        board.categories[0].camera.zoom = 0.5;
+        let saver = Saver::new(&dir);
+        assert!(saver.write_view(2, &view_text(&board)).unwrap());
+        assert!(!saver.write_view(1, "{}").unwrap(), "an older view never lands over a newer one");
+        assert_eq!(std::fs::read_to_string(board_file(&dir)).unwrap(), text);
+        assert_eq!(load(&dir).categories[0].camera.zoom, 0.5);
+
+        // A board from before view.json still opens where it was.
+        std::fs::remove_file(view_file(&dir)).unwrap();
+        let old = text.replacen("\"accent\"", "\"camera\":{\"pan\":{\"x\":5.0,\"y\":6.0},\"zoom\":2.0},\"accent\"", 1);
+        std::fs::write(board_file(&dir), old).unwrap();
+        assert_eq!(load(&dir).categories[0].camera.zoom, 2.);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

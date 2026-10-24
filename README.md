@@ -49,8 +49,10 @@ libvulkan-dev libfontconfig1-dev libx11-xcb-dev`, plus a Vulkan driver.
 
 Your workspace is saved in `%APPDATA%\Folio` (Windows),
 `~/Library/Application Support/Folio` (macOS) or `~/.local/share/folio`
-(Linux). Set `FOLIO_DATA_DIR` to use another folder. It holds `board.json`
-and a `media/` folder for pictures.
+(Linux). Set `FOLIO_DATA_DIR` to use another folder. It holds `board.json`,
+a `media/` folder for pictures, and `view.json`: where each sheet is
+scrolled to on this computer, kept apart so panning never rewrites (or
+syncs) the notes.
 
 A first launch opens on one empty sheet, *My notes*. Older versions started
 with sample sheets; the ones left untouched are removed on update, edited

@@ -886,7 +886,7 @@ impl Folio {
         let (vw, vh) = self.viewport_size();
         let cam = &mut self.board.sheet_mut().camera;
         cam.pan = v2(vw / 2. - w.x * cam.zoom, vh / 2. - w.y * cam.zoom);
-        self.schedule_save(cx);
+        self.schedule_view_save(cx);
         cx.notify();
     }
 
@@ -1364,7 +1364,7 @@ impl Folio {
                 }
                 return;
             }
-            Gesture::Pan { .. } => self.schedule_save(cx),
+            Gesture::Pan { .. } => self.schedule_view_save(cx),
             Gesture::Move { items, moved: true, .. } => {
                 let target = self.drop_sheet.take();
                 self.drop_tray = false;
@@ -1473,7 +1473,7 @@ impl Folio {
             cam.pan.x += dx;
             cam.pan.y += dy;
         }
-        self.schedule_save(cx);
+        self.schedule_view_save(cx);
         cx.notify();
     }
 
