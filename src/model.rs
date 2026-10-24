@@ -1360,14 +1360,19 @@ pub enum OpenOn {
     LastSheet,
 }
 
+/// The quick note's shortcut until you choose another.
+pub const QUICK_KEYS: &str = "Ctrl+Alt+N";
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeMode,
     pub open_on: OpenOn,
     pub start_with_windows: bool,
-    /// Ctrl+Alt+N opens a quick note from anywhere.
+    /// A shortcut opens a quick note from anywhere.
     pub quick_hotkey: bool,
+    /// That shortcut, as it's written: "Ctrl+Alt+N".
+    pub quick_keys: String,
     pub default_paper: Paper,
     pub default_font: NoteFont,
     pub default_style: NoteStyle,
@@ -1392,6 +1397,7 @@ impl Default for Settings {
             open_on: OpenOn::Home,
             start_with_windows: false,
             quick_hotkey: true,
+            quick_keys: QUICK_KEYS.into(),
             default_paper: Paper::Butter,
             default_font: NoteFont::Sans,
             default_style: NoteStyle::Card,

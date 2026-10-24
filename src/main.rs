@@ -29,7 +29,9 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-l", ToggleTheme, None),
         KeyBinding::new("secondary-shift-n", NewSheet, None),
         KeyBinding::new("secondary-n", NewNote, None),
-        KeyBinding::new("secondary-alt-n", QuickNote, None),
+        // The quick note's shortcut is chosen in Settings and registered
+        // for the whole system (desktop.rs), Folio's window included: no
+        // binding here, so AltGr+N still types where Ctrl+Alt makes letters.
         KeyBinding::new("secondary-f", FocusSearch, None),
         KeyBinding::new("secondary-k", OpenPalette, None),
         KeyBinding::new("secondary-b", ToggleDrawer, None),

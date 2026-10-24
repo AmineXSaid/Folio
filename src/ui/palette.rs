@@ -367,7 +367,11 @@ impl Folio {
                 label: label.into(),
                 group: "Commands",
                 icon: path,
-                hint: (!key.is_empty()).then(|| key.into()),
+                // The quick note's keys are the ones chosen in Settings.
+                hint: match c {
+                    Cmd::QuickNote => self.board.settings.quick_hotkey.then(|| self.board.settings.quick_keys.replace('+', " ").into()),
+                    _ => (!key.is_empty()).then(|| key.into()),
+                },
                 detail: None,
                 emoji: None,
                 target: Target::Cmd(c),
@@ -608,7 +612,11 @@ impl Folio {
             Target::Cmd(c) => match c {
                 Cmd::NewNote => self.new_note(window, cx),
                 Cmd::NewSheet => self.new_sheet_dialog(window, cx),
-                Cmd::QuickNote => crate::desktop::open_quick_note(cx.entity(), cx),
+                Cmd::QuickNote => {
+                    // Opened once this update is over: it reads Folio.
+                    let f = cx.entity();
+                    cx.defer(move |cx| crate::desktop::open_quick_note(f, cx));
+                }
                 Cmd::Rename => self.start_naming(window, cx),
                 Cmd::Home => self.go_home(cx),
                 Cmd::Drawer => self.drawer = true,

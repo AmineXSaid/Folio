@@ -28,8 +28,8 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
   Each sheet picks its background: dots, grid, graph paper, lines,
   crosses, isometric or plain, on one of six paper colours, or a picture
   or SVG of your own behind it.
-- **Everywhere:** Ctrl+K for commands, sheets and notes; Ctrl+Alt+N from
-  any app for a quick note into your Inbox; notes pinned to the desktop
+- **Everywhere:** Ctrl+K for commands, sheets and notes; Ctrl+Alt+N (or keys
+  of your own, set in Settings) from any app for a quick note into your Inbox; notes pinned to the desktop
   above other windows; a tray icon and starting with Windows.
 - **Safe:** undo, a Trash that keeps things 30 days, an Archive, and a
   backup every day (the last 14 kept) you can restore from.
@@ -163,7 +163,7 @@ set to its address.
 | Click a link in a note | Open it; a pasted link card has an ↗ button that opens its page |
 | Ctrl+K | Search: commands, sheets and notes |
 | Ctrl+F | Search notes |
-| Ctrl+Alt+N | Quick note from any app |
+| Ctrl+Alt+N | Quick note from any app; Settings › Quick note shortcut takes other keys (click them, press new ones) |
 | Ctrl+N / Ctrl+Shift+N | New note / new sheet |
 | Ctrl+B | The sheets drawer (bold, while typing in a note) |
 | While typing | Ctrl+B / I bold, italic · Ctrl+E code · Ctrl+Shift+X strikethrough · Ctrl+Shift+M highlight · Ctrl+Shift+B / O / C bullets, numbers, tasks · Ctrl+Shift+R a Remember box · Enter continues a list |

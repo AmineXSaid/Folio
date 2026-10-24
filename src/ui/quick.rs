@@ -1,4 +1,5 @@
-//! The quick note: Ctrl+Alt+N from any app opens this small box. Type,
+//! The quick note: Ctrl+Alt+N (or the keys set in Settings) from any app
+//! opens this small box. Type,
 //! press Enter, and it's in your Inbox; Esc closes it.
 
 use gpui::component::input::{InputEvent, Textarea, TextareaState};

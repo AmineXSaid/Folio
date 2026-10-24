@@ -468,6 +468,10 @@ pub struct Folio {
     pub label_palette: bool,
     /// The edit bar's papers are open.
     pub edit_papers: bool,
+    /// Settings is listening for a new quick-note shortcut.
+    pub keys_recorder: Option<gpui::Subscription>,
+    /// Why the keys just pressed can't be the shortcut.
+    pub keys_hint: Option<SharedString>,
     pub label_input: Entity<TextareaState>,
     pub desktop: crate::desktop::Desktop,
     pub sync: super::sync::DriveSync,
@@ -674,6 +678,8 @@ impl Folio {
             label_edit: None,
             label_palette: false,
             edit_papers: false,
+            keys_recorder: None,
+            keys_hint: None,
             label_input,
             desktop: crate::desktop::Desktop::default(),
             sync: Default::default(),
@@ -2349,10 +2355,76 @@ impl Folio {
                 self.notify(e, cx);
             }
         }
-        if s.quick_hotkey != before.quick_hotkey {
-            self.desktop.set_hotkey(s.quick_hotkey);
+        if s.quick_hotkey != before.quick_hotkey || s.quick_keys != before.quick_keys {
+            if let Err(e) = self.desktop.set_hotkey(s.quick_hotkey.then_some(s.quick_keys.as_str())) {
+                // The one before comes back.
+                self.board.settings.quick_hotkey = before.quick_hotkey;
+                self.board.settings.quick_keys = before.quick_keys.clone();
+                let _ = self.desktop.set_hotkey(before.quick_hotkey.then_some(before.quick_keys.as_str()));
+                self.notify(e, cx);
+            }
         }
         self.schedule_save(cx);
+        cx.notify();
+    }
+
+    /// Settings › Quick note shortcut: the next keys pressed become the
+    /// shortcut. Every key goes to the recorder first (no command runs),
+    /// and the shortcut is let go meanwhile so pressing it is heard here;
+    /// Esc, or a click on the field again, keeps the one there was.
+    pub fn record_quick_keys(&mut self, cx: &mut Context<Self>) {
+        if self.keys_recorder.take().is_some() {
+            self.stop_recording(cx);
+            return;
+        }
+        let _ = self.desktop.set_hotkey(None);
+        self.keys_hint = None;
+        let me = cx.entity().downgrade();
+        self.keys_recorder = Some(cx.intercept_keystrokes(move |ev, _, cx| {
+            let k = ev.keystroke.clone();
+            if matches!(k.key.as_str(), "shift" | "control" | "alt" | "platform" | "function") {
+                return;
+            }
+            cx.stop_propagation();
+            let _ = me.update(cx, |this, cx| this.recorded_keys(&k, cx));
+        }));
+        cx.notify();
+    }
+
+    fn recorded_keys(&mut self, k: &gpui::Keystroke, cx: &mut Context<Self>) {
+        let m = k.modifiers;
+        if k.key == "escape" && !(m.control || m.alt || m.shift || m.platform) {
+            self.stop_recording(cx);
+            return;
+        }
+        match crate::desktop::shortcut_text(m.control, m.alt, m.shift, m.platform, &k.key) {
+            Err(why) => self.keys_hint = Some(why.into()),
+            Ok(keys) => match self.desktop.set_hotkey(Some(&keys)) {
+                Ok(()) => {
+                    self.keys_recorder = None;
+                    self.keys_hint = None;
+                    let s = &mut self.board.settings;
+                    s.quick_hotkey = true;
+                    s.quick_keys = keys.clone();
+                    self.schedule_save(cx);
+                    self.notify(format!("{keys} opens a quick note now"), cx);
+                }
+                // Taken: say so and keep listening for others.
+                Err(e) => self.keys_hint = Some(e.into()),
+            },
+        }
+        cx.notify();
+    }
+
+    /// Recording stopped without new keys: the shortcut there was is back.
+    fn stop_recording(&mut self, cx: &mut Context<Self>) {
+        self.keys_recorder = None;
+        self.keys_hint = None;
+        let s = &self.board.settings;
+        let keys = s.quick_hotkey.then(|| s.quick_keys.clone());
+        if let Err(e) = self.desktop.set_hotkey(keys.as_deref()) {
+            self.notify(e, cx);
+        }
         cx.notify();
     }
 
@@ -2485,7 +2557,11 @@ impl Render for Folio {
                 this.open_palette_with("@", window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(cx)))
-            .on_action(cx.listener(|_, _: &QuickNote, _, cx| crate::desktop::open_quick_note(cx.entity(), cx)))
+            .on_action(cx.listener(|_, _: &QuickNote, _, cx| {
+                // Opened once this update is over: it reads Folio.
+                let f = cx.entity();
+                cx.defer(move |cx| crate::desktop::open_quick_note(f, cx));
+            }))
             .on_action(cx.listener(|this, _: &Quit, _, cx| {
                 this.finish_edit(cx);
                 this.save_and_wait();
