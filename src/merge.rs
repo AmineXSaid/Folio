@@ -4,7 +4,13 @@
 //! own:
 //!
 //! - changed on one side only: that side's change wins;
-//! - changed on both: the note edited last wins (counted as a clash);
+//! - changed on both: merged, part by part (counted as a clash). A note's
+//!   text keeps both sides' edits: lines changed on one side only, then
+//!   words inside a line both changed; where both changed the same words,
+//!   both versions stay, the later one first. Its title, place, colour
+//!   and the rest go by what each side changed, the later edit winning
+//!   where both changed the same thing. Text on the sheet merges the same
+//!   way;
 //! - added on either side: kept;
 //! - deleted on one side and untouched on the other: deleted; deleted on
 //!   one side but changed on the other: kept, so no edit is lost.
@@ -32,7 +38,7 @@ pub struct Report {
     pub from_drive: usize,
     /// Changes made on this computer, kept.
     pub from_here: usize,
-    /// Things changed on both sides; the newer edit won.
+    /// Things changed on both sides, merged.
     pub clashes: usize,
 }
 
@@ -55,6 +61,15 @@ trait Piece: Clone + PartialEq {
     }
     /// Takes back what belongs to this computer from `local`.
     fn keep_local(&mut self, _local: &Self) {}
+    /// Changed on both sides since `base` (if known): one thing with both
+    /// sides' changes, as far as it can hold them. By default, the newer.
+    fn join(_base: Option<&Self>, l: &Self, r: &Self) -> Self {
+        if r.newer(l) {
+            r.clone()
+        } else {
+            l.clone()
+        }
+    }
 }
 
 impl Piece for Sticker {
@@ -75,6 +90,64 @@ impl Piece for Sticker {
     fn keep_local(&mut self, local: &Self) {
         self.popped = local.popped;
     }
+    fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
+        let later = r.edited > l.edited;
+        // Every field, so a new one can't be left out of merging.
+        let Sticker { id, rect, paper, title, body, image, text_size, edited, due, reminded, locked, fixed, font, style, pin, link, popped, snoozed } = l;
+        Sticker {
+            id: *id,
+            rect: field(base.map(|b| &b.rect), rect, &r.rect, later),
+            paper: field(base.map(|b| &b.paper), paper, &r.paper, later),
+            title: merge_title(base.map(|b| b.title.as_str()), title, &r.title, later),
+            body: merge_text(base.map(|b| b.body.as_str()), body, &r.body, later),
+            image: field(base.map(|b| &b.image), image, &r.image, later),
+            text_size: field(base.map(|b| &b.text_size), text_size, &r.text_size, later),
+            edited: (*edited).max(r.edited),
+            due: field(base.map(|b| &b.due), due, &r.due, later),
+            reminded: field(base.map(|b| &b.reminded), reminded, &r.reminded, later),
+            locked: field(base.map(|b| &b.locked), locked, &r.locked, later),
+            fixed: field(base.map(|b| &b.fixed), fixed, &r.fixed, later),
+            font: field(base.map(|b| &b.font), font, &r.font, later),
+            style: field(base.map(|b| &b.style), style, &r.style, later),
+            pin: field(base.map(|b| &b.pin), pin, &r.pin, later),
+            link: field(base.map(|b| &b.link), link, &r.link, later),
+            popped: *popped,
+            snoozed: (*snoozed).max(r.snoozed),
+        }
+    }
+}
+
+/// Text on the sheet: its words merged as a note's are; the rest as each
+/// side changed it, this computer's where both did.
+impl Piece for Label {
+    fn id(&self) -> Id {
+        self.id
+    }
+    fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
+        let Label { id, at, text, ink, font, size, width, italic } = l;
+        Label {
+            id: *id,
+            at: field(base.map(|b| &b.at), at, &r.at, false),
+            text: merge_text(base.map(|b| b.text.as_str()), text, &r.text, false),
+            ink: field(base.map(|b| &b.ink), ink, &r.ink, false),
+            font: field(base.map(|b| &b.font), font, &r.font, false),
+            size: field(base.map(|b| &b.size), size, &r.size, false),
+            width: field(base.map(|b| &b.width), width, &r.width, false),
+            italic: field(base.map(|b| &b.italic), italic, &r.italic, false),
+        }
+    }
+}
+
+/// One field changed on both sides: the side that changed it, or the
+/// later edit (`later`: Drive's) where both did.
+fn field<T: PartialEq + Clone>(base: Option<&T>, l: &T, r: &T, later: bool) -> T {
+    match base {
+        _ if l == r => l.clone(),
+        Some(b) if b == l => r.clone(),
+        Some(b) if b == r => l.clone(),
+        _ if later => r.clone(),
+        _ => l.clone(),
+    }
 }
 
 macro_rules! plain_piece {
@@ -86,7 +159,7 @@ macro_rules! plain_piece {
         }
     )*};
 }
-plain_piece!(Stroke, Label, Link, Frame, Binned);
+plain_piece!(Stroke, Link, Frame, Binned);
 
 /// Three-way merge of one list. This computer's order comes first, then
 /// what only Drive has, in Drive's order.
@@ -155,12 +228,192 @@ fn pick<T: Piece>(base: Option<&T>, l: &T, r: &T, rep: &mut Report) -> T {
             rep.from_here += 1;
             l.clone()
         }
-        _ if r.newer(l) => take_remote(&mut rep.clashes),
+        // Changed on both: merged.
         _ => {
             rep.clashes += 1;
-            l.clone()
+            let mut x = T::join(base, l, r);
+            x.keep_local(l);
+            x
         }
     }
+}
+
+// ---------- Text changed on both sides ----------
+
+/// A note's text changed on both sides since `base` (None: never synced,
+/// so what both have in common stands in for it). Each side's changes are
+/// kept: whole lines changed on one side only; inside lines both changed,
+/// the words each changed; and where both changed the same words, both
+/// versions, the later one (`later`: Drive's) first. Nothing typed on
+/// either side is lost.
+pub fn merge_text(base: Option<&str>, ours: &str, theirs: &str, later: bool) -> String {
+    if ours == theirs {
+        return ours.to_string();
+    }
+    let common;
+    let base = match base {
+        Some(b) => b,
+        None => {
+            common = shared(ours, theirs);
+            &common
+        }
+    };
+    if base == ours {
+        return theirs.to_string();
+    }
+    if base == theirs {
+        return ours.to_string();
+    }
+    let (b, o, t) = (lines(base), lines(ours), lines(theirs));
+    let merged = join_tokens(&b, &o, &t, &mut |b, o, t, out| {
+        // Lines changed on both sides: as many on each, line by line;
+        // else all together. Word by word, unless the same words changed.
+        let pairs: Vec<(String, String, String)> = if b.len() == o.len() && o.len() == t.len() {
+            (0..b.len()).map(|i| (b[i].clone(), o[i].clone(), t[i].clone())).collect()
+        } else {
+            vec![(b.concat(), o.concat(), t.concat())]
+        };
+        for (b, o, t) in pairs {
+            if o == b || o == t {
+                out.push_str(&t);
+            } else if t == b {
+                out.push_str(&o);
+            } else if let Some(m) = merge_words(&b, &o, &t) {
+                out.push_str(&m);
+            } else {
+                let (first, second) = if later { (t, o) } else { (o, t) };
+                out.push_str(&first);
+                out.push_str(&second);
+            }
+        }
+    });
+    // Each line was taken with its line break; the text keeps its own end.
+    match merged.strip_suffix('\n') {
+        Some(m) if !ours.ends_with('\n') && !theirs.ends_with('\n') => m.to_string(),
+        _ => merged,
+    }
+}
+
+/// A text's lines, each with its line break (the last given one too).
+fn lines(s: &str) -> Vec<String> {
+    s.split_inclusive('\n').map(|l| if l.ends_with('\n') { l.to_string() } else { format!("{l}\n") }).collect()
+}
+
+/// A title changed on both sides: word by word, else the later one (a
+/// title is a name; two names don't make one).
+fn merge_title(base: Option<&str>, ours: &str, theirs: &str, later: bool) -> String {
+    let common;
+    let base = match base {
+        Some(b) => b,
+        None => {
+            common = String::new();
+            &common
+        }
+    };
+    match merge_words(base, ours, theirs) {
+        Some(m) if !base.is_empty() => m,
+        _ => field(Some(&base.to_string()), &ours.to_string(), &theirs.to_string(), later),
+    }
+}
+
+/// Words and the spaces between them, as tokens.
+fn words(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in s.chars() {
+        match out.last_mut() {
+            Some(w) if w.chars().last().is_some_and(|p| p.is_whitespace() == c.is_whitespace()) => w.push(c),
+            _ => out.push(c.to_string()),
+        }
+    }
+    out
+}
+
+/// A three-way merge word by word; None where both sides changed the same
+/// words differently.
+fn merge_words(base: &str, ours: &str, theirs: &str) -> Option<String> {
+    let mut clean = true;
+    let out = join_tokens(&words(base), &words(ours), &words(theirs), &mut |_, _, _, _| clean = false);
+    clean.then_some(out)
+}
+
+/// The lines two texts share, in order: a stand-in base for two that
+/// never synced.
+fn shared(a: &str, b: &str) -> String {
+    let (a, b) = (lines(a), lines(b));
+    common(&a, &b).into_iter().map(|(i, _)| a[i].as_str()).collect()
+}
+
+/// Three-way merge of token lists: stretches only one side changed take
+/// that side; stretches both changed alike take it once; stretches both
+/// changed differently go to `clash` (base, ours, theirs).
+fn join_tokens(base: &[String], ours: &[String], theirs: &[String], clash: &mut dyn FnMut(&[String], &[String], &[String], &mut String)) -> String {
+    let mut to_ours = vec![None; base.len()];
+    for (b, o) in common(base, ours) {
+        to_ours[b] = Some(o);
+    }
+    let mut to_theirs = vec![None; base.len()];
+    for (b, t) in common(base, theirs) {
+        to_theirs[b] = Some(t);
+    }
+    let mut out = String::new();
+    let (mut b, mut o, mut t) = (0, 0, 0);
+    let mut settle = |out: &mut String, b_end: usize, o_end: usize, t_end: usize, b: usize, o: usize, t: usize| {
+        let (bs, os, ts) = (&base[b..b_end], &ours[o..o_end], &theirs[t..t_end]);
+        if os == bs {
+            out.extend(ts.iter().map(String::as_str));
+        } else if ts == bs || os == ts {
+            out.extend(os.iter().map(String::as_str));
+        } else {
+            clash(bs, os, ts, out);
+        }
+    };
+    for i in 0..base.len() {
+        // A token all three still share: what's before it is settled.
+        if let (Some(oi), Some(ti)) = (to_ours[i], to_theirs[i]) {
+            if oi >= o && ti >= t {
+                settle(&mut out, i, oi, ti, b, o, t);
+                out.push_str(&base[i]);
+                (b, o, t) = (i + 1, oi + 1, ti + 1);
+            }
+        }
+    }
+    settle(&mut out, base.len(), ours.len(), theirs.len(), b, o, t);
+    out
+}
+
+/// Where `a` and `b` match, in order: pairs of indices of a longest
+/// common run of tokens (ends that match taken first, so small edits to
+/// long texts stay quick).
+fn common(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
+    let pre = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let suf = a[pre..].iter().rev().zip(b[pre..].iter().rev()).take_while(|(x, y)| x == y).count();
+    let (am, bm) = (&a[pre..a.len() - suf], &b[pre..b.len() - suf]);
+    let mut out: Vec<(usize, usize)> = (0..pre).map(|i| (i, i)).collect();
+    let (n, m) = (am.len(), bm.len());
+    // Too long to compare token by token: the middle counts as all changed.
+    if n * m <= 4_000_000 {
+        let w = m + 1;
+        let mut len = vec![0u32; (n + 1) * w];
+        for i in (0..n).rev() {
+            for j in (0..m).rev() {
+                len[i * w + j] = if am[i] == bm[j] { len[(i + 1) * w + j + 1] + 1 } else { len[(i + 1) * w + j].max(len[i * w + j + 1]) };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < n && j < m {
+            if am[i] == bm[j] {
+                out.push((pre + i, pre + j));
+                i += 1;
+                j += 1;
+            } else if len[(i + 1) * w + j] >= len[i * w + j + 1] {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+    }
+    out.extend((0..suf).map(|k| (a.len() - suf + k, b.len() - suf + k)));
+    out
 }
 
 /// A sheet without its contents and what belongs to one computer: what
@@ -443,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn the_newer_edit_wins_a_clash() {
+    fn a_title_both_renamed_takes_the_newer_name() {
         let base = base();
         let mut here = base.clone();
         here.categories[0].stickers[0].title = "Mine".into();
@@ -454,6 +707,88 @@ mod tests {
         let (m, rep) = merge(Some(&base), &here, &there);
         assert_eq!(titles(&m, 0)[0], "Theirs");
         assert_eq!(rep.clashes, 1);
+        // Words added at either end of a title both stay.
+        here.categories[0].stickers[0].title = "Plan v2".into();
+        there.categories[0].stickers[0].title = "Big Plan".into();
+        let (m, _) = merge(Some(&base), &here, &there);
+        assert_eq!(titles(&m, 0)[0], "Big Plan v2");
+    }
+
+    /// The first note's body, written on the base, here and in Drive.
+    fn bodies(base_body: &str, here_body: &str, there_body: &str) -> String {
+        let mut base = base();
+        base.categories[0].stickers[0].body = base_body.into();
+        let mut here = base.clone();
+        here.categories[0].stickers[0].body = here_body.into();
+        here.categories[0].stickers[0].edited = 50;
+        let mut there = base.clone();
+        there.categories[0].stickers[0].body = there_body.into();
+        there.categories[0].stickers[0].edited = 60;
+        let (m, _) = merge(Some(&base), &here, &there);
+        m.categories[0].stickers[0].body.clone()
+    }
+
+    #[test]
+    fn a_note_edited_on_two_computers_keeps_both_edits() {
+        // Different lines.
+        assert_eq!(bodies("one\ntwo\nthree", "ONE\ntwo\nthree", "one\ntwo\nthree\nfour"), "ONE\ntwo\nthree\nfour");
+        // The same line, different words.
+        assert_eq!(bodies("Buy milk and bread", "Buy oat milk and bread", "Buy milk and fresh bread"), "Buy oat milk and fresh bread");
+        // Tasks ticked on one side, added on the other.
+        assert_eq!(bodies("- [ ] a\n- [ ] b", "- [x] a\n- [ ] b", "- [ ] a\n- [ ] b\n- [ ] c"), "- [x] a\n- [ ] b\n- [ ] c");
+        // Both deleted the same line: gone once.
+        assert_eq!(bodies("a\nb\nc", "a\nc", "a\nc"), "a\nc");
+    }
+
+    #[test]
+    fn the_same_words_changed_both_ways_keep_both_versions() {
+        let m = bodies("Meet at 10", "Meet at 11", "Meet at noon");
+        assert_eq!(m, "Meet at noon\nMeet at 11", "Drive's, the later, first");
+        // Lines around a clash still merge.
+        let m = bodies("top\nMeet at 10\nend", "TOP\nMeet at 11\nend", "top\nMeet at noon\nend!");
+        assert_eq!(m, "TOP\nMeet at noon\nMeet at 11\nend!");
+    }
+
+    #[test]
+    fn other_changes_to_a_note_both_land() {
+        let base = base();
+        let mut here = base.clone();
+        here.categories[0].stickers[0].rect.x = 300.;
+        here.categories[0].stickers[0].body = "here".into();
+        here.categories[0].stickers[0].edited = 50;
+        let mut there = base.clone();
+        there.categories[0].stickers[0].paper = Paper::Sage;
+        there.categories[0].stickers[0].locked = true;
+        there.categories[0].stickers[0].edited = 60;
+        let (m, _) = merge(Some(&base), &here, &there);
+        let s = &m.categories[0].stickers[0];
+        assert_eq!((s.rect.x, s.paper, s.locked, s.body.as_str(), s.edited), (300., Paper::Sage, true, "here", 60));
+    }
+
+    #[test]
+    fn text_on_the_sheet_merges_too() {
+        let mut base = base();
+        let id = base.fresh_id();
+        let mut l = Label::new(id, v2(0., 0.), Ink::Graphite);
+        l.text = "Ideas for the week".into();
+        base.categories[0].labels.push(l);
+        let mut here = base.clone();
+        here.categories[0].labels[0].text = "Big ideas for the week".into();
+        let mut there = base.clone();
+        there.categories[0].labels[0].text = "Ideas for the weekend".into();
+        there.categories[0].labels[0].ink = Ink::Coral;
+        let (m, _) = merge(Some(&base), &here, &there);
+        let l = &m.categories[0].labels[0];
+        assert_eq!((l.text.as_str(), l.ink), ("Big ideas for the weekend", Ink::Coral));
+    }
+
+    #[test]
+    fn text_from_two_computers_that_never_synced_keeps_both_once() {
+        // One added a line: what they share stands in for the base.
+        assert_eq!(merge_text(None, "a\nb", "a\nb\nc", true), "a\nb\nc");
+        // Both wrote something different: both, the later first.
+        assert_eq!(merge_text(None, "mine", "theirs", true), "theirs\nmine");
+        assert_eq!(merge_text(None, "mine", "theirs", false), "mine\ntheirs");
     }
 
     #[test]
@@ -513,13 +848,16 @@ mod tests {
         there.categories[0].stickers[0].body = "edited in Drive".into();
         there.categories[0].stickers[0].edited = t;
 
+        let original = here.categories[0].stickers[0].body.clone();
         let (m, rep) = merge(None, &here, &there);
         assert_eq!(rep.clashes, 1, "only the note that really differs: {rep:?}");
         let names: Vec<&str> = m.categories.iter().map(|c| c.name.as_str()).collect();
         let demo_sheets = demo::board().categories.len();
         assert_eq!(m.categories.len(), demo_sheets + 2, "{names:?}");
         assert!(names.contains(&"Only here") && names.contains(&"Only in Drive"));
-        assert_eq!(m.categories[0].stickers[0].body, "edited in Drive");
+        // Never synced: no telling which came first, so both stay, Drive's
+        // (the later) first.
+        assert_eq!(m.categories[0].stickers[0].body, format!("edited in Drive\n{original}"));
         assert_eq!(m.categories.iter().filter(|c| c.inbox).count(), demo::board().categories.iter().filter(|c| c.inbox).count());
     }
 

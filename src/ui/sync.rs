@@ -107,7 +107,7 @@ pub fn describe(r: &Report) -> String {
         parts.push(format!("{} from here", r.from_here));
     }
     if r.clashes > 0 {
-        parts.push(format!("{} edited in both, newest kept", r.clashes));
+        parts.push(format!("{} edited in both, merged", r.clashes));
     }
     if parts.is_empty() {
         "nothing to change".into()
