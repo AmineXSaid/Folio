@@ -742,6 +742,15 @@ pub fn link_names(text: &str, resolve: &dyn Fn(&str) -> Option<LinkTo>) -> Strin
     out
 }
 
+/// A note's title and text with links rewritten after a rename.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Relink {
+    pub sheet: usize,
+    pub note: Id,
+    pub title: String,
+    pub body: String,
+}
+
 /// One task (a `- [ ]` line) in a note, for the list of every task.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskRef {
@@ -1712,15 +1721,98 @@ impl Board {
     /// What `[[name]]` leads to, by name (any case): a note called that on
     /// sheet `here` first, then on any sheet, then a sheet called that.
     pub fn resolve(&self, name: &str, here: Option<usize>) -> Option<LinkTo> {
+        self.resolve_by(name, here, None)
+    }
+
+    /// As `resolve`, with `was` still called by its old name, if given:
+    /// what a link meant before a rename.
+    fn resolve_by(&self, name: &str, here: Option<usize>, was: Option<(LinkTo, &str)>) -> Option<LinkTo> {
         let want = name.trim().to_lowercase();
-        let named = |s: &Sticker| s.name().to_lowercase() == want;
+        let old = |to: LinkTo| was.filter(|w| w.0 == to).map(|w| w.1.trim().to_lowercase());
+        let named = |s: &Sticker| old(LinkTo::Note(s.id)).unwrap_or_else(|| s.name().to_lowercase()) == want;
         if let Some(s) = here.and_then(|h| self.categories.get(h)).and_then(|c| c.stickers.iter().find(|s| named(s))) {
             return Some(LinkTo::Note(s.id));
         }
         if let Some(s) = self.categories.iter().flat_map(|c| &c.stickers).find(|s| named(s)) {
             return Some(LinkTo::Note(s.id));
         }
-        self.categories.iter().find(|c| c.name.trim().to_lowercase() == want).map(|c| LinkTo::Sheet(c.id))
+        self.categories
+            .iter()
+            .find(|c| old(LinkTo::Sheet(c.id)).unwrap_or_else(|| c.name.trim().to_lowercase()) == want)
+            .map(|c| LinkTo::Sheet(c.id))
+    }
+
+    /// A note's or a sheet's name now.
+    pub fn name_of(&self, to: LinkTo) -> Option<String> {
+        match to {
+            LinkTo::Note(id) => self.find_note(id).map(Sticker::name),
+            LinkTo::Sheet(id) => self.categories.iter().find(|c| c.id == id).map(|c| c.name.trim().to_string()),
+        }
+    }
+
+    /// The notes to rewrite now that `was` (a note or a sheet) is no
+    /// longer called `old`: each `[[old]]` that meant it says its new
+    /// name. Links that meant something else by that name stay.
+    pub fn relinked(&self, was: LinkTo, old: &str) -> Vec<Relink> {
+        let old = old.trim();
+        let Some(new) = self.name_of(was) else { return Vec::new() };
+        // Unnamed now, the same name in another case, or a name a link
+        // can't hold: nothing to rewrite.
+        if old.is_empty() || new.is_empty() || new.to_lowercase() == old.to_lowercase() || new.contains(['[', ']']) {
+            return Vec::new();
+        }
+        let old_l = old.to_lowercase();
+        let mut out = Vec::new();
+        for (ix, c) in self.categories.iter().enumerate() {
+            for s in &c.stickers {
+                let fix = |text: &str| {
+                    let mut changed = false;
+                    let mut out = String::with_capacity(text.len());
+                    let mut at = 0;
+                    for (range, name) in wiki_links(text) {
+                        if name.to_lowercase() == old_l && self.resolve_by(name, Some(ix), Some((was, old))) == Some(was) {
+                            out.push_str(&text[at..range.start]);
+                            out.push_str(&format!("[[{new}]]"));
+                            at = range.end;
+                            changed = true;
+                        }
+                    }
+                    changed.then(|| out + &text[at..])
+                };
+                let (title, body) = (fix(&s.title), fix(&s.body));
+                if title.is_some() || body.is_some() {
+                    out.push(Relink { sheet: ix, note: s.id, title: title.unwrap_or_else(|| s.title.clone()), body: body.unwrap_or_else(|| s.body.clone()) });
+                }
+            }
+        }
+        out
+    }
+
+    /// Writes rewritten links into their notes, edited `now`.
+    pub fn apply_relinks(&mut self, relinks: Vec<Relink>, now: u64) {
+        for r in relinks {
+            if let Some(s) = self.categories.get_mut(r.sheet).and_then(|c| c.sticker_mut(r.note)) {
+                s.title = r.title;
+                s.body = r.body;
+                s.edited = now;
+            }
+        }
+    }
+
+    /// After renames: for each of `was` with the name it had, the links
+    /// that meant it follow it to its new name.
+    pub fn relink(&mut self, was: &[(LinkTo, String)], now: u64) {
+        for (to, old) in was {
+            let r = self.relinked(*to, old);
+            self.apply_relinks(r, now);
+        }
+    }
+
+    /// Renames sheet `id`; links to it follow.
+    pub fn rename_sheet(&mut self, id: Id, name: String, now: u64) {
+        let Some(c) = self.categories.iter_mut().find(|c| c.id == id) else { return };
+        let old = std::mem::replace(&mut c.name, name);
+        self.relink(&[(LinkTo::Sheet(id), old)], now);
     }
 
     /// For each note something links to, the notes linking to it, in
@@ -2340,6 +2432,47 @@ mod tests {
         let back = b.backlinks();
         assert_eq!((back[&1].clone(), back[&2].clone()), (vec![3], vec![3]));
         assert!(!back.contains_key(&3));
+    }
+
+    #[test]
+    fn links_follow_a_rename() {
+        let mut b = Board::empty();
+        b.add_sheet("Trips");
+        let mut plan = sticker(1, 0., 0.);
+        plan.title = "Plan".into();
+        b.categories[1].stickers.push(plan);
+        // Another "Plan" on the first sheet: links there meant that one.
+        let mut other = sticker(2, 0., 0.);
+        other.title = "Plan".into();
+        b.categories[0].stickers.push(other);
+        let mut a = sticker(3, 0., 0.);
+        a.body = "See [[plan]] and [[Trips]]".into();
+        b.categories[1].stickers.push(a);
+        let mut c = sticker(4, 0., 0.);
+        c.title = "About [[Plan]]".into();
+        c.body = "[[Plan]] here".into();
+        b.categories[0].stickers.push(c);
+
+        b.find_note_mut(1).unwrap().title = "Big plan".into();
+        b.relink(&[(LinkTo::Note(1), "Plan".into())], 99);
+        assert_eq!(b.find_note(3).unwrap().body, "See [[Big plan]] and [[Trips]]");
+        assert_eq!(b.find_note(3).unwrap().edited, 99);
+        // On the first sheet "Plan" meant its own Plan: left alone.
+        assert_eq!((b.find_note(4).unwrap().title.as_str(), b.find_note(4).unwrap().body.as_str()), ("About [[Plan]]", "[[Plan]] here"));
+
+        // A note named by its first line, renamed by typing.
+        b.find_note_mut(2).unwrap().title = String::new();
+        b.find_note_mut(2).unwrap().body = "Plan".into();
+        b.find_note_mut(2).unwrap().body = "Plan for June".into();
+        b.relink(&[(LinkTo::Note(2), "Plan".into())], 100);
+        assert_eq!(b.find_note(4).unwrap().body, "[[Plan for June]] here");
+
+        // A sheet.
+        let trips = b.categories[1].id;
+        b.rename_sheet(trips, "Travel".into(), 101);
+        assert_eq!(b.find_note(3).unwrap().body, "See [[Big plan]] and [[Travel]]");
+        // Only the case changed: nothing to do.
+        assert!(b.relinked(LinkTo::Sheet(trips), "travel").is_empty());
     }
 
     #[test]

@@ -1314,7 +1314,8 @@ impl Folio {
         }
         let name = self.name_input.read(cx).value().trim().to_string();
         if keep && !name.is_empty() && name != self.sheet().name {
-            self.change(cx, |b| b.sheet_mut().name = name);
+            let (id, t) = (self.sheet().id, now());
+            self.change(cx, |b| b.rename_sheet(id, name, t));
         }
         cx.notify();
     }
@@ -1349,11 +1350,8 @@ impl Folio {
             }
             Dialog::RenameSheet(id) => {
                 if !name.is_empty() {
-                    self.change(cx, |b| {
-                        if let Some(c) = b.categories.iter_mut().find(|c| c.id == id) {
-                            c.name = name;
-                        }
-                    });
+                    let t = now();
+                    self.change(cx, |b| b.rename_sheet(id, name, t));
                 }
             }
             Dialog::RenameFrame(id) => {
@@ -1538,9 +1536,11 @@ impl Folio {
         self.edit_papers = false;
         let title = self.title_input.read(cx).value().trim().to_string();
         let body = self.body_input.read(cx).value().trim_end().to_string();
-        let before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
+        let mut before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
         let t = now();
         let empty = title.is_empty() && body.trim().is_empty();
+        // Its name when the edit began: links to it follow a rename.
+        let old = before.note(ed.id).map(Sticker::name);
         if let Some(ix) = self.board.sheet_of(ed.id) {
             let sheet = &mut self.board.categories[ix];
             let keep = sheet.sticker(ed.id).is_some_and(|s| s.image.is_some() || s.link.is_some());
@@ -1554,6 +1554,13 @@ impl Folio {
                     s.edited = t;
                 }
             }
+        }
+        if let Some(old) = old {
+            let relinks = self.board.relinked(LinkTo::Note(ed.id), &old);
+            for r in &relinks {
+                before.keep(&self.board, r.sheet);
+            }
+            self.board.apply_relinks(relinks, t);
         }
         self.commit_since(before, cx);
         cx.notify();
@@ -1576,12 +1583,21 @@ impl Folio {
             cx.notify();
             return;
         }
+        let old = self.board.find_note(id).map(Sticker::name);
         self.change(cx, |b| {
             if let Some(s) = b.find_note_mut(id) {
                 f(s);
                 s.edited = t;
             }
+            if let Some(old) = old {
+                b.relink(&[(LinkTo::Note(id), old)], t);
+            }
         });
+    }
+
+    /// The names of notes `ids` now, for links to follow if they change.
+    fn names(&self, ids: &[Id]) -> Vec<(LinkTo, String)> {
+        ids.iter().filter_map(|id| self.board.find_note(*id).map(|s| (LinkTo::Note(*id), s.name()))).collect()
     }
 
     pub fn toggle_task(&mut self, id: Id, n: usize, cx: &mut Context<Self>) {
@@ -1673,6 +1689,7 @@ impl Folio {
     pub fn markdown_notes(&mut self, ids: &[Id], cx: &mut Context<Self>) {
         let t = now();
         let mut changed = 0;
+        let names = self.names(ids);
         self.change(cx, |b| {
             for id in ids {
                 let Some(s) = b.find_note_mut(*id) else { continue };
@@ -1686,6 +1703,7 @@ impl Folio {
                     changed += 1;
                 }
             }
+            b.relink(&names, t);
         });
         let msg = match changed {
             0 => "Nothing to change: already Markdown".to_string(),
@@ -1748,6 +1766,7 @@ impl Folio {
         }
         self.finish_edit(cx);
         let t = now();
+        let names = self.names(ids);
         self.change(cx, |b| {
             for &id in ids {
                 if let Some(s) = b.find_note_mut(id) {
@@ -1755,6 +1774,7 @@ impl Folio {
                     s.edited = t;
                 }
             }
+            b.relink(&names, t);
         });
     }
 

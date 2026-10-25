@@ -435,6 +435,11 @@ impl Before {
         Before { sheets: board.categories.get(board.active).cloned().into_iter().collect(), active: board.active, next_id: board.next_id }
     }
 
+    /// Note `id` as it was, if its sheet was kept.
+    pub fn note(&self, id: Id) -> Option<&Sticker> {
+        self.sheets.iter().find_map(|c| c.sticker(id))
+    }
+
     /// Keeps sheet `ix` as it is now too; call it before changing that sheet.
     pub fn keep(&mut self, board: &Board, ix: usize) {
         if let Some(c) = board.categories.get(ix) {
