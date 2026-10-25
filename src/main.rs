@@ -119,6 +119,9 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-tab", PaletteBackTab, Some("Palette > Input")),
         KeyBinding::new("escape", Dismiss, Some("Palette > Input")),
         KeyBinding::new("escape", Dismiss, Some("QuickNote > Input")),
+        // The quick note's sheet, along the row and back.
+        KeyBinding::new("alt-right", QuickSheetNext, Some("QuickNote > Input")),
+        KeyBinding::new("alt-left", QuickSheetPrev, Some("QuickNote > Input")),
         KeyBinding::new("escape", Dismiss, Some("QuickNote")),
     ]);
 }

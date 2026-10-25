@@ -1373,6 +1373,8 @@ pub struct Settings {
     pub quick_hotkey: bool,
     /// That shortcut, as it's written: "Ctrl+Alt+N".
     pub quick_keys: String,
+    /// Where quick notes go, the sheet picked last; None is the Inbox.
+    pub quick_sheet: Option<Id>,
     pub default_paper: Paper,
     pub default_font: NoteFont,
     pub default_style: NoteStyle,
@@ -1398,6 +1400,7 @@ impl Default for Settings {
             start_with_windows: false,
             quick_hotkey: true,
             quick_keys: QUICK_KEYS.into(),
+            quick_sheet: None,
             default_paper: Paper::Butter,
             default_font: NoteFont::Sans,
             default_style: NoteStyle::Card,
@@ -1616,7 +1619,14 @@ impl Board {
     }
 
     /// A quick note into the Inbox: the first line is its title.
+    #[cfg(test)]
     pub fn quick_note(&mut self, text: &str, now: u64) -> Id {
+        self.quick_note_to(text, None, now)
+    }
+
+    /// A quick note onto sheet `to` (by id), or the Inbox when that's None
+    /// or gone; the first line is its title. Where it went, and its id.
+    pub fn quick_note_to(&mut self, text: &str, to: Option<Id>, now: u64) -> Id {
         let text = text.trim();
         let (title, body) = match text.split_once('\n') {
             Some((t, b)) if t.chars().count() <= 60 => (t.trim().to_string(), b.trim().to_string()),
@@ -1626,7 +1636,10 @@ impl Board {
         let paper = self.settings.default_paper;
         let font = self.settings.default_font;
         let id = self.fresh_id();
-        let ix = self.inbox();
+        let ix = match to.and_then(|to| self.categories.iter().position(|c| c.id == to)) {
+            Some(ix) => ix,
+            None => self.inbox(),
+        };
         let sheet = &mut self.categories[ix];
         let at = sheet.free_spot(240.);
         sheet.stickers.push(Sticker {
@@ -2137,6 +2150,12 @@ mod tests {
         let a = b.find_note(id).unwrap().rect;
         let c = b.find_note(id2).unwrap().rect;
         assert!(!a.intersects(&c), "quick notes don't pile up");
+        // Onto a sheet of your choosing; one that's gone means the Inbox.
+        let other = b.categories[1].id;
+        let id3 = b.quick_note_to("for the other sheet", Some(other), 102);
+        assert_eq!(b.sheet_of(id3), Some(1));
+        let id4 = b.quick_note_to("nowhere", Some(9_999), 103);
+        assert!(b.categories[b.sheet_of(id4).unwrap()].inbox);
     }
 
     #[test]

@@ -597,7 +597,7 @@ impl Folio {
                     self.title_input.update(cx, |i, cx| i.set_value(title, window, cx));
                     self.body_input.update(cx, |i, cx| i.set_value(body, window, cx));
                 } else {
-                    self.quick_note(&text, cx);
+                    self.quick_note(&text, None, cx);
                 }
             }
             Target::SheetOf(name) => {

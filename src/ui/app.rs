@@ -2456,16 +2456,17 @@ impl Folio {
 
     // ---------- Quick notes ----------
 
-    /// A note from the quick-note window, into the Inbox.
-    pub fn quick_note(&mut self, text: &str, cx: &mut Context<Self>) {
+    /// A note from the quick-note window (or the palette), onto sheet `to`
+    /// or the Inbox. The window's choice is remembered for next time.
+    pub fn quick_note(&mut self, text: &str, to: Option<Id>, cx: &mut Context<Self>) {
         if text.trim().is_empty() {
             return;
         }
         let t = now();
-        self.change(cx, |b| {
-            b.quick_note(text, t);
-        });
-        self.notify("Saved to Inbox", cx);
+        let mut id = 0;
+        self.change(cx, |b| id = b.quick_note_to(text, to, t));
+        let name = self.board.sheet_of(id).map(|ix| self.board.categories[ix].name.clone()).unwrap_or_default();
+        self.notify(format!("Saved to {name}"), cx);
     }
 }
 

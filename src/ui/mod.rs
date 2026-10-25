@@ -39,6 +39,8 @@ gpui::actions!(
         NewSheet,
         NewNote,
         QuickNote,
+        QuickSheetNext,
+        QuickSheetPrev,
         NextSheet,
         PrevSheet,
         GoHome,

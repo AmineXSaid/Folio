@@ -29,7 +29,7 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
   crosses, isometric or plain, on one of six paper colours, or a picture
   or SVG of your own behind it.
 - **Everywhere:** Ctrl+K for commands, sheets and notes; Ctrl+Alt+N (or keys
-  of your own, set in Settings) from any app for a quick note into your Inbox; notes pinned to the desktop
+  of your own, set in Settings) from any app for a quick note into your Inbox or any sheet; notes pinned to the desktop
   above other windows; a tray icon and starting with Windows.
 - **Safe:** undo, a Trash that keeps things 30 days, an Archive, and a
   backup every day (the last 14 kept) you can restore from.
