@@ -326,6 +326,8 @@ pub enum MenuPage {
     Background,
     /// What a note is pinned up with.
     Pin,
+    /// The notes that link to this one.
+    Backlinks,
 }
 
 /// Notes (and text on the sheet) copied or cut in Folio, as they were:
@@ -451,6 +453,10 @@ pub struct Folio {
     pub palette_opened: usize,
     /// Commands and sheets run from the search lately, newest first.
     pub palette_recent: Vec<SharedString>,
+    /// Picking a note in the search links note `link_from` to it.
+    pub link_from: Option<Id>,
+    /// Which notes link to which, worked out once per change (`edits`).
+    backlinks: RefCell<(u64, Rc<HashMap<Id, Vec<Id>>>)>,
     pub palette_scroll: gpui::ScrollHandle,
     /// The selection moved by key: scroll it into view next frame.
     pub palette_reveal: bool,
@@ -672,6 +678,8 @@ impl Folio {
             palette_ix: 0,
             palette_opened: 0,
             palette_recent: Vec::new(),
+            link_from: None,
+            backlinks: RefCell::new((u64::MAX, Rc::default())),
             palette_scroll: gpui::ScrollHandle::new(),
             palette_reveal: false,
             emoji_tab: 0,
@@ -1167,6 +1175,62 @@ impl Folio {
 
     pub fn open_settings(&mut self, cx: &mut Context<Self>) {
         self.open_side(Screen::Settings, cx);
+    }
+
+    /// For each note, the notes that link to it (`[[its name]]`), as of the
+    /// last change.
+    pub fn backlinks(&self) -> Rc<HashMap<Id, Vec<Id>>> {
+        let mut cache = self.backlinks.borrow_mut();
+        if cache.0 != self.edits {
+            *cache = (self.edits, Rc::new(self.board.backlinks()));
+        }
+        cache.1.clone()
+    }
+
+    /// A `folio:` link clicked in a note: to its note (framed and
+    /// selected, on its sheet) or its sheet.
+    pub fn follow_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(url) = super::LINK.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+        match LinkTo::parse(&url) {
+            Some(LinkTo::Note(id)) if self.board.find_note(id).is_some() => self.reveal_note(id, window, cx),
+            Some(LinkTo::Sheet(id)) => {
+                if let Some(ix) = self.board.categories.iter().position(|c| c.id == id) {
+                    self.open_sheet(ix, window, cx);
+                }
+            }
+            _ => self.notify("That note isn't there any more", cx),
+        }
+    }
+
+    /// Note `id`'s link to another: the search opens on notes, and the one
+    /// picked is linked from it.
+    pub fn start_link(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.open_palette_with("@", window, cx);
+        self.link_from = Some(id);
+        self.notify("Pick the note to link to", cx);
+    }
+
+    /// Writes `[[to's name]]` at the end of note `from`, on a line of its
+    /// own, or after the links already on its last line.
+    pub fn link_notes(&mut self, from: Id, to: Id, cx: &mut Context<Self>) {
+        let Some(name) = self.board.find_note(to).map(|s| s.name()).filter(|n| !n.is_empty()) else {
+            self.notify("That note has no name to link by: give it a title", cx);
+            return;
+        };
+        if from == to {
+            return;
+        }
+        let link = format!("[[{name}]]");
+        self.change_note(from, cx, |s| {
+            let body = s.body.trim_end();
+            s.body = match body.lines().last().map(str::trim) {
+                Some(last) if last.starts_with("[[") && last.ends_with("]]") => format!("{body} · {link}"),
+                Some(_) => format!("{body}\n\n{link}"),
+                None => link,
+            };
+        });
+        self.notify(format!("Linked to “{name}”"), cx);
     }
 
     /// Every task on every sheet.
@@ -2588,6 +2652,7 @@ impl Render for Folio {
                 this.open_palette_with("@", window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(cx)))
+            .on_action(cx.listener(|this, _: &FollowLink, window, cx| this.follow_link(window, cx)))
             .on_action(cx.listener(|_, _: &QuickNote, _, cx| {
                 // Opened once this update is over: it reads Folio.
                 let f = cx.entity();

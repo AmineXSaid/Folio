@@ -5,6 +5,8 @@
 //! Coordinates are world units on an unbounded sheet. A sheet's camera maps
 //! them to the screen: `screen = world * zoom + pan`.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 pub type Id = u64;
@@ -578,6 +580,18 @@ impl Sticker {
         }
         t
     }
+    /// What it's called: its title, or else its first line as it reads
+    /// (no list marks, headings or emphasis). `[[...]]` links find it by this.
+    pub fn name(&self) -> String {
+        if !self.title.trim().is_empty() {
+            return self.title.trim().to_string();
+        }
+        let line = self.body.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+        let line = line.trim_start_matches(['#', '>', ' ']);
+        let line = ["- [ ] ", "- [x] ", "- [X] ", "- ", "* ", "+ "].iter().find_map(|p| line.strip_prefix(p)).unwrap_or(line);
+        line.replace("**", "").replace("__", "").replace('`', "").trim().to_string()
+    }
+
     pub fn text(&self) -> String {
         let mut s = self.title.clone();
         if !self.body.is_empty() {
@@ -661,6 +675,71 @@ pub fn task_line(line: &str) -> Option<(bool, &str)> {
 /// Done and total tasks in a note.
 pub fn task_progress(body: &str) -> (usize, usize) {
     body.lines().filter_map(task_line).fold((0, 0), |(d, n), (done, _)| (d + done as usize, n + 1))
+}
+
+/// The `[[...]]` links in `text`: where each sits (a byte range, the
+/// brackets included) and the name inside, trimmed. Names stay on one
+/// line and hold no brackets.
+pub fn wiki_links(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(open) = text[from..].find("[[").map(|i| from + i) {
+        let inner = open + 2;
+        let Some(close) = text[inner..].find("]]").map(|i| inner + i) else { break };
+        let name = &text[inner..close];
+        if name.contains(['\n', '[', ']']) || name.trim().is_empty() || name.len() > 200 {
+            from = inner;
+            continue;
+        }
+        out.push((open..close + 2, name.trim()));
+        from = close + 2;
+    }
+    out
+}
+
+/// What a `[[name]]` link leads to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkTo {
+    Note(Id),
+    Sheet(Id),
+}
+
+impl LinkTo {
+    /// As a link in a note's Markdown: `folio:note/12`, `folio:sheet/3`.
+    pub fn url(self) -> String {
+        match self {
+            LinkTo::Note(id) => format!("folio:note/{id}"),
+            LinkTo::Sheet(id) => format!("folio:sheet/{id}"),
+        }
+    }
+    pub fn parse(url: &str) -> Option<LinkTo> {
+        let rest = url.strip_prefix("folio:")?;
+        if let Some(id) = rest.strip_prefix("note/") {
+            return id.parse().ok().map(LinkTo::Note);
+        }
+        rest.strip_prefix("sheet/")?.parse().ok().map(LinkTo::Sheet)
+    }
+}
+
+/// `text` with each `[[name]]` that `resolve` knows turned into a Markdown
+/// link to it (its words stay the name); the rest left as written.
+pub fn link_names(text: &str, resolve: &dyn Fn(&str) -> Option<LinkTo>) -> String {
+    let links = wiki_links(text);
+    if links.is_empty() {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut at = 0;
+    for (range, name) in links {
+        out.push_str(&text[at..range.start]);
+        match resolve(name) {
+            Some(to) => out.push_str(&format!("[{name}]({})", to.url())),
+            None => out.push_str(&text[range.clone()]),
+        }
+        at = range.end;
+    }
+    out.push_str(&text[at..]);
+    out
 }
 
 /// One task (a `- [ ]` line) in a note, for the list of every task.
@@ -1630,6 +1709,39 @@ impl Board {
         0
     }
 
+    /// What `[[name]]` leads to, by name (any case): a note called that on
+    /// sheet `here` first, then on any sheet, then a sheet called that.
+    pub fn resolve(&self, name: &str, here: Option<usize>) -> Option<LinkTo> {
+        let want = name.trim().to_lowercase();
+        let named = |s: &Sticker| s.name().to_lowercase() == want;
+        if let Some(s) = here.and_then(|h| self.categories.get(h)).and_then(|c| c.stickers.iter().find(|s| named(s))) {
+            return Some(LinkTo::Note(s.id));
+        }
+        if let Some(s) = self.categories.iter().flat_map(|c| &c.stickers).find(|s| named(s)) {
+            return Some(LinkTo::Note(s.id));
+        }
+        self.categories.iter().find(|c| c.name.trim().to_lowercase() == want).map(|c| LinkTo::Sheet(c.id))
+    }
+
+    /// For each note something links to, the notes linking to it, in
+    /// sheet order (each once).
+    pub fn backlinks(&self) -> HashMap<Id, Vec<Id>> {
+        let mut out: HashMap<Id, Vec<Id>> = HashMap::new();
+        for (ix, c) in self.categories.iter().enumerate() {
+            for s in &c.stickers {
+                for (_, name) in wiki_links(&s.body).into_iter().chain(wiki_links(&s.title)) {
+                    if let Some(LinkTo::Note(to)) = self.resolve(name, Some(ix)) {
+                        let from = out.entry(to).or_default();
+                        if to != s.id && !from.contains(&s.id) {
+                            from.push(s.id);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Every task in every note: the sheets in the drawer's order, the
     /// notes front to back as they lie on the sheet, the tasks in order.
     pub fn tasks(&self) -> Vec<TaskRef> {
@@ -2201,6 +2313,33 @@ mod tests {
         // The number ticks that very line.
         let body = toggle_task(&b.find_note(1).unwrap().body, all[1].n);
         assert!(body.contains("- [ ] Book the bench") && body.contains("- [ ] Call Sam"));
+    }
+
+    #[test]
+    fn note_links_find_notes_and_sheets_and_come_back() {
+        assert_eq!(wiki_links("see [[Plan]] and [[ Sheet two ]], not [[x\ny]] or [[]]").iter().map(|l| l.1).collect::<Vec<_>>(), vec!["Plan", "Sheet two"]);
+        let mut b = Board::empty();
+        b.add_sheet("Sheet two");
+        let mut plan = sticker(1, 0., 0.);
+        plan.title = "Plan".into();
+        let mut here = sticker(2, 0., 0.);
+        here.body = "- [ ] see the **plan**".into();
+        b.categories[0].stickers.push(here);
+        b.categories[1].stickers.push(plan);
+        let mut from = sticker(3, 0., 0.);
+        from.body = "Read [[plan]] and [[see the plan]], then [[Sheet two]] and [[nowhere]]".into();
+        b.categories[0].stickers.push(from);
+        // Any case; a note by its first line too; a sheet by its name.
+        assert_eq!(b.resolve("PLAN", Some(0)), Some(LinkTo::Note(1)));
+        assert_eq!(b.resolve("see the plan", Some(0)), Some(LinkTo::Note(2)));
+        assert_eq!(b.resolve("sheet two", None), Some(LinkTo::Sheet(b.categories[1].id)));
+        assert_eq!(b.resolve("nowhere", None), None);
+        let md = link_names(&b.find_note(3).unwrap().body, &|n| b.resolve(n, Some(0)));
+        assert_eq!(md, format!("Read [plan](folio:note/1) and [see the plan](folio:note/2), then [Sheet two](folio:sheet/{}) and [[nowhere]]", b.categories[1].id));
+        assert_eq!(LinkTo::parse("folio:note/1"), Some(LinkTo::Note(1)));
+        let back = b.backlinks();
+        assert_eq!((back[&1].clone(), back[&2].clone()), (vec![3], vec![3]));
+        assert!(!back.contains_key(&3));
     }
 
     #[test]

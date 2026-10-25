@@ -30,6 +30,10 @@ use gpui::{div, prelude::*, px, svg, AnyView, App, Context, Hsla, Pixels, Shared
 
 use crate::theme::{theme, Theme};
 
+/// A `folio:` link just clicked in a note, waiting for Folio to follow it
+/// (FollowLink): the click handler must be Send, so it can't hold Folio.
+pub static LINK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 gpui::actions!(
     folio,
     [
@@ -42,6 +46,7 @@ gpui::actions!(
         QuickNote,
         QuickSheetNext,
         QuickSheetPrev,
+        FollowLink,
         NextSheet,
         PrevSheet,
         GoHome,

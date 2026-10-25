@@ -288,6 +288,18 @@ impl Folio {
                 }));
                 items.push(row("m-move", "icons/folder-input.svg", "Move to sheet", Some("›".into()), &t).on_click(cx.listener(goto(MenuPage::MoveTo))).into_any_element());
                 items.push(
+                    row("m-link", "icons/link.svg", "Link to a note…", None, &t)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.menu = None;
+                            this.start_link(id, window, cx)
+                        }))
+                        .into_any_element(),
+                );
+                let back_n = self.backlinks().get(&id).map_or(0, |v| v.len());
+                if back_n > 0 {
+                    items.push(row("m-backlinks", "icons/link.svg", "Linked from", Some(format!("{back_n}  ›")), &t).on_click(cx.listener(goto(MenuPage::Backlinks))).into_any_element());
+                }
+                items.push(
                     row("m-dup", "icons/copy.svg", "Duplicate", Some(shortcut("D")), &t)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.menu = None;
@@ -488,6 +500,23 @@ impl Folio {
                                 let targets = targets.clone();
                                 cx.listener(move |this, _, _, cx| this.move_notes_to(&targets, ix, cx))
                             })
+                            .into_any_element(),
+                    );
+                }
+            }
+            (MenuKind::Note(id), MenuPage::Backlinks) => {
+                items.push(back("Linked from", cx).into_any_element());
+                items.push(sep(&t).into_any_element());
+                let from = self.backlinks().get(&id).cloned().unwrap_or_default();
+                for (i, other) in from.into_iter().enumerate() {
+                    let Some(s) = self.board.find_note(other) else { continue };
+                    let sheet = self.board.sheet_of(other).map(|ix| self.board.categories[ix].name.clone()).unwrap_or_default();
+                    items.push(
+                        row(format!("m-from-{i}"), "icons/sticky-note.svg", s.name(), Some(sheet), &t)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.menu = None;
+                                this.reveal_note(other, window, cx)
+                            }))
                             .into_any_element(),
                     );
                 }

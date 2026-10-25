@@ -357,6 +357,7 @@ impl Folio {
 
     pub fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.palette = false;
+        self.link_from = None;
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -401,8 +402,14 @@ impl Folio {
         let mut out = Vec::new();
         let ql = q.to_lowercase();
         let semantic = ql.starts_with('#') || ql.starts_with("paper:");
-        let mut notes: Vec<(&crate::model::Category, &crate::model::Sticker)> =
-            self.board.categories.iter().flat_map(|c| c.stickers.iter().map(move |s| (c, s))).collect();
+        // Linking a note: it isn't offered a link to itself.
+        let mut notes: Vec<(&crate::model::Category, &crate::model::Sticker)> = self
+            .board
+            .categories
+            .iter()
+            .flat_map(|c| c.stickers.iter().map(move |s| (c, s)))
+            .filter(|(_, s)| Some(s.id) != self.link_from)
+            .collect();
         if q.is_empty() {
             // Nothing typed: the latest edited first.
             notes.sort_by(|a, b| b.1.edited.cmp(&a.1.edited));
@@ -579,6 +586,8 @@ impl Folio {
             self.palette_recent.truncate(MAX_RECENT);
         }
         self.palette = false;
+        // Linking: only a note picked finishes it.
+        let linking = self.link_from.take();
         window.focus(&self.focus, cx);
         match row.target {
             Target::Sheet(id) => {
@@ -586,7 +595,11 @@ impl Folio {
                     self.open_sheet(i, window, cx);
                 }
             }
-            Target::Note(id) => self.reveal_note(id, window, cx),
+            Target::Note(id) => match linking {
+                // Picking the note a link goes to.
+                Some(from) => self.link_notes(from, id, cx),
+                None => self.reveal_note(id, window, cx),
+            },
             Target::NoteOf(text) => {
                 if self.screen == Screen::Sheet {
                     let (w, h) = self.viewport_size();

@@ -81,7 +81,20 @@ pub fn band(title: Option<AnyElement>, paper: Paper, z: f32, t: &Theme) -> gpui:
 }
 
 pub(super) fn md_view(id: u64, text: &str, t: &Theme) -> TextView {
-    TextView::markdown(("md", id), tint_marks(text, t.is_dark)).selectable(false).style(markdown_style(t))
+    TextView::markdown(("md", id), tint_marks(text, t.is_dark)).selectable(false).style(markdown_style(t)).on_link_click(follow)
+}
+
+/// A link clicked in a note: one to a note or a sheet (`folio:`) is
+/// followed in Folio, any other opens in the browser.
+fn follow(url: &SharedString, _: &gpui::ClickEvent, window: &mut Window, cx: &mut App) {
+    if url.starts_with("folio:") {
+        // The handler can't hold Folio itself: it leaves the link here and
+        // asks Folio (FollowLink) to take it.
+        *super::LINK.lock().unwrap_or_else(|e| e.into_inner()) = Some(url.to_string());
+        window.dispatch_action(Box::new(super::FollowLink), cx);
+    } else {
+        cx.open_url(url);
+    }
 }
 
 /// Markdown written in an ink of its own: text on the sheet.
@@ -93,6 +106,8 @@ pub(super) fn md_view_in(id: u64, text: &str, ink: gpui::Hsla, t: &Theme) -> Tex
 /// checkboxes (`on_toggle` gets the task's number), `>` lines as a
 /// Remember box and tables on the paper. `k` scales sizes. With
 /// `selectable` its text can be picked out with the mouse and copied.
+/// `[[name]]` links that `links` knows become links to their note or sheet.
+#[allow(clippy::too_many_arguments)]
 pub fn note_body(
     s: &Sticker,
     k: f32,
@@ -100,6 +115,7 @@ pub fn note_body(
     media: &std::path::Path,
     md_ids: Option<u64>,
     selectable: bool,
+    links: &dyn Fn(&str) -> Option<crate::model::LinkTo>,
     on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
 ) -> NoteParts {
     let md_view = |id: u64, text: &str, t: &Theme| md_view(id, text, t).selectable(selectable);
@@ -173,7 +189,8 @@ pub fn note_body(
         base + seg
     };
     let mut task = 0usize;
-    for block in blocks(&s.body) {
+    let text = crate::model::link_names(&s.body, links);
+    for block in blocks(&text) {
         match block {
             // An index card keeps a ruled line for every line typed, blank
             // ones too, so the text never drifts off its rules.
@@ -392,7 +409,8 @@ impl Folio {
             // The one selected note's text can be selected: a first click
             // picks the note, a press on its text then picks words.
             let reading = selected && self.selection.len() == 1 && !matches!(self.gesture, Gesture::Move { moved: true, .. });
-            note_body(s, k, t, &crate::store::media_dir(&self.dir), None, reading, toggle)
+            let here = self.board.active;
+            note_body(s, k, t, &crate::store::media_dir(&self.dir), None, reading, &|n| self.board.resolve(n, Some(here)), toggle)
         } else {
             let title = div()
                 .text_size(px(15. / DETAIL_ZOOM * z))
@@ -438,6 +456,23 @@ impl Folio {
             }
             if s.popped.is_some() {
                 chips.push(chip("on desktop".into(), t.colors.text_subtle, Some("icons/picture-in-picture-2.svg")));
+            }
+            // Notes that link here: a chip that lists them.
+            let back = self.backlinks().get(&s.id).map_or(0, |v| v.len());
+            if back > 0 {
+                let id = s.id;
+                chips.push(
+                    div()
+                        .id(("backlinks", id))
+                        .child(chip(format!("{back} linked here"), t.colors.brand_on_tint, Some("icons/link.svg")))
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.menu = Some(super::app::Menu { at: ev.position, kind: super::app::MenuKind::Note(id), page: super::app::MenuPage::Backlinks });
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
             }
         }
         let chips = (!chips.is_empty()).then(|| {
