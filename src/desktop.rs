@@ -146,7 +146,7 @@ pub fn open_quick_note(folio: Entity<Folio>, cx: &mut App) {
     }
     let display = cx.primary_display();
     let screen = display.as_ref().map(|d| d.bounds()).unwrap_or(Bounds::new(Point::default(), size(px(1280.), px(800.))));
-    let (w, h) = (px(520.), px(250.));
+    let (w, h) = (px(560.), px(240.));
     let origin = Point::new(screen.origin.x + (screen.size.width - w) / 2., screen.origin.y + screen.size.height * 0.22);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::new(origin, size(w, h)))),
