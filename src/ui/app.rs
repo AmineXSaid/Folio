@@ -437,6 +437,9 @@ pub struct Folio {
     /// Where the top bar's "folio." sits (window px): the opening's
     /// wordmark lands there.
     pub mark_at: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The top bar's Export button (window px), and its panel being open.
+    pub export_at: Rc<Cell<Option<Bounds<Pixels>>>>,
+    pub export_pop: bool,
     /// Each label's size (world units), measured as it's drawn.
     pub label_sizes: Rc<RefCell<HashMap<Id, (f32, f32)>>>,
     /// Where the sheet's name is drawn (window), for clicks and renaming.
@@ -667,6 +670,8 @@ impl Folio {
             heights: Rc::new(RefCell::new(HashMap::new())),
             edit_bar_size: Rc::new(Cell::new((700., 76.))),
             mark_at: Rc::default(),
+            export_at: Rc::default(),
+            export_pop: false,
             label_sizes: Rc::new(RefCell::new(HashMap::new())),
             head_name: Rc::default(),
             undo,
@@ -2656,6 +2661,7 @@ impl Render for Folio {
             .on_action(cx.listener(|this, _: &Undo, _, cx| this.undo(cx)))
             .on_action(cx.listener(|this, _: &Redo, _, cx| this.redo(cx)))
             .on_action(cx.listener(|this, _: &ToggleTheme, _, cx| this.toggle_theme(cx)))
+            .on_action(cx.listener(|this, _: &ExportSheet, _, cx| this.toggle_export(cx)))
             .on_action(cx.listener(|this, _: &NewSheet, window, cx| this.new_sheet_dialog(window, cx)))
             .on_action(cx.listener(|this, _: &NewNote, window, cx| this.new_note(window, cx)))
             .on_action(cx.listener(|this, _: &NextSheet, window, cx| this.next_sheet(1, window, cx)))
@@ -2697,6 +2703,8 @@ impl Render for Folio {
                     window.focus(&this.focus, cx);
                 } else if this.palette {
                     this.close_palette(window, cx);
+                } else if this.export_pop {
+                    this.export_pop = false;
                 } else if this.menu.is_some() {
                     this.menu = None;
                 } else if this.dialog.is_some() {
@@ -2723,6 +2731,7 @@ impl Render for Folio {
             .children(self.render_dialog_leaving(cx))
             .children(self.palette.then(|| self.render_palette_scrim(cx)))
             .children(self.render_palette_scrim_leaving(cx))
+            .children(self.render_export_pop(cx))
             .children(self.menu.is_some().then(|| self.render_menu(window, cx)))
             .children(self.render_menu_leaving(cx))
             .children(self.toast.clone().map(|msg| toast(&t, msg)))

@@ -257,6 +257,38 @@ impl Folio {
                 .child(label)
                 .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
         };
+        // Out to share: a quiet button beside the main action, its panel
+        // under it.
+        let export_button = {
+            let open = self.export_pop;
+            let ink = if open { t.colors.brand_on_tint } else { t.colors.text_body };
+            let at = self.export_at.clone();
+            div()
+                .id("export")
+                .occlude()
+                .relative()
+                .h(t.size.bar_control)
+                .pl(px(10.))
+                .pr(t.space.md)
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .rounded(t.radius.button)
+                .border_1()
+                .border_color(if open { t.colors.brand.opacity(0.5) } else { t.colors.border })
+                .bg(if open { t.colors.brand_tint } else { t.colors.surface })
+                .when(!open, |d| d.hover(|d| d.bg(t.colors.hover).border_color(t.colors.text_subtle)))
+                .active(|d| d.opacity(0.85))
+                .text_color(ink)
+                .text_size(t.text.caption)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .cursor_pointer()
+                .child(icon("icons/share.svg", px(14.), ink))
+                .child("Export")
+                .child(canvas(move |b, _, _| at.set(Some(b)), |_, _, _, _| {}).absolute().inset_0())
+                .tooltip(|window, cx| super::tip(format!("PNG or PDF of this sheet  {}", shortcut("Shift+E")), window, cx))
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_export(cx)))
+        };
         let (can_undo, can_redo) = (!self.undo.is_empty() && self.editing.is_none(), !self.redo.is_empty());
         let right = div()
             .id("bar-actions")
@@ -287,6 +319,7 @@ impl Folio {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx))),
                 ),
             )
+            .when(on_sheet, |d| d.child(export_button))
             .child(if on_sheet {
                 new_button("new-note", "Note", "New note  N".into())
                     .on_click(cx.listener(|this, _, window, cx| this.new_note(window, cx)))

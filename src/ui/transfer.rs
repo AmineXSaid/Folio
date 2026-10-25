@@ -161,6 +161,166 @@ impl Folio {
         }
     }
 
+    /// The Export button (Ctrl+Shift+E): its panel on a sheet, opened or
+    /// closed; elsewhere, the Sync & export screen.
+    pub fn toggle_export(&mut self, cx: &mut Context<Self>) {
+        if self.screen != Screen::Sheet {
+            self.export_pop = false;
+            return self.open_transfer(cx);
+        }
+        self.finish_edit(cx);
+        self.menu = None;
+        self.export_pop = !self.export_pop;
+        cx.notify();
+    }
+
+    /// The Export button's panel: this sheet as a PNG or a PDF in one
+    /// click, on light or dark paper, and the way to every other export.
+    pub(super) fn render_export_pop(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if !self.export_pop || self.screen != Screen::Sheet {
+            return None;
+        }
+        let t = theme(cx).clone();
+        let b = self.export_at.get()?;
+        let ix = self.board.active;
+        let sheet = self.sheet();
+        let n = sheet.stickers.len();
+        let about = format!("{} · {n} note{}", sheet.name, if n == 1 { "" } else { "s" });
+        let busy = self.export.busy;
+        let tile = |id: &'static str, path: &'static str, name: &'static str, help: &'static str, kind: picture::Format, cx: &mut Context<Self>| {
+            let on = t.colors.primary_fg;
+            div()
+                .id(id)
+                .group(id)
+                .flex_1()
+                .min_w_0()
+                .p(t.space.md)
+                .flex()
+                .flex_col()
+                .gap(t.space.sm)
+                .rounded(t.radius.card)
+                .border_1()
+                .border_color(t.colors.border)
+                .bg(t.colors.surface)
+                .cursor_pointer()
+                .hover(|d| d.border_color(t.colors.brand).bg(t.colors.brand_tint))
+                .active(|d| d.opacity(0.85))
+                .when(busy, |d| d.opacity(0.5))
+                // Its mark fills in under the pointer.
+                .child(
+                    div()
+                        .size(px(36.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.button)
+                        .bg(t.colors.brand_tint)
+                        .group_hover(id, |d| d.bg(t.colors.brand))
+                        .child(icon(path, t.size.icon_lg, t.colors.brand).group_hover(id, move |s| s.text_color(on))),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(div().text_size(t.text.body).font_weight(gpui::FontWeight::SEMIBOLD).child(name))
+                        .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).child(help)),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.export_pop = false;
+                    this.save_sheet_as(ix, kind, cx);
+                }))
+        };
+        let dark = self.export.dark.unwrap_or(t.is_dark);
+        let paper = super::home::segmented("pop-look", &[("Light", !dark), ("Dark", dark)], &t, {
+            let me = cx.entity();
+            move |i, _, cx| {
+                me.update(cx, |this, cx| {
+                    this.export.dark = Some(*i == 1);
+                    cx.notify();
+                })
+            }
+        });
+        let card = div()
+            .id("export-pop")
+            .occlude()
+            .w(px(360.))
+            .p(t.space.lg)
+            .flex()
+            .flex_col()
+            .gap(t.space.md)
+            .rounded(t.radius.dialog)
+            .bg(t.colors.surface)
+            .border_1()
+            .border_color(t.colors.border)
+            .shadow(t.shadow_float())
+            .font_family(t.font)
+            .text_color(t.colors.text)
+            // A press anywhere else closes it (the button itself toggles).
+            .on_mouse_down_out(cx.listener(|this, ev: &gpui::MouseDownEvent, _, cx| {
+                if !this.export_at.get().is_some_and(|b| b.contains(&ev.position)) {
+                    this.export_pop = false;
+                    cx.notify();
+                }
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(div().text_size(t.text.title).font_weight(gpui::FontWeight::SEMIBOLD).child("Export this sheet"))
+                    .child(div().text_size(t.text.caption).text_color(t.colors.text_muted).truncate().child(about)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(t.space.sm)
+                    .child(tile("pop-png", "icons/image.svg", "PNG picture", "To send, post or drop in a slide", picture::Format::Png, cx))
+                    .child(tile("pop-pdf", "icons/file-output.svg", "PDF", "A page to share or print, sharp at any size", picture::Format::Pdf, cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(t.space.md)
+                    .child(div().flex_1().child(small_label("PAPER", &t)))
+                    .child(paper),
+            )
+            .child(div().h(px(1.)).bg(t.colors.border))
+            .child(
+                div()
+                    .id("pop-more")
+                    .flex()
+                    .items_center()
+                    .gap(t.space.sm)
+                    .px(t.space.xs)
+                    .py(px(2.))
+                    .rounded(t.radius.small)
+                    .cursor_pointer()
+                    .text_size(t.text.caption)
+                    .text_color(t.colors.text_muted)
+                    .hover(|d| d.text_color(t.colors.text).bg(t.colors.hover))
+                    .child(icon("icons/file-down.svg", t.size.icon_sm, t.colors.text_muted))
+                    .child(div().flex_1().child("Markdown, a Folio file, or several sheets"))
+                    .child(icon("icons/arrow-right.svg", t.size.icon_sm, t.colors.text_muted))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.export_pop = false;
+                        this.open_transfer(cx);
+                    })),
+            );
+        let at = gpui::point(b.right(), b.bottom() + px(8.));
+        Some(
+            gpui::deferred(
+                gpui::anchored()
+                    .anchor(gpui::Anchor::TopRight)
+                    .position(at)
+                    .snap_to_window_with_margin(px(8.))
+                    .child(super::motion::rise_in(card, "export-pop-in", &t)),
+            )
+            .into_any_element(),
+        )
+    }
+
     /// Sheet `ix` straight out as a PNG or PDF: asks where, then draws it.
     /// The export card's choices stay as they were.
     pub fn save_sheet_as(&mut self, ix: usize, kind: picture::Format, cx: &mut Context<Self>) {

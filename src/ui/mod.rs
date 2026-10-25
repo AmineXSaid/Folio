@@ -47,6 +47,7 @@ gpui::actions!(
         QuickSheetNext,
         QuickSheetPrev,
         FollowLink,
+        ExportSheet,
         NextSheet,
         PrevSheet,
         GoHome,

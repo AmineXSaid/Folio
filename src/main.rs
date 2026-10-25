@@ -38,6 +38,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-b", ToggleDrawer, None),
         KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("secondary-shift-h", GoHome, None),
+        KeyBinding::new("secondary-shift-e", ExportSheet, None),
         KeyBinding::new("alt-left", GoBack, None),
         KeyBinding::new("alt-right", GoForward, None),
         KeyBinding::new("ctrl-pagedown", NextSheet, None),
