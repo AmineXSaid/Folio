@@ -92,8 +92,8 @@ impl Folio {
     }
 
     /// A note pinned to the sheet asks your name, then has you pick a face;
-    /// the same note, the same size, for both steps. The author's credit
-    /// sits in the bottom-left corner.
+    /// the same note, the same size, for both steps. The author's signature
+    /// sits in the bottom-right corner.
     pub(super) fn render_welcome(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         let Some(w) = self.welcome.as_ref() else { return div().into_any_element() };
@@ -278,7 +278,8 @@ impl Folio {
                         .child(icon_button("w-close", "icons/x.svg", &t).on_click(cx.listener(|this, _, _, cx| this.welcome_close(cx)))),
                 )
             })
-            .child(div().absolute().left(t.space.xl).bottom(t.space.xl).child(author_badge(&t, t.colors.toast, t.colors.toast_fg)))
+            // Signed in the corner, as at the opening.
+            .child(div().absolute().right(t.space.xxl).bottom(t.space.xxl).opacity(0.8).child(signature(&t, t.colors.text_muted, t.colors.brand.opacity(0.6), 1., 1.)))
             .into_any_element()
     }
 }

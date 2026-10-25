@@ -5,10 +5,10 @@
 //! highlight wipes across, the lines write themselves, the corner peels,
 //! and a sheen of light crosses the paper. "folio." tracks in (its letters
 //! closing up as they rise), a pink hairline draws out under it, and the
-//! line beneath fades up. Then the wordmark flies into the top bar, to
-//! where Folio's own "folio." sits, as everything else dissolves. It plays
-//! in full at every launch and can't be skipped; the author's credit sits
-//! in the bottom-left corner.
+//! line beneath fades up, and in the bottom-right corner the author signs,
+//! quietly. Then the wordmark flies into the top bar, to where Folio's own
+//! "folio." sits, as everything else dissolves. It plays in full at every
+//! launch and can't be skipped.
 
 use gpui::{canvas, div, point, prelude::*, px, rgb, rgba, Bounds, BoxShadow, Context, Corners, Hsla, PathBuilder, Pixels, Point, Window};
 
@@ -24,7 +24,7 @@ const NIGHT: u32 = 0x0b0d0c;
 
 /// When the opening starts to leave, how long the wordmark's flight takes,
 /// and how long the rest takes to dissolve.
-const OUT: f32 = 3.2;
+const OUT: f32 = 3.45;
 const FLY: f32 = 0.75;
 const FADE: f32 = 0.6;
 /// The wordmark's size at rest, and the top bar's.
@@ -253,14 +253,20 @@ impl Folio {
                     .child("Sticky notes on endless sheets"),
             )
             .child(
-                // The credit, in the corner where the welcome keeps it: a
-                // glassy card of the logo's cream on the dark.
+                // Signed in the corner, quietly: the capitals come up, the
+                // name writes itself out, a fine pink swash runs under it.
                 div()
                     .absolute()
-                    .left(ui.space.xl)
-                    .bottom(ui.space.xl)
-                    .opacity(tag)
-                    .child(super::author_badge(&ui, rgba(CREAM << 8 | 0x0f).into(), rgb(CREAM).into())),
+                    .right(ui.space.xxl)
+                    .bottom(ui.space.xxl)
+                    .opacity(ease_out(span(t, 2.25, 2.75)) * content)
+                    .child(super::signature(
+                        &ui,
+                        Hsla::from(rgb(CREAM)).opacity(0.72),
+                        pink.opacity(0.7),
+                        ease_in_out(span(t, 2.45, 3.15)),
+                        ease_in_out(span(t, 2.95, 3.4)),
+                    )),
             );
 
         // The flight: from the middle to the top bar, growing small, its

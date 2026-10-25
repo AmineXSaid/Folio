@@ -380,21 +380,68 @@ fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
         .child(div().flex_1().min_w_0().child(msg))
 }
 
-/// Who made Folio, in the toast's crisp style: a pen on the pink tile,
-/// then the credit over the name. For the opening and the welcome, in
-/// the bottom-left corner; `bg` and `fg` are the card's colours there.
-pub fn author_badge(t: &Theme, bg: Hsla, fg: Hsla) -> gpui::Div {
-    crisp(t, bg, fg)
-        .child(brand_tile("icons/user-round-pen.svg", t.size.control, t))
-        .child(div().w(px(1.)).h(t.size.icon_lg).bg(fg.opacity(0.14)))
+/// Who made Folio, signed: a whisper of a credit for a corner. Small
+/// spaced capitals, "CREATED & DESIGNED BY", over the name in italic,
+/// written out from left to right as `writing` goes 0 to 1; then a fine
+/// swash of `accent` drawn under it as `swash` does. `ink` is the name's
+/// colour; the capitals are fainter still.
+pub fn signature(t: &Theme, ink: Hsla, accent: Hsla, writing: f32, swash: f32) -> gpui::Div {
+    let caption = div()
+        .flex()
+        .gap(px(1.5))
+        .text_size(t.text.micro * 0.8)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(ink.opacity(0.62))
+        .children("CREATED & DESIGNED BY".chars().map(|c| div().child(c.to_string())));
+    let name = || {
+        div()
+            .whitespace_nowrap()
+            .italic()
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_size(t.text.brand)
+            .text_color(ink)
+            .child("M. Amine Said")
+    };
+    let written = div()
+        .relative()
+        // Its room, then the name written into it a stroke at a time.
+        .child(name().invisible())
+        .child(div().absolute().top_0().left_0().h_full().w(gpui::relative(writing.clamp(0., 1.))).overflow_hidden().child(name()))
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(t.space.xxs)
-                .child(div().text_size(t.text.micro).text_color(fg.opacity(0.6)).child("Created and designed by"))
-                .child(div().text_size(t.text.body).font_weight(gpui::FontWeight::SEMIBOLD).child("M. Amine Said")),
-        )
+            gpui::canvas(|_, _, _| {}, move |b, _, window, _| paint_swash(b, swash, accent, window))
+                .absolute()
+                .left(px(-2.))
+                .right(px(-12.))
+                .bottom(px(-10.))
+                .h(px(12.)),
+        );
+    div().flex().flex_col().items_end().gap(px(5.)).child(caption).child(written)
+}
+
+/// The signature's swash: one long, easy wave under the name, drawn as far
+/// as `k` (0 to 1) of its length.
+fn paint_swash(b: gpui::Bounds<Pixels>, k: f32, color: Hsla, window: &mut Window) {
+    if k <= 0. {
+        return;
+    }
+    let (x, y, w, h) = (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height));
+    let at = |s: f32| {
+        // A cubic through the box: in low on the left, up and away right.
+        let p = [(x, y + h * 0.55), (x + w * 0.38, y + h * 1.05), (x + w * 0.72, y - h * 0.05), (x + w, y + h * 0.25)];
+        let u = 1. - s;
+        let c = [u * u * u, 3. * u * u * s, 3. * u * s * s, s * s * s];
+        gpui::point(px(c.iter().zip(p).map(|(c, p)| c * p.0).sum()), px(c.iter().zip(p).map(|(c, p)| c * p.1).sum()))
+    };
+    let n = 48;
+    let mut path = gpui::PathBuilder::stroke(px(1.1));
+    path.move_to(at(0.));
+    for i in 1..=n {
+        let s = k.min(1.) * i as f32 / n as f32;
+        path.line_to(at(s));
+    }
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
 }
 
 /// Keeps gpui-component's inputs and markdown in Folio's colours and type.
