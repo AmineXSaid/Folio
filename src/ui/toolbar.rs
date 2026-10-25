@@ -24,12 +24,14 @@ impl Folio {
                 .rounded(px(11.))
                 .cursor_pointer()
                 .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
-                // The tool in use sits on a raised chip with a dot under it,
-                // like a running app in the macOS Dock.
+                // The tool in use sits on a raised chip with a short bar
+                // under it, held to the chip's middle, glowing faintly.
                 .when(active, |d| {
-                    d.bg(t.colors.surface)
-                        .shadow(t.shadow_raised())
-                        .child(div().absolute().bottom(px(3.)).size(px(4.)).rounded(t.radius.full).bg(t.colors.brand))
+                    d.bg(t.colors.surface).shadow(t.shadow_raised()).child(
+                        div().absolute().left_0().right_0().bottom(px(3.)).flex().justify_center().child(
+                            div().w(px(14.)).h(px(3.)).rounded(t.radius.full).bg(t.colors.brand).shadow(t.shadow_glow()),
+                        ),
+                    )
                 })
                 .when(!active, |d| d.hover(|d| d.bg(t.colors.hover)).active(|d| d.bg(t.colors.border)))
                 .child(icon(tool.icon(), px(17.), if active { t.colors.brand } else { t.colors.text_muted }))

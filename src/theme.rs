@@ -506,6 +506,17 @@ impl Theme {
         ]
     }
 
+    /// A small mark of Folio's pink glowing faintly: the tool in use.
+    pub fn shadow_glow(&self) -> Vec<BoxShadow> {
+        vec![BoxShadow {
+            color: self.colors.brand.opacity(if self.is_dark { 0.6 } else { 0.45 }),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(4.),
+            spread_radius: px(0.),
+            inset: false,
+        }]
+    }
+
     /// A sticker being dragged: higher, so it reads as picked up.
     pub fn shadow_lifted(&self, zoom: f32) -> Vec<BoxShadow> {
         let a = if self.is_dark { 0.6 } else { 0.16 };
