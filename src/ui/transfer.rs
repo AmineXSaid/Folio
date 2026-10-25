@@ -12,6 +12,7 @@ use super::*;
 use crate::cloud::Keep;
 use crate::export;
 use crate::model::*;
+use crate::picture;
 use crate::store;
 use crate::theme::{theme, Theme};
 use crate::time;
@@ -22,6 +23,21 @@ pub enum ExportFormat {
     #[default]
     Markdown,
     Folio,
+    /// A picture of each sheet, to share.
+    Png,
+    /// A page of each sheet that stays sharp at any size, to share or print.
+    Pdf,
+}
+
+impl ExportFormat {
+    /// The picture this is, if it's one.
+    pub fn picture(self) -> Option<picture::Format> {
+        match self {
+            ExportFormat::Png => Some(picture::Format::Png),
+            ExportFormat::Pdf => Some(picture::Format::Pdf),
+            ExportFormat::Markdown | ExportFormat::Folio => None,
+        }
+    }
 }
 
 /// The export card's choices.
@@ -30,6 +46,10 @@ pub struct ExportChoice {
     pub format: ExportFormat,
     /// Sheets left out (new sheets start chosen).
     pub skip: HashSet<Id>,
+    /// Pictures drawn light or dark; None draws them as Folio looks now.
+    pub dark: Option<bool>,
+    /// Pictures being drawn.
+    pub busy: bool,
 }
 
 fn card(t: &Theme) -> gpui::Div {
@@ -141,6 +161,16 @@ impl Folio {
         }
     }
 
+    /// Sheet `ix` straight out as a PNG or PDF: asks where, then draws it.
+    /// The export card's choices stay as they were.
+    pub fn save_sheet_as(&mut self, ix: usize, kind: picture::Format, cx: &mut Context<Self>) {
+        self.menu = None;
+        let Some(id) = self.board.categories.get(ix).map(|c| c.id) else { return };
+        if !self.export.busy {
+            self.ask_folder(cx, move |this, dest, cx| this.export_pictures(&[id], kind, dest, cx));
+        }
+    }
+
     fn chosen_sheets(&self) -> Vec<&Category> {
         self.board.categories.iter().filter(|c| !self.export.skip.contains(&c.id)).collect()
     }
@@ -151,6 +181,15 @@ impl Folio {
             self.notify("Choose at least one sheet to export", cx);
             return;
         }
+        if self.export.busy {
+            return;
+        }
+        self.ask_folder(cx, |this, dest, cx| this.export_to(&dest, cx));
+    }
+
+    /// Asks for a folder to export into, then `then` with it (unless the
+    /// asking is cancelled).
+    fn ask_folder(&mut self, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, std::path::PathBuf, &mut Context<Self>) + 'static) {
         let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: false,
             directories: true,
@@ -167,7 +206,7 @@ impl Folio {
                     // No folder picker on this system: Documents.
                     _ => export_fallback(),
                 };
-                this.export_to(&dest, cx);
+                then(this, dest, cx);
             });
         })
         .detach();
@@ -185,6 +224,11 @@ impl Folio {
                 let path = (1..).map(|i| if i == 1 { dest.join(format!("{base}.folio")) } else { dest.join(format!("{base} {i}.folio")) }).find(|p| !p.exists()).expect("a free name");
                 export::export_folio(&sheets, &media, &path).map(|_| path)
             }
+            ExportFormat::Png | ExportFormat::Pdf => {
+                let ids: Vec<Id> = sheets.iter().map(|c| c.id).collect();
+                let kind = if self.export.format == ExportFormat::Png { picture::Format::Png } else { picture::Format::Pdf };
+                return self.export_pictures(&ids, kind, dest.to_path_buf(), cx);
+            }
         };
         match result {
             Ok(path) => {
@@ -195,6 +239,67 @@ impl Folio {
             }
             Err(e) => self.notify(format!("Couldn't export: {e}"), cx),
         }
+    }
+
+    /// Sheets `ids` drawn as pictures into `dest`, one file each, away
+    /// from the screen; their links written as the notes show them.
+    fn export_pictures(&mut self, ids: &[Id], kind: picture::Format, dest: std::path::PathBuf, cx: &mut Context<Self>) {
+        let b = &self.board;
+        let sheets: Vec<Category> = b
+            .categories
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| ids.contains(&c.id))
+            .map(|(ix, c)| {
+                let here = Some(ix);
+                let mut c = c.clone();
+                for s in &mut c.stickers {
+                    s.body = link_names(&s.body, &|n| b.resolve(n, here));
+                }
+                c
+            })
+            .collect();
+        let dark = self.export.dark.unwrap_or(self.dark());
+        let mut t = if dark { crate::theme::Theme::dark() } else { crate::theme::Theme::light() };
+        if b.settings.high_contrast {
+            t = t.high_contrast();
+        }
+        let media = store::media_dir(&self.dir);
+        let n = sheets.len();
+        self.export.busy = true;
+        self.notify(if n == 1 { "Drawing the sheet…".to_string() } else { format!("Drawing {n} sheets…") }, cx);
+        let work = cx.background_spawn(async move {
+            let mut first = None;
+            for c in &sheets {
+                let bytes = picture::render(c, &t, &media, kind).map_err(|e| format!("{}: {e}", c.name))?;
+                let path = export::unused(&dest, &export::file_name(&c.name), kind.ext());
+                std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+                first.get_or_insert(path);
+            }
+            Ok::<_, String>(first)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.export.busy = false;
+                match result {
+                    Ok(Some(path)) => {
+                        let what = match (n, kind) {
+                            (1, picture::Format::Png) => "a picture".to_string(),
+                            (1, picture::Format::Pdf) => "a PDF".to_string(),
+                            (n, picture::Format::Png) => format!("{n} pictures"),
+                            (n, picture::Format::Pdf) => format!("{n} PDFs"),
+                        };
+                        let name = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                        this.notify(format!("Saved {what} · {name}"), cx);
+                        cx.reveal_path(&path);
+                    }
+                    Ok(None) => cx.notify(),
+                    Err(e) => this.notify(format!("Couldn't export: {e}"), cx),
+                }
+            });
+        })
+        .detach();
     }
 
     /// Asks for a .folio file and adds its sheets.
@@ -506,11 +611,34 @@ impl Folio {
 
         let label = match (chosen, format) {
             (0, _) => "Choose sheets".to_string(),
+            _ if self.export.busy => "Drawing…".to_string(),
             (1, ExportFormat::Markdown) => "Export 1 sheet…".to_string(),
             (1, ExportFormat::Folio) => "Save 1 sheet…".to_string(),
+            (1, ExportFormat::Png) => "Save 1 PNG…".to_string(),
+            (1, ExportFormat::Pdf) => "Save 1 PDF…".to_string(),
             (n, ExportFormat::Markdown) => format!("Export {n} sheets…"),
             (n, ExportFormat::Folio) => format!("Save {n} sheets…"),
+            (n, ExportFormat::Png) => format!("Save {n} PNGs…"),
+            (n, ExportFormat::Pdf) => format!("Save {n} PDFs…"),
         };
+        // Pictures: drawn light or dark.
+        let dark = self.export.dark.unwrap_or(t.is_dark);
+        let look = format.picture().map(|_| {
+            div()
+                .flex()
+                .items_center()
+                .gap(t.space.md)
+                .child(div().flex_1().child(small_label("DRAWN ON", t)))
+                .child(super::home::segmented("t-look", &[("Light paper", !dark), ("Dark paper", dark)], t, {
+                    let me = cx.entity();
+                    move |i, _, cx| {
+                        me.update(cx, |this, cx| {
+                            this.export.dark = Some(*i == 1);
+                            cx.notify();
+                        })
+                    }
+                }))
+        });
         card(t)
             .child(
                 div()
@@ -523,10 +651,24 @@ impl Folio {
             .child(
                 div()
                     .flex()
+                    .flex_col()
                     .gap(t.space.sm)
-                    .child(tile(ExportFormat::Markdown, "icons/file-text.svg", "Markdown", "A folder with one .md file per sheet and its pictures. Opens in any notes app.", cx))
-                    .child(tile(ExportFormat::Folio, "icons/package.svg", "Folio file", "The sheets exactly, pictures inside, in one .folio file to keep or open elsewhere.", cx)),
+                    .child(
+                        div()
+                            .flex()
+                            .gap(t.space.sm)
+                            .child(tile(ExportFormat::Markdown, "icons/file-text.svg", "Markdown", "A folder with one .md file per sheet and its pictures. Opens in any notes app.", cx))
+                            .child(tile(ExportFormat::Folio, "icons/package.svg", "Folio file", "The sheets exactly, pictures inside, in one .folio file to keep or open elsewhere.", cx)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(t.space.sm)
+                            .child(tile(ExportFormat::Png, "icons/image.svg", "PNG picture", "Each sheet as one sharp picture, as it looks here: to send, post or drop in a slide.", cx))
+                            .child(tile(ExportFormat::Pdf, "icons/file-output.svg", "PDF", "Each sheet as one page that stays sharp at any size: to share or print.", cx)),
+                    ),
             )
+            .children(look)
             .child(
                 div()
                     .flex()

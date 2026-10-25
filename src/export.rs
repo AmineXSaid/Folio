@@ -33,7 +33,7 @@ pub fn file_name(name: &str) -> String {
 }
 
 /// `base`, or `base 2`, `base 3`… so nothing is written over.
-fn unused(dir: &Path, base: &str, ext: &str) -> PathBuf {
+pub fn unused(dir: &Path, base: &str, ext: &str) -> PathBuf {
     let with = |n: usize| {
         let stem = if n == 1 { base.to_string() } else { format!("{base} {n}") };
         dir.join(if ext.is_empty() { stem } else { format!("{stem}.{ext}") })

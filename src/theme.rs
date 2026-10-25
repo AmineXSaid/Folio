@@ -641,6 +641,18 @@ impl Theme {
 
 }
 
+/// Highlight colours by name, as `<mark color="green">` in a note, light
+/// and dark: soft enough that the note's text stays readable on them.
+pub const MARKS: [(&str, u32, u32); 7] = [
+    ("yellow", 0xfde68a, 0x6b5310),
+    ("green", 0xbbf0cc, 0x1f5133),
+    ("blue", 0xc7dcfb, 0x1e3a66),
+    ("red", 0xfbcaca, 0x6b2525),
+    ("pink", 0xf9d0e6, 0x6a2850),
+    ("purple", 0xddd6fe, 0x44336f),
+    ("orange", 0xfdd6ad, 0x6b3d14),
+];
+
 pub fn theme(cx: &App) -> &Theme {
     &cx.global::<ActiveTheme>().0
 }

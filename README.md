@@ -33,6 +33,8 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
 - **Everywhere:** Ctrl+K for commands, sheets and notes; Ctrl+Alt+N (or keys
   of your own, set in Settings) from any app for a quick note into your Inbox or any sheet; notes pinned to the desktop
   above other windows; a tray icon and starting with Windows.
+- **Share:** any sheet as a sharp PNG or a one-page PDF, light or dark,
+  from its menu or Ctrl+K; or sheets out as Markdown or a `.folio` file.
 - **Safe:** undo, a Trash that keeps things 30 days, an Archive, and a
   backup every day (the last 14 kept) you can restore from.
 

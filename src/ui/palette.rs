@@ -42,9 +42,11 @@ enum Cmd {
     Transfer,
     Import,
     Rename,
+    SavePng,
+    SavePdf,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 23] = [
+const CMDS: [(Cmd, &str, &str, &str); 25] = [
     (Cmd::NewNote, "New note", "Ctrl N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl Shift N", "icons/plus.svg"),
     (Cmd::QuickNote, "Quick note to Inbox or any sheet", "Ctrl Alt N", "icons/inbox.svg"),
@@ -55,6 +57,8 @@ const CMDS: [(Cmd, &str, &str, &str); 23] = [
     (Cmd::Transfer, "Sync & export: Google Drive, files", "", "icons/cloud.svg"),
     (Cmd::Drive, "Sync with Google Drive", "", "icons/refresh-cw.svg"),
     (Cmd::Import, "Import a Folio file…", "", "icons/upload.svg"),
+    (Cmd::SavePng, "Save this sheet as PNG…", "", "icons/image.svg"),
+    (Cmd::SavePdf, "Save this sheet as PDF…", "", "icons/file-output.svg"),
     (Cmd::Settings, "Settings", "Ctrl ,", "icons/settings.svg"),
     (Cmd::Trash, "Open the Trash", "", "icons/trash.svg"),
     (Cmd::Archive, "Open the Archive", "", "icons/archive.svg"),
@@ -365,7 +369,7 @@ impl Folio {
     fn rows_all(&self) -> Vec<Row> {
         let mut out: Vec<Row> = CMDS
             .iter()
-            .filter(|(c, ..)| *c != Cmd::Rename || self.screen == Screen::Sheet)
+            .filter(|(c, ..)| !matches!(c, Cmd::Rename | Cmd::SavePng | Cmd::SavePdf) || self.screen == Screen::Sheet)
             .map(|&(c, label, key, path)| Row {
                 label: label.into(),
                 group: "Commands",
@@ -651,6 +655,8 @@ impl Folio {
                 Cmd::Drive => self.sign_in_google(window, cx),
                 Cmd::Transfer => self.open_transfer(cx),
                 Cmd::Import => self.import_file(cx),
+                Cmd::SavePng => self.save_sheet_as(self.board.active, crate::picture::Format::Png, cx),
+                Cmd::SavePdf => self.save_sheet_as(self.board.active, crate::picture::Format::Pdf, cx),
                 Cmd::Theme => self.toggle_theme(cx),
                 Cmd::Fit | Cmd::Tidy | Cmd::Map => {
                     if self.screen != Screen::Sheet {

@@ -724,6 +724,19 @@ impl Folio {
                         }))
                         .into_any_element(),
                 );
+                // The sheet, out to share.
+                items.push(sep(&t).into_any_element());
+                let ix = self.board.active;
+                items.push(
+                    row("m-png", "icons/image.svg", "Save as PNG…", None, &t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.save_sheet_as(ix, crate::picture::Format::Png, cx)))
+                        .into_any_element(),
+                );
+                items.push(
+                    row("m-pdf", "icons/file-output.svg", "Save as PDF…", None, &t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.save_sheet_as(ix, crate::picture::Format::Pdf, cx)))
+                        .into_any_element(),
+                );
             }
             (MenuKind::Card(ix), MenuPage::Main) => {
                 let Some(c) = self.board.categories.get(ix) else { return None };
@@ -750,6 +763,16 @@ impl Folio {
                 items.push(
                     row("m-dup-sheet", "icons/copy.svg", "Duplicate", None, &t)
                         .on_click(cx.listener(move |this, _, _, cx| this.duplicate_sheet(ix, cx)))
+                        .into_any_element(),
+                );
+                items.push(
+                    row("m-card-png", "icons/image.svg", "Save as PNG…", None, &t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.save_sheet_as(ix, crate::picture::Format::Png, cx)))
+                        .into_any_element(),
+                );
+                items.push(
+                    row("m-card-pdf", "icons/file-output.svg", "Save as PDF…", None, &t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.save_sheet_as(ix, crate::picture::Format::Pdf, cx)))
                         .into_any_element(),
                 );
                 items.push(

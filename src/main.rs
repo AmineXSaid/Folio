@@ -13,6 +13,7 @@ mod links;
 mod markdown;
 mod merge;
 mod model;
+mod picture;
 mod store;
 mod theme;
 mod time;
