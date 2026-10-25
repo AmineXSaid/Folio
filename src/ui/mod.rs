@@ -16,7 +16,9 @@ mod palette;
 mod pins;
 pub mod popout;
 pub mod quick;
+mod selection;
 mod settings;
+mod tasks;
 mod sticker;
 mod sync;
 mod toolbar;
@@ -28,6 +30,10 @@ use gpui::{div, prelude::*, px, svg, AnyView, App, Context, Hsla, Pixels, Shared
 
 use crate::theme::{theme, Theme};
 
+/// A `folio:` link just clicked in a note, waiting for Folio to follow it
+/// (FollowLink): the click handler must be Send, so it can't hold Folio.
+pub static LINK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 gpui::actions!(
     folio,
     [
@@ -38,6 +44,10 @@ gpui::actions!(
         NewSheet,
         NewNote,
         QuickNote,
+        QuickSheetNext,
+        QuickSheetPrev,
+        FollowLink,
+        ExportSheet,
         NextSheet,
         PrevSheet,
         GoHome,
@@ -51,6 +61,8 @@ gpui::actions!(
         EditSelection,
         SelectAll,
         Paste,
+        CopyNotes,
+        CutNotes,
         Escape,
         ZoomIn,
         ZoomOut,
@@ -326,9 +338,9 @@ pub fn toast_leaving(t: &Theme, msg: SharedString, n: usize) -> impl IntoElement
     ))
 }
 
-/// Crisp rather than soft: small corners, a hairline edge, a lit top edge
-/// and a brand mark, sitting on a tight shadow.
-fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
+/// Crisp rather than soft: small corners, a hairline edge, a lit top edge,
+/// sitting on a tight shadow. The toast and the author's credit.
+fn crisp(t: &Theme, bg: Hsla, fg: Hsla) -> gpui::Div {
     div()
         .flex()
         .items_center()
@@ -336,18 +348,15 @@ fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
         .pl(t.space.sm)
         .pr(t.space.lg)
         .py(t.space.sm)
-        .max_w(px(420.))
         .rounded(t.radius.small)
-        .bg(t.colors.toast)
+        .bg(bg)
         .border_1()
-        .border_color(t.colors.toast_fg.opacity(0.1))
-        .text_color(t.colors.toast_fg)
-        .text_size(t.text.caption)
-        .font_weight(gpui::FontWeight::MEDIUM)
+        .border_color(fg.opacity(0.1))
+        .text_color(fg)
         .shadow({
             let mut s = t.shadow_float();
             s.push(gpui::BoxShadow {
-                color: t.colors.toast_fg.opacity(0.08),
+                color: fg.opacity(0.08),
                 offset: gpui::point(px(0.), px(1.)),
                 blur_radius: px(0.),
                 spread_radius: px(0.),
@@ -355,19 +364,93 @@ fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
             });
             s
         })
-        .child(
-            div()
-                .size(px(22.))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(t.radius.small)
-                .bg(t.colors.brand)
-                .child(icon("icons/bell.svg", px(12.), t.colors.primary_fg)),
-        )
+}
+
+/// The brand mark a crisp card leads with: `path` on a pink tile `d` across.
+fn brand_tile(path: &'static str, d: Pixels, t: &Theme) -> gpui::Div {
+    div()
+        .size(d)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(t.radius.small)
+        .bg(t.colors.brand)
+        .child(icon(path, d * 0.55, t.colors.primary_fg))
+}
+
+fn toast_card(t: &Theme, msg: SharedString) -> gpui::Div {
+    crisp(t, t.colors.toast, t.colors.toast_fg)
+        .max_w(px(420.))
+        .text_size(t.text.caption)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .child(brand_tile("icons/bell.svg", px(22.), t))
         .child(div().w(px(1.)).h(px(14.)).bg(t.colors.toast_fg.opacity(0.14)))
         .child(div().flex_1().min_w_0().child(msg))
+}
+
+/// Who made Folio, signed: a whisper of a credit for a corner. Small
+/// spaced capitals, "CREATED & DESIGNED BY", over the name in italic,
+/// written out from left to right as `writing` goes 0 to 1; then a fine
+/// swash of `accent` drawn under it as `swash` does. `ink` is the name's
+/// colour; the capitals are fainter still.
+pub fn signature(t: &Theme, ink: Hsla, accent: Hsla, writing: f32, swash: f32) -> gpui::Div {
+    let caption = div()
+        .flex()
+        .gap(px(1.5))
+        .text_size(t.text.micro * 0.8)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(ink.opacity(0.62))
+        .children("CREATED & DESIGNED BY".chars().map(|c| div().child(c.to_string())));
+    let name = || {
+        div()
+            .whitespace_nowrap()
+            .italic()
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_size(t.text.brand)
+            .text_color(ink)
+            .child("M. Amine Said")
+    };
+    let written = div()
+        .relative()
+        // Its room, then the name written into it a stroke at a time.
+        .child(name().invisible())
+        .child(div().absolute().top_0().left_0().h_full().w(gpui::relative(writing.clamp(0., 1.))).overflow_hidden().child(name()))
+        .child(
+            gpui::canvas(|_, _, _| {}, move |b, _, window, _| paint_swash(b, swash, accent, window))
+                .absolute()
+                .left(px(-2.))
+                .right(px(-12.))
+                .bottom(px(-10.))
+                .h(px(12.)),
+        );
+    div().flex().flex_col().items_end().gap(px(5.)).child(caption).child(written)
+}
+
+/// The signature's swash: one long, easy wave under the name, drawn as far
+/// as `k` (0 to 1) of its length.
+fn paint_swash(b: gpui::Bounds<Pixels>, k: f32, color: Hsla, window: &mut Window) {
+    if k <= 0. {
+        return;
+    }
+    let (x, y, w, h) = (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height));
+    let at = |s: f32| {
+        // A cubic through the box: in low on the left, up and away right.
+        let p = [(x, y + h * 0.55), (x + w * 0.38, y + h * 1.05), (x + w * 0.72, y - h * 0.05), (x + w, y + h * 0.25)];
+        let u = 1. - s;
+        let c = [u * u * u, 3. * u * u * s, 3. * u * s * s, s * s * s];
+        gpui::point(px(c.iter().zip(p).map(|(c, p)| c * p.0).sum()), px(c.iter().zip(p).map(|(c, p)| c * p.1).sum()))
+    };
+    let n = 48;
+    let mut path = gpui::PathBuilder::stroke(px(1.1));
+    path.move_to(at(0.));
+    for i in 1..=n {
+        let s = k.min(1.) * i as f32 / n as f32;
+        path.line_to(at(s));
+    }
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
 }
 
 /// Keeps gpui-component's inputs and markdown in Folio's colours and type.

@@ -25,6 +25,15 @@ sha2 = "=0.10.9"
 base64 = "=0.22.1"
 getrandom = "=0.2.17"
 percent-encoding = "=2.3.2"
+# A sheet as a PNG or PDF (src/picture.rs): drawn as SVG and rendered by
+# resvg (Apache-2.0/MIT, with usvg and tiny-skia, BSD-3); the bundled fonts
+# measured with ttf-parser (MIT/Apache-2.0); pictures decoded for the PDF
+# by image and its drawing compressed by miniz_oxide (MIT/Apache-2.0).
+# All already in GPUI's tree at these versions.
+resvg = { version = "=0.46.0", default-features = false, features = ["text", "system-fonts", "raster-images"] }
+ttf-parser = "=0.25.1"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+miniz_oxide = "=0.8.9"
 
 # Windows: the tray icon and its menu, and reminder notifications.
 [target.'cfg(windows)'.dependencies]

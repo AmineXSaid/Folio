@@ -81,7 +81,20 @@ pub fn band(title: Option<AnyElement>, paper: Paper, z: f32, t: &Theme) -> gpui:
 }
 
 pub(super) fn md_view(id: u64, text: &str, t: &Theme) -> TextView {
-    TextView::markdown(("md", id), tint_marks(text, t.is_dark)).selectable(false).style(markdown_style(t))
+    TextView::markdown(("md", id), tint_marks(text, t.is_dark)).selectable(false).style(markdown_style(t)).on_link_click(follow)
+}
+
+/// A link clicked in a note: one to a note or a sheet (`folio:`) is
+/// followed in Folio, any other opens in the browser.
+fn follow(url: &SharedString, _: &gpui::ClickEvent, window: &mut Window, cx: &mut App) {
+    if url.starts_with("folio:") {
+        // The handler can't hold Folio itself: it leaves the link here and
+        // asks Folio (FollowLink) to take it.
+        *super::LINK.lock().unwrap_or_else(|e| e.into_inner()) = Some(url.to_string());
+        window.dispatch_action(Box::new(super::FollowLink), cx);
+    } else {
+        cx.open_url(url);
+    }
 }
 
 /// Markdown written in an ink of its own: text on the sheet.
@@ -91,21 +104,29 @@ pub(super) fn md_view_in(id: u64, text: &str, ink: gpui::Hsla, t: &Theme) -> Tex
 
 /// A note's content: link card, title, then its text, with task lines as
 /// checkboxes (`on_toggle` gets the task's number), `>` lines as a
-/// Remember box and tables on the paper. `k` scales sizes.
+/// Remember box and tables on the paper. `k` scales sizes. With
+/// `selectable` its text can be picked out with the mouse and copied.
+/// `[[name]]` links that `links` knows become links to their note or sheet.
+#[allow(clippy::too_many_arguments)]
 pub fn note_body(
     s: &Sticker,
     k: f32,
     t: &Theme,
     media: &std::path::Path,
     md_ids: Option<u64>,
+    selectable: bool,
+    links: &dyn Fn(&str) -> Option<crate::model::LinkTo>,
     on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
 ) -> NoteParts {
+    let md_view = |id: u64, text: &str, t: &Theme| md_view(id, text, t).selectable(selectable);
     let lh = line_height(s.style);
     let ruled = s.style == NoteStyle::Index;
     let mut body: Vec<AnyElement> = Vec::new();
     let base = md_ids.unwrap_or(s.id) * 1024;
     if let Some(l) = &s.link {
         let title = if l.title.is_empty() { l.url.clone() } else { l.title.clone() };
+        let url = l.url.clone();
+        let tip = format!("Open {}", l.site);
         body.push(
             div()
                 .flex()
@@ -122,7 +143,24 @@ pub fn note_body(
                             Some(name) => img(media.join(name)).size(px(14. * k)).rounded(px(3.)).into_any_element(),
                             None => icon("icons/globe.svg", px(12. * k), t.colors.text_subtle).into_any_element(),
                         })
-                        .child(l.site.clone()),
+                        .child(div().flex_1().min_w_0().truncate().child(l.site.clone()))
+                        // Opens the page; pressing it never picks up the note.
+                        .child(
+                            div()
+                                .id(("open-link", s.id))
+                                .flex_none()
+                                .size(px(22. * k))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(6. * k))
+                                .cursor_pointer()
+                                .hover(|d| d.bg(t.colors.hover))
+                                .child(icon("icons/arrow-up-right.svg", px(13. * k), t.colors.text_muted))
+                                .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(move |_, _, cx| cx.open_url(&url)),
+                        ),
                 )
                 .child(
                     div()
@@ -151,7 +189,8 @@ pub fn note_body(
         base + seg
     };
     let mut task = 0usize;
-    for block in blocks(&s.body) {
+    let text = crate::model::link_names(&s.body, links);
+    for block in blocks(&text) {
         match block {
             // An index card keeps a ruled line for every line typed, blank
             // ones too, so the text never drifts off its rules.
@@ -367,7 +406,11 @@ impl Folio {
         let me = cx.entity();
         let toggle = move |n: usize, _: &mut Window, cx: &mut App| me.update(cx, |f, cx| f.toggle_task(id, n, cx));
         let parts = if detail {
-            note_body(s, k, t, &crate::store::media_dir(&self.dir), None, toggle)
+            // The one selected note's text can be selected: a first click
+            // picks the note, a press on its text then picks words.
+            let reading = selected && self.selection.len() == 1 && !matches!(self.gesture, Gesture::Move { moved: true, .. });
+            let here = self.board.active;
+            note_body(s, k, t, &crate::store::media_dir(&self.dir), None, reading, &|n| self.board.resolve(n, Some(here)), toggle)
         } else {
             let title = div()
                 .text_size(px(15. / DETAIL_ZOOM * z))
@@ -413,6 +456,23 @@ impl Folio {
             }
             if s.popped.is_some() {
                 chips.push(chip("on desktop".into(), t.colors.text_subtle, Some("icons/picture-in-picture-2.svg")));
+            }
+            // Notes that link here: a chip that lists them.
+            let back = self.backlinks().get(&s.id).map_or(0, |v| v.len());
+            if back > 0 {
+                let id = s.id;
+                chips.push(
+                    div()
+                        .id(("backlinks", id))
+                        .child(chip(format!("{back} linked here"), t.colors.brand_on_tint, Some("icons/link.svg")))
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.menu = Some(super::app::Menu { at: ev.position, kind: super::app::MenuKind::Note(id), page: super::app::MenuPage::Backlinks });
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
             }
         }
         let chips = (!chips.is_empty()).then(|| {
@@ -608,6 +668,25 @@ impl Folio {
                         .border_color(t.colors.selection),
                 )
             })
+            // One of several selected: a tick in its corner, as a file
+            // window marks what's picked.
+            .when(selected && self.selection.len() > 1, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(-t.size.icon_lg / 2. + px(2.))
+                        .left(-t.size.icon_lg / 2. + px(2.))
+                        .size(t.size.icon_lg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.full)
+                        .bg(t.colors.selection)
+                        .border_2()
+                        .border_color(t.colors.canvas)
+                        .child(icon("icons/check.svg", t.size.icon_sm * 0.8, t.colors.primary_fg)),
+                )
+            })
             .children(grip)
             .into_any_element()
     }
@@ -622,25 +701,13 @@ fn markdown_style(t: &Theme) -> TextViewStyle {
         .table_head(gpui::StyleRefinement::default().bg(head))
 }
 
-/// Highlight colours by name, as `<mark color="green">` in a note, light
-/// and dark: soft enough that the note's text stays readable on them.
-const MARKS: [(&str, u32, u32); 7] = [
-    ("yellow", 0xfde68a, 0x6b5310),
-    ("green", 0xbbf0cc, 0x1f5133),
-    ("blue", 0xc7dcfb, 0x1e3a66),
-    ("red", 0xfbcaca, 0x6b2525),
-    ("pink", 0xf9d0e6, 0x6a2850),
-    ("purple", 0xddd6fe, 0x44336f),
-    ("orange", 0xfdd6ad, 0x6b3d14),
-];
-
 /// Rewrites named highlight colours to this theme's shades.
 pub fn tint_marks(body: &str, dark: bool) -> String {
     if !body.contains("<mark") {
         return body.to_string();
     }
     let mut out = body.to_string();
-    for (name, light, dim) in MARKS {
+    for (name, light, dim) in crate::theme::MARKS {
         let hex = format!("color=\"#{:06x}\"", if dark { dim } else { light });
         out = out
             .replace(&format!("color=\"{name}\""), &hex)

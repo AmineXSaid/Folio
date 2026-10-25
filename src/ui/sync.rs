@@ -66,6 +66,11 @@ pub struct DriveSync {
     forced: Option<Keep>,
     /// The sync under way sends a merge's result.
     after_merge: bool,
+    /// The board's text as last made for Drive, and the count of changes
+    /// it was made at: while nothing changes it's sent again as it is.
+    text: Option<(u64, Arc<String>)>,
+    /// The count of changes when the sync under way began.
+    began_at: u64,
 }
 
 impl DriveSync {
@@ -102,7 +107,7 @@ pub fn describe(r: &Report) -> String {
         parts.push(format!("{} from here", r.from_here));
     }
     if r.clashes > 0 {
-        parts.push(format!("{} edited in both, newest kept", r.clashes));
+        parts.push(format!("{} edited in both, merged", r.clashes));
     }
     if parts.is_empty() {
         "nothing to change".into()
@@ -249,22 +254,30 @@ impl Folio {
         self.sync.soon = None;
         self.sync.state = DriveState::Syncing;
         self.sync.forced = force;
-        let text = self.board_text();
+        // The board is turned to text off the UI thread; with nothing
+        // changed since the last sync, that text goes again as it is.
+        let edits = self.edits;
+        self.sync.began_at = edits;
+        let made = self.sync.text.as_ref().filter(|(n, _)| *n == edits).map(|(_, t)| t.clone());
+        let board = made.is_none().then(|| self.board.clone());
         let media = store::media_dir(&self.dir);
-        let sent = text.clone();
         let job = cx.background_executor().spawn(async move {
-            let mut d = drive.lock().map_err(|_| "Sync stopped".to_string())?;
-            d.sync(&sent, &media, force)
+            let text = made.unwrap_or_else(|| Arc::new(board.map(|b| serde_json::to_string(&b).unwrap_or_default()).unwrap_or_default()));
+            let result = drive.lock().map_err(|_| "Sync stopped".to_string()).and_then(|mut d| d.sync(&text, &media, force));
+            (text, result)
         });
         cx.spawn(async move |this, cx| {
-            let result = job.await;
-            let _ = this.update(cx, |this, cx| this.drive_done(result, text, cx));
+            let (text, result) = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.sync.text = Some((edits, text.clone()));
+                this.drive_done(result, &text, cx)
+            });
         })
         .detach();
         cx.notify();
     }
 
-    fn drive_done(&mut self, outcome: Result<Outcome, String>, sent: String, cx: &mut Context<Self>) {
+    fn drive_done(&mut self, outcome: Result<Outcome, String>, sent: &str, cx: &mut Context<Self>) {
         if !self.sync.signed_in() {
             return;
         }
@@ -275,14 +288,14 @@ impl Folio {
         match outcome {
             Ok(Outcome::Same) => {
                 if !had_base {
-                    let _ = store::save_sync_base(&self.dir, &sent);
+                    let _ = store::save_sync_base(&self.dir, sent);
                 }
                 if forced.is_some() && !after_merge {
                     self.notify("Already the same as Google Drive · nothing to change", cx);
                 }
             }
             Ok(Outcome::Pushed) => {
-                let _ = store::save_sync_base(&self.dir, &sent);
+                let _ = store::save_sync_base(&self.dir, sent);
                 if after_merge {
                     // The merge already said what happened.
                 } else if forced == Some(Keep::ThisComputer) {
@@ -296,7 +309,7 @@ impl Folio {
                 self.sync.again = true;
             }
             Ok(Outcome::Pulled(remote, rev)) => {
-                if self.board_text() != sent || self.editing.is_some() {
+                if self.edits != self.sync.began_at || self.editing.is_some() {
                     // Edited here while Drive's came down: merge the two.
                     self.drive_merge(remote, cx);
                 } else {
@@ -381,12 +394,23 @@ impl Folio {
         self.sync.after_merge = true;
     }
 
-    /// Puts a board in place as one undo step, keeping this computer's
-    /// settings and view.
-    fn drive_put(&mut self, mut b: Board) {
+    /// Drive's board as this computer has it: its settings, which sheet is
+    /// open and where each sheet is scrolled to stay this computer's.
+    fn keep_local(&self, b: &mut Board) {
         b.settings = self.board.settings.clone();
         b.at_home = self.board.at_home;
         b.active = b.active.min(b.categories.len().saturating_sub(1));
+        for c in &mut b.categories {
+            if let Some(here) = self.board.categories.iter().find(|h| h.id == c.id) {
+                c.camera = here.camera;
+            }
+        }
+    }
+
+    /// Puts a board in place as one undo step, keeping this computer's
+    /// settings and view.
+    fn drive_put(&mut self, mut b: Board) {
+        self.keep_local(&mut b);
         let before = std::mem::replace(&mut self.board, b);
         let step = crate::history::Change::diff(&before, &self.board);
         if !step.is_empty() {
@@ -459,9 +483,7 @@ impl Folio {
         let mut b: Board = serde_json::from_str(remote).map_err(|_| "Drive's board couldn't be read".to_string())?;
         b.normalize();
         let mut same = b.clone();
-        same.settings = self.board.settings.clone();
-        same.at_home = self.board.at_home;
-        same.active = same.active.min(same.categories.len().saturating_sub(1));
+        self.keep_local(&mut same);
         if same != self.board {
             self.drive_put(b);
             self.save_now(cx);

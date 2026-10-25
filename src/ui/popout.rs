@@ -221,7 +221,7 @@ impl Render for NoteWindow {
                     }
                 }))
                 .map(|d| {
-                    let parts = note_body(&s, 1.0, &t, &media, None, toggle);
+                    let parts = note_body(&s, 1.0, &t, &media, None, true, &|_| None, toggle);
                     // A cheat card's title keeps its band, inset in the window.
                     let title = match s.style {
                         NoteStyle::Cheat => Some(band(parts.title, s.paper, 1.0, &t).rounded(t.radius.button).into_any_element()),

@@ -13,6 +13,7 @@ mod links;
 mod markdown;
 mod merge;
 mod model;
+mod picture;
 mod store;
 mod theme;
 mod time;
@@ -29,12 +30,15 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-l", ToggleTheme, None),
         KeyBinding::new("secondary-shift-n", NewSheet, None),
         KeyBinding::new("secondary-n", NewNote, None),
-        KeyBinding::new("secondary-alt-n", QuickNote, None),
+        // The quick note's shortcut is chosen in Settings and registered
+        // for the whole system (desktop.rs), Folio's window included: no
+        // binding here, so AltGr+N still types where Ctrl+Alt makes letters.
         KeyBinding::new("secondary-f", FocusSearch, None),
         KeyBinding::new("secondary-k", OpenPalette, None),
         KeyBinding::new("secondary-b", ToggleDrawer, None),
         KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("secondary-shift-h", GoHome, None),
+        KeyBinding::new("secondary-shift-e", ExportSheet, None),
         KeyBinding::new("alt-left", GoBack, None),
         KeyBinding::new("alt-right", GoForward, None),
         KeyBinding::new("ctrl-pagedown", NextSheet, None),
@@ -53,6 +57,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-a", SelectAll, Some("Board")),
         KeyBinding::new("enter", EditSelection, Some("Board")),
         KeyBinding::new("secondary-v", Paste, Some("Board")),
+        KeyBinding::new("secondary-c", CopyNotes, Some("Board")),
+        KeyBinding::new("secondary-x", CutNotes, Some("Board")),
         KeyBinding::new("escape", Escape, Some("Board")),
         KeyBinding::new("secondary-=", ZoomIn, Some("Board")),
         KeyBinding::new("secondary-+", ZoomIn, Some("Board")),
@@ -115,6 +121,9 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-tab", PaletteBackTab, Some("Palette > Input")),
         KeyBinding::new("escape", Dismiss, Some("Palette > Input")),
         KeyBinding::new("escape", Dismiss, Some("QuickNote > Input")),
+        // The quick note's sheet, along the row and back.
+        KeyBinding::new("alt-right", QuickSheetNext, Some("QuickNote > Input")),
+        KeyBinding::new("alt-left", QuickSheetPrev, Some("QuickNote > Input")),
         KeyBinding::new("escape", Dismiss, Some("QuickNote")),
     ]);
 }

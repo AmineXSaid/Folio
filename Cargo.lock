@@ -1835,12 +1835,15 @@ dependencies = [
  "global-hotkey",
  "gpui-kit",
  "image",
+ "miniz_oxide 0.8.9",
  "percent-encoding",
+ "resvg 0.46.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tauri-winrt-notification",
  "tray-icon",
+ "ttf-parser",
  "ureq",
 ]
 

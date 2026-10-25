@@ -19,6 +19,7 @@ use std::time::Instant;
 use super::app::{Folio, Format, Gesture, MenuKind, MenuPage, Selection, Tool};
 use super::sticker::size_factor;
 use super::*;
+use crate::history::Before;
 use crate::model::*;
 use crate::theme::{theme, Theme};
 
@@ -302,6 +303,8 @@ impl Folio {
                 None => {}
             }))
             .on_action(cx.listener(|this, _: &Paste, _, cx| this.paste(false, cx)))
+            .on_action(cx.listener(|this, _: &CopyNotes, window, cx| this.copy_selection(window, cx)))
+            .on_action(cx.listener(|this, _: &CutNotes, _, cx| this.cut_selection(cx)))
             .on_action(cx.listener(|this, _: &PasteMarkdown, _, cx| this.paste(true, cx)))
             .on_action(cx.listener(|this, _: &ToMarkdown, _, cx| {
                 let ids = this.selected_notes();
@@ -522,9 +525,7 @@ impl Folio {
     /// The edit bar over the note being typed into: writing on the first
     /// row, the note's look on the second.
     fn edit_bar(&self, s: &Sticker, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
-        let cam = self.sheet().camera;
-        let r = self.note_rect(s);
-        let at = cam.to_screen(v2(r.x, r.y));
+        let at = self.edit_bar_spot(s);
         let id = s.id;
         let tip = |text: String| move |window: &mut Window, cx: &mut gpui::App| super::tip(text.clone(), window, cx);
         let bar_btn = |name: &'static str, path: &'static str| {
@@ -545,19 +546,62 @@ impl Folio {
                 .tooltip(tip(format!("{what}  {}", shortcut(keys))))
                 .on_click(cx.listener(move |this, _, window, cx| this.format_editing(f, window, cx)))
         };
-        let papers = Paper::ALL.iter().map(|&p| {
-            div()
-                .id(("e-paper", p as usize))
-                .size(px(15.))
-                .rounded(t.radius.full)
-                .hover(|d| d.border_color(t.colors.text_subtle))
-                .bg(t.paper(p))
-                .border_1()
-                .border_color(t.colors.border)
-                .cursor_pointer()
-                .when(s.paper == p, |d| d.border_2().border_color(t.colors.brand))
-                .on_click(cx.listener(move |this, _, _, cx| this.change_note(id, cx, |s| s.paper = p)))
-        });
+        // The papers wait behind one swatch of the note's own paper, so the
+        // bar stays narrow; they open on the side away from the note.
+        let up = at.y < self.note_rect(s).y * self.sheet().camera.zoom + self.sheet().camera.pan.y;
+        let papers_open = self.edit_papers;
+        let paper_button = div()
+            .id("e-paper")
+            .relative()
+            .size(px(30.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(t.radius.small)
+            .cursor_pointer()
+            .when(papers_open, |d| d.bg(t.colors.hover))
+            .hover(|d| d.bg(t.colors.hover))
+            .tooltip(tip("Paper".into()))
+            .child(div().size(px(16.)).rounded(t.radius.full).bg(t.paper(s.paper)).border_1().border_color(t.colors.text_subtle))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.edit_papers = !this.edit_papers;
+                cx.notify();
+            }))
+            .when(papers_open, |d| {
+                d.child(
+                    div()
+                        .id("e-papers")
+                        .occlude()
+                        .absolute()
+                        .left(px(-8.))
+                        .when(up, |p| p.bottom_full().mb(px(48.)))
+                        .when(!up, |p| p.top_full().mt(px(12.)))
+                        .p(t.space.sm)
+                        .flex()
+                        .gap(px(5.))
+                        .rounded(t.radius.card)
+                        .bg(t.colors.surface)
+                        .border_1()
+                        .border_color(t.colors.border)
+                        .shadow(t.shadow_float())
+                        .children(Paper::ALL.iter().map(|&p| {
+                            div()
+                                .id(("e-paper", p as usize))
+                                .size(px(20.))
+                                .rounded(t.radius.full)
+                                .bg(t.paper(p))
+                                .border_1()
+                                .border_color(t.colors.border)
+                                .hover(|d| d.border_color(t.colors.text_subtle))
+                                .cursor_pointer()
+                                .when(s.paper == p, |d| d.border_2().border_color(t.colors.brand))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.edit_papers = false;
+                                    this.change_note(id, cx, |s| s.paper = p)
+                                }))
+                        })),
+                )
+            });
         // The note's type: the chosen one says its name.
         let styles = NoteStyle::ALL.iter().map(|&st| {
             let on = s.style == st;
@@ -639,20 +683,7 @@ impl Folio {
             .child(write("e-callout", "icons/lightbulb.svg", "Remember box", "Shift+R", Format::Callout))
             .child(divider())
             .child(
-                div()
-                    .id("e-markdown")
-                    .h(px(28.))
-                    .px(px(8.))
-                    .flex()
-                    .items_center()
-                    .gap(px(5.))
-                    .rounded(t.radius.small)
-                    .text_size(t.text.caption)
-                    .text_color(t.colors.text_muted)
-                    .cursor_pointer()
-                    .hover(|d| d.bg(t.colors.hover))
-                    .child(icon("icons/wand-sparkles.svg", t.size.icon_sm, t.colors.text_muted))
-                    .child("Markdown")
+                bar_btn("e-markdown", "icons/wand-sparkles.svg")
                     .tooltip(tip(format!("Turn pasted text into Markdown  {}", shortcut("Shift+T"))))
                     .on_click(cx.listener(|this, _, window, cx| this.format_editing(Format::Markdown, window, cx))),
             )
@@ -685,8 +716,7 @@ impl Folio {
                     }),
                 ),
             )
-            .child(divider())
-            .children(papers)
+            .child(paper_button)
             .child(divider())
             .children(fonts)
             .child(divider())
@@ -714,10 +744,11 @@ impl Folio {
                         window.focus(&this.focus, cx);
                     })),
             );
+        let size = self.edit_bar_size.clone();
         div()
             .absolute()
             .left(px(at.x))
-            .top(px((at.y - 86.).max(4.)))
+            .top(px(at.y))
             .flex()
             .flex_col()
             .gap(px(3.))
@@ -730,6 +761,76 @@ impl Folio {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(writing)
             .child(look)
+            // Its size, for finding it a place next time.
+            .child(
+                canvas(
+                    move |b, window, _| {
+                        let now = (f32::from(b.size.width), f32::from(b.size.height));
+                        if (now.0 - size.get().0).abs() > 1. || (now.1 - size.get().1).abs() > 1. {
+                            size.set(now);
+                            window.refresh();
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+    }
+
+    /// Where the edit bar goes (sheet-local screen px): above or below the
+    /// note, lined up with its left or right edge, inside the window, on
+    /// as little of the other notes as it can, never on the note itself.
+    fn edit_bar_spot(&self, s: &Sticker) -> Vec2 {
+        let cam = self.sheet().camera;
+        let r = self.note_rect(s);
+        let z = cam.zoom.max(0.8);
+        let at = cam.to_screen(v2(r.x, r.y));
+        let note = Rect { x: at.x, y: at.y, w: r.w * z, h: r.h * z };
+        let (bw, bh) = self.edit_bar_size.get();
+        let (vw, vh) = self.viewport_size();
+        let gap = 10.;
+        // Clear of the dock at the bottom.
+        let floor = vh - 96.;
+        let place = |x: f32, y: f32| v2(x.clamp(8., (vw - bw - 8.).max(8.)), y.clamp(4., (floor - bh).max(4.)));
+        let above = note.y - bh - gap;
+        let below = note.y + note.h + gap;
+        // Lined up with the note's left edge, its right edge, its middle,
+        // then anywhere along the row above or below it.
+        let lined = [note.x, note.x + note.w - bw, note.x + (note.w - bw) / 2.];
+        let along = (0..).map(|i| 8. + i as f32 * 24.).take_while(|x| *x + bw <= vw - 8.);
+        let spots: Vec<Vec2> = [above, below]
+            .into_iter()
+            .flat_map(|y| lined.into_iter().chain(along.clone()).map(move |x| (x, y)))
+            .map(|(x, y)| place(x, y))
+            .collect();
+        let others: Vec<Rect> = self
+            .sheet()
+            .stickers
+            .iter()
+            .filter(|o| o.id != s.id)
+            .map(|o| {
+                let r = self.note_rect(o);
+                let a = cam.to_screen(v2(r.x, r.y));
+                Rect { x: a.x, y: a.y, w: r.w * cam.zoom, h: r.h * cam.zoom }
+            })
+            .collect();
+        let covered = |p: &Vec2| {
+            let bar = Rect { x: p.x, y: p.y, w: bw, h: bh };
+            let on_note = overlap(&bar, &note);
+            // Covering the note being typed into is worse than any other.
+            on_note * 100. + others.iter().map(|o| overlap(&bar, o)).sum::<f32>()
+        };
+        // The first of the least covered: above on the left when all's clear.
+        spots.into_iter().fold(None, |best: Option<(Vec2, f32)>, p| {
+            let c = covered(&p);
+            match best {
+                Some((_, b)) if b <= c + 0.5 => best,
+                _ => Some((p, c)),
+            }
+        })
+        .map(|(p, _)| p)
+        .unwrap_or(v2(note.x, above))
     }
 
     /// The edit bar after Done, sinking away over its note.
@@ -761,14 +862,39 @@ impl Folio {
                 .rounded_t(px(rt))
         });
         use gpui::StyledImage;
+        // The title and text are typed where they're drawn, the same size:
+        // nothing jumps as the note opens for typing. The fields' own text
+        // is 0.875 rem and they inset it by INSET, so the rem is set to give
+        // the note's size and the inset is taken back.
+        const INSET: f32 = 10.;
+        // And the text field's own top padding.
+        const INSET_TOP: f32 = 8.;
+        let title_size = if s.style == NoteStyle::Cheat { 14. } else { 15. } * k * z;
+        let title_line = if s.style == NoteStyle::Index { 24. } else { 20. } * k * z;
         let title = div()
-            .text_size(px(15. * k * z))
+            .flex_1()
+            .h(px(title_line))
+            .flex()
+            .items_center()
+            .ml(px(-INSET))
             .font_weight(gpui::FontWeight::SEMIBOLD)
-            .child(Input::new(&self.title_input).appearance(false));
-        // The title sits where this type puts it: on a cheat card's band.
-        let title = match s.style {
-            NoteStyle::Cheat => div().px(px(10. * z)).py(px(4. * z)).rounded_t(px((rt - 2.).max(0.))).bg(t.paper_band(s.paper)).child(title),
-            _ => div().px(px(10. * z)).pt(px(8. * z)).child(title),
+            .text_color(t.colors.text)
+            .child(rem_scaled(px(title_size / 0.875), Input::new(&self.title_input).appearance(false)));
+        let text = div().ml(px(-INSET)).mt(px(-INSET_TOP)).child(rem_scaled(px(13. * k * z / 0.875), Textarea::new(&self.body_input).appearance(false)));
+        // Laid out as the note's type lays out its title and text.
+        let (title, text) = match s.style {
+            NoteStyle::Cheat => (
+                super::sticker::band(Some(title.into_any_element()), s.paper, z, t).rounded_t(px((rt - 2.).max(0.))),
+                div().px(px(14. * z)).pt(px(10. * z)).pb(px(14. * z)).child(text),
+            ),
+            NoteStyle::Index => (
+                div().pl(px(40. * z)).pr(px(16. * z)).pt(px(12. * z)).pb(px(4. * z)).border_b_1().border_color(t.colors.head_rule).child(title),
+                div().pl(px(40. * z)).pr(px(14. * z)).pb(px(10. * z)).child(text),
+            ),
+            style => (
+                div().px(px(16. * z)).pt(px(if style == NoteStyle::Taped { 18. } else { 14. } * z)).child(title),
+                div().px(px(16. * z)).pt(px(8. * z)).pb(px(14. * z)).child(text),
+            ),
         };
         let me = cx.entity();
         let w = r.w * z;
@@ -802,7 +928,7 @@ impl Folio {
             }))
             .children(picture)
             .child(title)
-            .child(div().px(px(10. * z)).pb(px(8. * z)).child(Textarea::new(&self.body_input).appearance(false)))
+            .child(text)
             .when(s.style == NoteStyle::Taped && s.pin.is_none(), |d| d.child(super::sticker::tape(id, w, z, t)))
             .children(s.pin.map(|p| super::pins::pin_view(p, w, z, self.exits.notes.pin_landing(id, &t.motion), t)));
         let note = on_format(note, move |f, window, cx| me.update(cx, |this, cx| this.format_key(f, window, cx)));
@@ -886,7 +1012,7 @@ impl Folio {
         let (vw, vh) = self.viewport_size();
         let cam = &mut self.board.sheet_mut().camera;
         cam.pan = v2(vw / 2. - w.x * cam.zoom, vh / 2. - w.y * cam.zoom);
-        self.schedule_save(cx);
+        self.schedule_view_save(cx);
         cx.notify();
     }
 
@@ -975,14 +1101,17 @@ impl Folio {
         let cam = self.sheet().camera;
         let world = cam.to_world(at);
         let double = ev.click_count >= 2;
-        let shift = ev.modifiers.shift;
+        // Ctrl (Cmd on a Mac) or Shift and a click adds to the selection or
+        // takes out of it, as in a file window; a box drawn with either
+        // adds to it.
+        let shift = ev.modifiers.shift || ev.modifiers.secondary();
         let pan = Gesture::Pan { start: at, pan: cam.pan };
         // A click on the sheet's name renames it, right there.
         if !self.space && matches!(self.tool, Tool::Select | Tool::Text) && self.on_title(at) {
             self.start_naming(window, cx);
             return;
         }
-        self.before = Some(self.board.clone());
+        self.before = Some(Before::open(&self.board));
         if self.space {
             self.gesture = pan;
             cx.notify();
@@ -1005,6 +1134,13 @@ impl Folio {
                 } else if let Some((id, grip)) = self.frame_grip_at(at) {
                     let rect = self.sheet().frames.iter().find(|f| f.id == id).map(|f| f.rect).unwrap();
                     self.gesture = Gesture::ResizeFrame { id, start: world, rect, grip };
+                } else if !shift && !double && gpui::base::TextSelection::is_selectable_at(ev.position, window, cx) {
+                    // The words of the one selected note: the press picks
+                    // out text (Ctrl+C copies it); the note moves by its
+                    // title, its edges or anywhere else on it.
+                    self.gesture = Gesture::None;
+                    cx.notify();
+                    return;
                 } else if let Some(id) = self.note_at(world) {
                     let sel = Selection::Sticker(id);
                     if double {
@@ -1013,10 +1149,11 @@ impl Folio {
                         return;
                     }
                     if shift {
-                        if self.is_selected(sel) {
-                            self.selection.retain(|s| *s != sel);
-                        } else {
-                            self.selection.push(sel);
+                        if !self.toggle_selected(sel) {
+                            // Taken out: nothing to drag.
+                            self.gesture = Gesture::None;
+                            cx.notify();
+                            return;
                         }
                     } else if !self.is_selected(sel) {
                         self.select(sel);
@@ -1030,10 +1167,14 @@ impl Folio {
                         self.edit_label(id, false, window, cx);
                         return;
                     }
-                    if !self.is_selected(sel) && !shift {
+                    if shift {
+                        if !self.toggle_selected(sel) {
+                            self.gesture = Gesture::None;
+                            cx.notify();
+                            return;
+                        }
+                    } else if !self.is_selected(sel) {
                         self.select(sel);
-                    } else if shift && !self.is_selected(sel) {
-                        self.selection.push(sel);
                     }
                     self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
                 } else if let Some(id) = self.frame_bar_at(world) {
@@ -1043,12 +1184,14 @@ impl Folio {
                         self.rename_frame(id, window, cx);
                         return;
                     }
-                    if !self.is_selected(sel) {
-                        if shift {
-                            self.selection.push(sel);
-                        } else {
-                            self.select(sel);
+                    if shift {
+                        if !self.toggle_selected(sel) {
+                            self.gesture = Gesture::None;
+                            cx.notify();
+                            return;
                         }
+                    } else if !self.is_selected(sel) {
+                        self.select(sel);
                     }
                     self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
                 } else if double {
@@ -1355,7 +1498,7 @@ impl Folio {
     fn release(&mut self, cx: &mut Context<Self>) {
         let gesture = std::mem::replace(&mut self.gesture, Gesture::None);
         self.guides.clear();
-        let before = self.before.take();
+        let mut before = self.before.take();
         match gesture {
             Gesture::None => {
                 // The editor or a dialog took over this press; keep its snapshot.
@@ -1364,7 +1507,7 @@ impl Folio {
                 }
                 return;
             }
-            Gesture::Pan { .. } => self.schedule_save(cx),
+            Gesture::Pan { .. } => self.schedule_view_save(cx),
             Gesture::Move { items, moved: true, .. } => {
                 let target = self.drop_sheet.take();
                 self.drop_tray = false;
@@ -1384,6 +1527,10 @@ impl Folio {
                                 s.rect.y = from.y;
                             }
                         }
+                    }
+                    // The other sheet changes too: keep it as it was first.
+                    if let Some(b) = before.as_mut() {
+                        b.keep(&self.board, to);
                     }
                     for id in &ids {
                         self.board.move_note(*id, to);
@@ -1429,32 +1576,23 @@ impl Folio {
             }
             _ => {}
         }
-        if let Some(before) = before {
-            // Commit compares content, so a pan alone records nothing.
-            let mut b = before;
-            b.active = self.board.active;
-            for (c, now) in b.categories.iter_mut().zip(&self.board.categories) {
-                if c.id == now.id {
-                    c.camera = now.camera;
-                    // Bringing to front on a click isn't a change.
-                    if c.stickers.len() == now.stickers.len() && c.stickers.iter().all(|s| now.stickers.contains(s)) {
-                        c.stickers = now.stickers.clone();
-                    }
-                }
-            }
-            self.commit(b, cx);
+        if let Some(mut b) = before {
+            // A pan alone, or a click bringing a note to the front, records
+            // nothing.
+            b.settle(&self.board);
+            self.commit_since(b, cx);
         }
         cx.notify();
     }
 
     /// A new area over `r`, named next.
     pub fn new_frame(&mut self, r: Rect, cx: &mut Context<Self>) {
-        let before = self.before.take().unwrap_or_else(|| self.board.clone());
+        let before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
         let id = self.board.fresh_id();
         let n = self.sheet().frames.len();
         let accent = Accent::ALL[(n + 1) % Accent::ALL.len()];
         self.board.sheet_mut().frames.insert(0, Frame { id, rect: r, title: String::new(), accent });
-        self.commit(before, cx);
+        self.commit_since(before, cx);
         self.select(Selection::Frame(id));
         self.dialog = Some(super::app::Dialog::RenameFrame(id));
         cx.notify();
@@ -1473,7 +1611,7 @@ impl Folio {
             cam.pan.x += dx;
             cam.pan.y += dy;
         }
-        self.schedule_save(cx);
+        self.schedule_view_save(cx);
         cx.notify();
     }
 
@@ -1672,4 +1810,11 @@ fn empty_state(t: &Theme) -> impl IntoElement {
 fn head_at(t: &Theme) -> Vec2 {
     let home = Camera::default().pan;
     v2(f32::from(t.space.xxl) - home.x, f32::from(t.space.xl) - home.y)
+}
+
+/// The area two screen rectangles share.
+fn overlap(a: &Rect, b: &Rect) -> f32 {
+    let w = (a.x + a.w).min(b.x + b.w) - a.x.max(b.x);
+    let h = (a.y + a.h).min(b.y + b.h) - a.y.max(b.y);
+    w.max(0.) * h.max(0.)
 }

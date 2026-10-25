@@ -25,6 +25,7 @@ enum Cmd {
     Home,
     Drawer,
     Settings,
+    Tasks,
     Trash,
     Archive,
     Backups,
@@ -41,18 +42,23 @@ enum Cmd {
     Transfer,
     Import,
     Rename,
+    SavePng,
+    SavePdf,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 22] = [
+const CMDS: [(Cmd, &str, &str, &str); 25] = [
     (Cmd::NewNote, "New note", "Ctrl N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl Shift N", "icons/plus.svg"),
-    (Cmd::QuickNote, "Quick note to Inbox", "Ctrl Alt N", "icons/inbox.svg"),
+    (Cmd::QuickNote, "Quick note to Inbox or any sheet", "Ctrl Alt N", "icons/inbox.svg"),
+    (Cmd::Tasks, "Tasks on every sheet", "", "icons/list-checks.svg"),
     (Cmd::Rename, "Rename this sheet", "", "icons/pencil.svg"),
     (Cmd::Home, "Go to all sheets", "Ctrl Shift H", "icons/layout-grid.svg"),
     (Cmd::Drawer, "Show the sheets drawer", "Ctrl B", "icons/panel-left.svg"),
     (Cmd::Transfer, "Sync & export: Google Drive, files", "", "icons/cloud.svg"),
     (Cmd::Drive, "Sync with Google Drive", "", "icons/refresh-cw.svg"),
     (Cmd::Import, "Import a Folio file…", "", "icons/upload.svg"),
+    (Cmd::SavePng, "Save this sheet as PNG…", "", "icons/image.svg"),
+    (Cmd::SavePdf, "Save this sheet as PDF…", "", "icons/file-output.svg"),
     (Cmd::Settings, "Settings", "Ctrl ,", "icons/settings.svg"),
     (Cmd::Trash, "Open the Trash", "", "icons/trash.svg"),
     (Cmd::Archive, "Open the Archive", "", "icons/archive.svg"),
@@ -169,27 +175,81 @@ struct Found {
     cut: Vec<(&'static str, usize)>,
 }
 
-/// Fuzzy match: every query character in order. Higher is better: matches
-/// at word starts and in runs score more. Returns the matched byte offsets.
+// How well a label matches, best first. Each tier beats every one below
+// it, whatever the label's length; within one, shorter labels win.
+const EXACT: i32 = 50_000;
+const PREFIX: i32 = 40_000;
+const WORD: i32 = 30_000;
+const WORDS: i32 = 20_000;
+const INSIDE: i32 = 10_000;
+/// A note whose text (not its first line) holds the query.
+const IN_TEXT: i32 = 9_000;
+
+fn fold(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
+/// Where `run` sits in `chars`, best place first: at a word's start, else
+/// the first place it's anywhere.
+fn find_run(chars: &[(usize, char)], run: &[char], starts: &dyn Fn(usize) -> bool) -> Option<usize> {
+    if run.is_empty() || run.len() > chars.len() {
+        return None;
+    }
+    let at = |k: usize| chars[k..k + run.len()].iter().map(|c| c.1).eq(run.iter().copied());
+    let all = || (0..=chars.len() - run.len()).filter(|&k| at(k));
+    all().find(|&k| starts(k)).or_else(|| all().next())
+}
+
+/// Matches `query` against `text`. Higher is better: the whole label, then
+/// its start, then a word in it starting with what you typed, then every
+/// word you typed starting one of its words, then the query anywhere in a
+/// row, then its letters in order but scattered (where word starts and
+/// runs score more). Returns the matched byte offsets.
 pub fn fuzzy(query: &str, text: &str) -> Option<(i32, Vec<usize>)> {
-    if query.is_empty() {
+    let words: Vec<Vec<char>> = query.split_whitespace().map(|w| w.chars().map(fold).collect()).collect();
+    if words.is_empty() {
         return Some((0, vec![]));
     }
-    let lower: Vec<(usize, char)> = text.char_indices().map(|(i, c)| (i, c.to_ascii_lowercase())).collect();
+    let chars: Vec<(usize, char)> = text.char_indices().map(|(i, c)| (i, fold(c))).collect();
+    let starts = |k: usize| k == 0 || !chars[k - 1].1.is_alphanumeric();
+    let shorter = -(text.len().min(4_000) as i32) / 4;
+    let span = |k: usize, n: usize| chars[k..k + n].iter().map(|c| c.0).collect::<Vec<_>>();
+
+    // What you typed, in a row.
+    let phrase: Vec<char> = words.join(&' ');
+    if let Some(k) = find_run(&chars, &phrase, &starts) {
+        let tier = match k {
+            0 if phrase.len() == chars.len() => EXACT,
+            0 => PREFIX,
+            _ if starts(k) => WORD,
+            _ => INSIDE,
+        };
+        return Some((tier + shorter, span(k, phrase.len())));
+    }
+    // Every word you typed starts a word of the label, in any order.
+    if words.len() > 1 {
+        let mut hits = vec![];
+        for w in &words {
+            let k = (0..chars.len()).find(|&k| starts(k) && k + w.len() <= chars.len() && chars[k..k + w.len()].iter().map(|c| c.1).eq(w.iter().copied()))?;
+            hits.extend(span(k, w.len()));
+        }
+        hits.sort_unstable();
+        hits.dedup();
+        return Some((WORDS + shorter, hits));
+    }
+    // The letters in order, scattered.
     let mut positions = vec![];
     let mut score = 0;
     let mut at = 0;
     let mut prev: Option<usize> = None;
-    for q in query.chars().map(|c| c.to_ascii_lowercase()).filter(|c| !c.is_whitespace()) {
-        let found = (at..lower.len()).find(|&k| lower[k].1 == q)?;
-        let word_start = found == 0 || !lower[found - 1].1.is_alphanumeric();
-        score += 1 + if word_start { 8 } else { 0 } + if prev == Some(found.wrapping_sub(1)) { 5 } else { 0 };
-        positions.push(lower[found].0);
+    for q in phrase.iter().copied().filter(|c| !c.is_whitespace()) {
+        let found = (at..chars.len()).find(|&k| chars[k].1 == q)?;
+        score += 1 + if starts(found) { 8 } else { 0 } + if prev == Some(found.wrapping_sub(1)) { 5 } else { 0 };
+        positions.push(chars[found].0);
         prev = Some(found);
         at = found + 1;
     }
-    // Shorter labels win ties.
-    Some((score * 10 - text.len() as i32 / 4, positions))
+    Some(((score * 10).min(INSIDE / 2) + shorter, positions))
 }
 
 /// A note's first line as it reads: no Markdown marks, link targets or
@@ -301,6 +361,7 @@ impl Folio {
 
     pub fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.palette = false;
+        self.link_from = None;
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -308,12 +369,16 @@ impl Folio {
     fn rows_all(&self) -> Vec<Row> {
         let mut out: Vec<Row> = CMDS
             .iter()
-            .filter(|(c, ..)| *c != Cmd::Rename || self.screen == Screen::Sheet)
+            .filter(|(c, ..)| !matches!(c, Cmd::Rename | Cmd::SavePng | Cmd::SavePdf) || self.screen == Screen::Sheet)
             .map(|&(c, label, key, path)| Row {
                 label: label.into(),
                 group: "Commands",
                 icon: path,
-                hint: (!key.is_empty()).then(|| key.into()),
+                // The quick note's keys are the ones chosen in Settings.
+                hint: match c {
+                    Cmd::QuickNote => self.board.settings.quick_hotkey.then(|| self.board.settings.quick_keys.replace('+', " ").into()),
+                    _ => (!key.is_empty()).then(|| key.into()),
+                },
                 detail: None,
                 emoji: None,
                 target: Target::Cmd(c),
@@ -341,36 +406,51 @@ impl Folio {
         let mut out = Vec::new();
         let ql = q.to_lowercase();
         let semantic = ql.starts_with('#') || ql.starts_with("paper:");
-        let mut notes: Vec<(&crate::model::Category, &crate::model::Sticker)> =
-            self.board.categories.iter().flat_map(|c| c.stickers.iter().map(move |s| (c, s))).collect();
+        // Linking a note: it isn't offered a link to itself.
+        let mut notes: Vec<(&crate::model::Category, &crate::model::Sticker)> = self
+            .board
+            .categories
+            .iter()
+            .flat_map(|c| c.stickers.iter().map(move |s| (c, s)))
+            .filter(|(_, s)| Some(s.id) != self.link_from)
+            .collect();
         if q.is_empty() {
             // Nothing typed: the latest edited first.
             notes.sort_by(|a, b| b.1.edited.cmp(&a.1.edited));
         }
+        // Every note is scored before any is cut, so the best are never
+        // left out for coming late.
+        let mut hits = Vec::new();
         for (c, s) in notes {
-            let line: SharedString = plain(&first_line(s)).into();
+            let line = plain(&first_line(s));
             let found = if q.is_empty() {
                 Some((0, vec![]))
             } else if semantic {
                 s.matches(&ql).then(|| (1, vec![]))
             } else {
-                fuzzy(q, &line).or_else(|| s.matches(&ql).then(|| (1, substring_hits(&line, &ql))))
+                fuzzy(q, &line).or_else(|| s.matches(&ql).then(|| (IN_TEXT, substring_hits(&line, &ql))))
             };
             if let Some((score, pos)) = found {
-                let snippet = (!q.is_empty() && !semantic && pos.is_empty()).then(|| super::home::snippet_of(s, &ql)).filter(|x| !x.is_empty());
-                let detail = match snippet {
-                    Some(sn) => format!("{} · {sn}", c.name),
-                    None => c.name.clone(),
-                };
-                out.push((
-                    score,
-                    Row { label: line, group: "Notes", icon: "icons/sticky-note.svg", hint: None, detail: Some(detail.into()), emoji: None, target: Target::Note(s.id) },
-                    pos,
-                ));
+                hits.push((score, c, s, line, pos));
+                if q.is_empty() && hits.len() >= MAX_NOTES {
+                    break;
+                }
             }
-            if out.len() >= MAX_NOTES * 4 {
-                break;
-            }
+        }
+        // Stable: equal scores keep the sheets' order.
+        hits.sort_by(|a, b| b.0.cmp(&a.0));
+        hits.truncate(MAX_NOTES);
+        for (score, c, s, line, pos) in hits {
+            let snippet = (!q.is_empty() && !semantic && pos.is_empty()).then(|| super::home::snippet_of(s, &ql)).filter(|x| !x.is_empty());
+            let detail = match snippet {
+                Some(sn) => format!("{} · {sn}", c.name),
+                None => c.name.clone(),
+            };
+            out.push((
+                score,
+                Row { label: line.into(), group: "Notes", icon: "icons/sticky-note.svg", hint: None, detail: Some(detail.into()), emoji: None, target: Target::Note(s.id) },
+                pos,
+            ));
         }
         out
     }
@@ -382,12 +462,7 @@ impl Folio {
         let mut scored: Vec<(i32, Row, Vec<usize>)> =
             self.rows_all().into_iter().filter_map(|r| fuzzy(q, &r.label).map(|(s, p)| (s, r, p))).collect();
         if !q.is_empty() || scope == Scope::Notes {
-            let mut notes = self.note_rows(q);
-            if !q.is_empty() {
-                notes.sort_by(|a, b| b.0.cmp(&a.0));
-            }
-            notes.truncate(MAX_NOTES);
-            scored.extend(notes);
+            scored.extend(self.note_rows(q));
         }
         let mut counts = [0; 4];
         for (_, r, _) in &scored {
@@ -515,6 +590,8 @@ impl Folio {
             self.palette_recent.truncate(MAX_RECENT);
         }
         self.palette = false;
+        // Linking: only a note picked finishes it.
+        let linking = self.link_from.take();
         window.focus(&self.focus, cx);
         match row.target {
             Target::Sheet(id) => {
@@ -522,7 +599,11 @@ impl Folio {
                     self.open_sheet(i, window, cx);
                 }
             }
-            Target::Note(id) => self.reveal_note(id, window, cx),
+            Target::Note(id) => match linking {
+                // Picking the note a link goes to.
+                Some(from) => self.link_notes(from, id, cx),
+                None => self.reveal_note(id, window, cx),
+            },
             Target::NoteOf(text) => {
                 if self.screen == Screen::Sheet {
                     let (w, h) = self.viewport_size();
@@ -535,7 +616,7 @@ impl Folio {
                     self.title_input.update(cx, |i, cx| i.set_value(title, window, cx));
                     self.body_input.update(cx, |i, cx| i.set_value(body, window, cx));
                 } else {
-                    self.quick_note(&text, cx);
+                    self.quick_note(&text, None, cx);
                 }
             }
             Target::SheetOf(name) => {
@@ -550,11 +631,16 @@ impl Folio {
             Target::Cmd(c) => match c {
                 Cmd::NewNote => self.new_note(window, cx),
                 Cmd::NewSheet => self.new_sheet_dialog(window, cx),
-                Cmd::QuickNote => crate::desktop::open_quick_note(cx.entity(), cx),
+                Cmd::QuickNote => {
+                    // Opened once this update is over: it reads Folio.
+                    let f = cx.entity();
+                    cx.defer(move |cx| crate::desktop::open_quick_note(f, cx));
+                }
                 Cmd::Rename => self.start_naming(window, cx),
                 Cmd::Home => self.go_home(cx),
                 Cmd::Drawer => self.drawer = true,
                 Cmd::Settings => self.open_settings(cx),
+                Cmd::Tasks => self.open_tasks(cx),
                 Cmd::Trash => self.open_bin(BinTab::Trash, cx),
                 Cmd::Archive => self.open_bin(BinTab::Archive, cx),
                 Cmd::Backups => self.open_bin(BinTab::Backups, cx),
@@ -569,6 +655,8 @@ impl Folio {
                 Cmd::Drive => self.sign_in_google(window, cx),
                 Cmd::Transfer => self.open_transfer(cx),
                 Cmd::Import => self.import_file(cx),
+                Cmd::SavePng => self.save_sheet_as(self.board.active, crate::picture::Format::Png, cx),
+                Cmd::SavePdf => self.save_sheet_as(self.board.active, crate::picture::Format::Pdf, cx),
                 Cmd::Theme => self.toggle_theme(cx),
                 Cmd::Fit | Cmd::Tidy | Cmd::Map => {
                     if self.screen != Screen::Sheet {
@@ -582,7 +670,7 @@ impl Folio {
                     }
                 }
                 Cmd::Profile => self.open_welcome(false, window, cx),
-                Cmd::Intro => self.intro = Some(super::app::Intro { start: std::time::Instant::now() }),
+                Cmd::Intro => self.intro = Some(super::app::Intro { start: std::time::Instant::now(), word: Default::default() }),
                 Cmd::Back => self.go_back(window, cx),
                 Cmd::Forward => self.go_forward(window, cx),
             },
@@ -898,6 +986,23 @@ mod tests {
         let (b, _) = fuzzy("set", "Reset the theme").unwrap();
         assert!(a > b, "a word start and a run beat letters scattered");
         assert_eq!(fuzzy("bk", "Back up now").unwrap().1, vec![0, 3]);
+    }
+
+    #[test]
+    fn whole_words_and_starts_beat_scattered_letters() {
+        let score = |q: &str, t: &str| fuzzy(q, t).unwrap().0;
+        // The palette once put "Sync & export" above this note for "seed".
+        assert!(score("seed", "Seeds to order") > score("seed", "Sync & export: Google Drive"));
+        assert!(score("seed", "Show the sheets drawer") < score("seed", "Order the seeds"));
+        assert!(score("milk", "Milk") > score("milk", "Milk and eggs"), "the whole label first");
+        assert!(score("milk", "Milk and eggs") > score("milk", "Buy milk"), "then its start");
+        assert!(score("milk", "Buy milk") > score("milk", "Buttermilk"), "then a word's start");
+        assert!(score("eggs milk", "Milk and eggs") > score("ilk", "Buttermilk"), "words in any order");
+        assert_eq!(fuzzy("eggs milk", "Milk and eggs").unwrap().1, vec![0, 1, 2, 3, 9, 10, 11, 12]);
+        assert!(fuzzy("zz top", "Milk and eggs").is_none());
+        // Even a long label's run beats a short one's scattered letters.
+        assert!(score("plan", &format!("The plan {}", "x".repeat(400))) > score("plan", "P l a n"));
+        assert_eq!(fuzzy("MILK", "Buy milk").unwrap().1, vec![4, 5, 6, 7], "any case");
     }
 
     #[test]

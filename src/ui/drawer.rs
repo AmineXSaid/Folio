@@ -109,6 +109,7 @@ impl Folio {
                 .into_any_element()
         };
         let trash = self.board.bin.iter().filter(|b| !b.archived).count();
+        let open_tasks = self.board.tasks().iter().filter(|x| !x.done).count();
         let sync_dot = {
             use super::sync::DriveState as S;
             match self.sync.state {
@@ -134,6 +135,10 @@ impl Folio {
             .child(
                 nav("nav-home", "icons/layout-grid.svg", "All sheets", screen == Screen::Home, t.colors.brand, t.colors.primary_fg, Some(pill(sheets_n.to_string())))
                     .on_click(cx.listener(|this, _, _, cx| this.go_home(cx))),
+            )
+            .child(
+                nav("nav-tasks", "icons/list-checks.svg", "Tasks", screen == Screen::Tasks, t.colors.brand_tint, t.colors.brand_on_tint, (open_tasks > 0).then(|| pill(open_tasks.to_string())))
+                    .on_click(cx.listener(|this, _, _, cx| this.open_tasks(cx))),
             )
             .child(
                 nav("nav-bin", "icons/archive.svg", "Trash & archive", screen == Screen::Bin, neutral.0, neutral.1, (trash > 0).then(|| pill(trash.to_string())))

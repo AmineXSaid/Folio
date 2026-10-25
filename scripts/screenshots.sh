@@ -10,8 +10,11 @@
 # <name>-light.png and <name>-dark.png:
 #   intro   the opening, mid-way      home    the home screen
 #   intro-late  the opening, the logo drawn
+#   welcome  the first run's note asking your name
+#   welcome-look  the same note, picking a face
 #   drawer  the sheets drawer         sheet   a sheet
 #   edit    typing into a note        menu    a note's right-click menu
+#   select  three notes picked with Ctrl+click, and the selection bar
 #   palette Ctrl+K                    settings
 #   types   the cheatsheet sheet: taped notes, cheat cards, index cards
 #   background  the sheet menu's Background page: patterns, colours, a picture
@@ -58,9 +61,10 @@ for mode in light dark; do
   sleep 1.2; import -window root "$OUT/intro-late-$mode.png"
   sleep 3.3
   # The first run asks your name, then your look: "Start writing".
-  xdotool type --delay 30 "Sam"; key Return; sleep 0.8
-  xdotool mousemove 670 588 click 1; sleep 1.5
   [ "$mode" = dark ] && key ctrl+shift+l
+  xdotool type --delay 30 "Sam"; shot welcome
+  key Return; shot welcome-look
+  xdotool mousemove 831 540 click 1; sleep 1.5
   shot home
   key ctrl+b; shot drawer; key Escape
   # The first sheet, from the palette.
@@ -79,6 +83,10 @@ for mode in light dark; do
   shot sheet
   # A note's menu, then typing into it.
   xdotool mousemove 150 260 click 3; shot menu; key Escape
+  # Several notes: Ctrl+click, the ticks and the selection bar.
+  xdotool mousemove 160 240 click 1; xdotool keydown ctrl
+  xdotool mousemove 490 330 click 1; xdotool mousemove 870 300 click 1; xdotool keyup ctrl
+  xdotool mousemove 640 420; shot select; key Escape
   xdotool mousemove 580 600 click --repeat 2 --delay 80 1; sleep 1.2
   xdotool type --delay 25 " Edited in place."; shot edit; key Escape
   key ctrl+k; xdotool type --delay 20 "seed"; shot palette; key Escape

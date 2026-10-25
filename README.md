@@ -17,7 +17,9 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
   Four types of note: card, taped, cheat card (the title on a band) and
   index card (ruled, with a pin); a pin for any note, in 18 shapes (classic
   push pins, tech, cute, stars, fun), three sizes and eight colours;
-  Remember boxes from `>` lines; an edit
+  Remember boxes from `>` lines; a **Tasks** page (drawer or Ctrl+K)
+  with every task on every sheet, ticked right there; `[[links]]` to
+  notes and sheets anywhere, with the notes that link back; an edit
   bar with bold, italic, lists, tasks, tables and more, each with a
   shortcut; pasted plain text turned into Markdown in one go.
 - **The sheet:** pan and zoom, box-select and move groups with alignment
@@ -28,9 +30,12 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
   Each sheet picks its background: dots, grid, graph paper, lines,
   crosses, isometric or plain, on one of six paper colours, or a picture
   or SVG of your own behind it.
-- **Everywhere:** Ctrl+K for commands, sheets and notes; Ctrl+Alt+N from
-  any app for a quick note into your Inbox; notes pinned to the desktop
+- **Everywhere:** Ctrl+K for commands, sheets and notes; Ctrl+Alt+N (or keys
+  of your own, set in Settings) from any app for a quick note into your Inbox or any sheet; notes pinned to the desktop
   above other windows; a tray icon and starting with Windows.
+- **Share:** any sheet as a sharp PNG or a one-page PDF, light or dark,
+  from the Export button in the top bar (Ctrl+Shift+E), its menu or
+  Ctrl+K; or sheets out as Markdown or a `.folio` file.
 - **Safe:** undo, a Trash that keeps things 30 days, an Archive, and a
   backup every day (the last 14 kept) you can restore from.
 
@@ -49,8 +54,10 @@ libvulkan-dev libfontconfig1-dev libx11-xcb-dev`, plus a Vulkan driver.
 
 Your workspace is saved in `%APPDATA%\Folio` (Windows),
 `~/Library/Application Support/Folio` (macOS) or `~/.local/share/folio`
-(Linux). Set `FOLIO_DATA_DIR` to use another folder. It holds `board.json`
-and a `media/` folder for pictures.
+(Linux). Set `FOLIO_DATA_DIR` to use another folder. It holds `board.json`,
+a `media/` folder for pictures, and `view.json`: where each sheet is
+scrolled to on this computer, kept apart so panning never rewrites (or
+syncs) the notes.
 
 A first launch opens on one empty sheet, *My notes*. Older versions started
 with sample sheets; the ones left untouched are removed on update, edited
@@ -152,13 +159,18 @@ set to its address.
 | Right-click | A note's, the sheet's, an area's or a card's menu |
 | Drag a note's edge or corner | Resize it from that side |
 | Drag the empty sheet | Select a group; Space+drag, middle-drag or the wheel pans |
+| Ctrl+click or Shift+click | Add a note to the selection, or take it out (Ctrl or Shift and a drag adds a box); the bar above the tools then locks, duplicates, moves, archives or trashes them all, and a selected note's right-click menu acts on all of them |
 | Ctrl+wheel | Zoom |
 | `V H P M T C F E` | Select, pan, pen, marker, text, connect, area, eraser |
 | Arrows | Move between notes |
+| Ctrl+C / Ctrl+X / Ctrl+V | Copy, cut and paste notes (whole: paper, type, pin, the links between them; other apps get their text). Cut notes wait in the Trash until pasted |
+| Click a selected note's words | Select text in it; Ctrl+C copies the words. The note still drags by its title or edges |
+| Click a link in a note | Open it; a pasted link card has an ↗ button that opens its page |
 | Ctrl+K | Search: commands, sheets and notes |
 | Ctrl+F | Search notes |
-| Ctrl+Alt+N | Quick note from any app |
+| Ctrl+Alt+N | Quick note from any app; Settings › Quick note shortcut takes other keys (click them, press new ones) |
 | Ctrl+N / Ctrl+Shift+N | New note / new sheet |
+| Ctrl+Shift+E | Export: the top bar's Export button, this sheet as a PNG or PDF in a click, on light or dark paper (elsewhere, Sync & export) |
 | Ctrl+B | The sheets drawer (bold, while typing in a note) |
 | While typing | Ctrl+B / I bold, italic · Ctrl+E code · Ctrl+Shift+X strikethrough · Ctrl+Shift+M highlight · Ctrl+Shift+B / O / C bullets, numbers, tasks · Ctrl+Shift+R a Remember box · Enter continues a list |
 | S | The selected notes' type: card, taped, cheat card, index card |

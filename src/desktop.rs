@@ -1,4 +1,5 @@
-//! Folio outside its window: the Ctrl+Alt+N quick note, notes pinned to the
+//! Folio outside its window: the quick note (Ctrl+Alt+N, or the shortcut
+//! chosen in Settings), notes pinned to the
 //! desktop (always-on-top windows), the Windows tray icon, starting with
 //! Windows, and reminder notifications.
 
@@ -14,8 +15,9 @@ use crate::ui::quick::QuickNoteWindow;
 
 #[derive(Default)]
 pub struct Desktop {
-    hotkey: Option<(global_hotkey::GlobalHotKeyManager, global_hotkey::hotkey::HotKey)>,
-    hotkey_on: bool,
+    hotkeys: Option<global_hotkey::GlobalHotKeyManager>,
+    /// The quick-note shortcut registered now, if any.
+    hotkey: Option<global_hotkey::hotkey::HotKey>,
     /// Note windows on the desktop, by note (None while one opens).
     pub notes: HashMap<Id, Option<AnyWindowHandle>>,
     pub quick: Option<AnyWindowHandle>,
@@ -26,33 +28,91 @@ pub struct Desktop {
 }
 
 impl Desktop {
-    /// Registers or releases Ctrl+Alt+N.
-    pub fn set_hotkey(&mut self, on: bool) {
-        use global_hotkey::hotkey::{Code, HotKey, Modifiers};
-        if on == self.hotkey_on && (self.hotkey.is_some() || !on) {
-            return;
+    /// Makes `keys` ("Ctrl+Alt+N") the quick-note shortcut from any app,
+    /// or none. The one before is released first; if the new one can't be
+    /// had (another app holds it), there's none and the reason comes back.
+    pub fn set_hotkey(&mut self, keys: Option<&str>) -> Result<(), String> {
+        if self.hotkeys.is_none() {
+            self.hotkeys = global_hotkey::GlobalHotKeyManager::new().ok();
         }
-        if self.hotkey.is_none() {
-            if let Ok(m) = global_hotkey::GlobalHotKeyManager::new() {
-                self.hotkey = Some((m, HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN)));
-            }
+        let Some(m) = &self.hotkeys else { return Err("Shortcuts from other apps aren't available here".into()) };
+        if let Some(old) = self.hotkey.take() {
+            let _ = m.unregister(old);
         }
-        if let Some((m, k)) = &self.hotkey {
-            let r = if on { m.register(*k) } else { m.unregister(*k) };
-            self.hotkey_on = on && r.is_ok();
-            if let Err(e) = r {
-                eprintln!("quick-note shortcut: {e}");
-            }
+        let Some(keys) = keys else { return Ok(()) };
+        let key: global_hotkey::hotkey::HotKey = keys.parse().map_err(|_| format!("{keys} isn't a shortcut Folio can use"))?;
+        m.register(key).map_err(|_| format!("{keys} is taken by another app"))?;
+        self.hotkey = Some(key);
+        Ok(())
+    }
+}
+
+/// A key pressed with its modifiers, written as a quick-note shortcut
+/// ("Ctrl+Alt+N"), from a key as GPUI names it ("n", "space", "f9").
+/// It needs Ctrl, Alt or the Windows key, so ordinary typing never trips
+/// it (a function key may stand alone); otherwise why not.
+pub fn shortcut_text(ctrl: bool, alt: bool, shift: bool, win: bool, key: &str) -> Result<String, &'static str> {
+    let name = match key {
+        k if k.chars().count() == 1 && k.chars().all(|c| c.is_ascii_alphanumeric()) => k.to_ascii_uppercase(),
+        k if k.len() >= 2 && k.starts_with('f') && k[1..].parse::<u8>().is_ok_and(|n| (1..=24).contains(&n)) => k.to_ascii_uppercase(),
+        "space" => "Space".into(),
+        "enter" => "Enter".into(),
+        "tab" => "Tab".into(),
+        "backspace" => "Backspace".into(),
+        "delete" => "Delete".into(),
+        "insert" => "Insert".into(),
+        "home" => "Home".into(),
+        "end" => "End".into(),
+        "pageup" => "PageUp".into(),
+        "pagedown" => "PageDown".into(),
+        "left" => "Left".into(),
+        "right" => "Right".into(),
+        "up" => "Up".into(),
+        "down" => "Down".into(),
+        "-" => "Minus".into(),
+        "=" => "Equal".into(),
+        "," => "Comma".into(),
+        "." => "Period".into(),
+        "/" => "Slash".into(),
+        ";" => "Semicolon".into(),
+        "'" => "Quote".into(),
+        "[" => "BracketLeft".into(),
+        "]" => "BracketRight".into(),
+        "\\" => "Backslash".into(),
+        "`" => "Backquote".into(),
+        _ => return Err("That key can't be a shortcut"),
+    };
+    let lone = name.starts_with('F') && name.len() > 1 && name[1..].parse::<u8>().is_ok();
+    if !(ctrl || alt || win || lone) {
+        return Err("Hold Ctrl, Alt or the Windows key with it");
+    }
+    let mut out = String::new();
+    for (on, m) in [(ctrl, "Ctrl"), (alt, "Alt"), (shift, "Shift"), (win, "Super")] {
+        if on {
+            out.push_str(m);
+            out.push('+');
         }
     }
+    out.push_str(&name);
+    Ok(out)
+}
+
+/// Ctrl+Alt with a letter or digit, which some keyboards (AltGr) use to
+/// type characters: taking it would stop those being typed anywhere.
+pub fn may_type(keys: &str) -> bool {
+    let parts: Vec<&str> = keys.split('+').collect();
+    parts.contains(&"Ctrl") && parts.contains(&"Alt") && !parts.contains(&"Super") && parts.last().is_some_and(|k| k.len() == 1)
 }
 
 /// Starts the shortcut, the tray icon and the loop that listens to both.
 pub fn start(folio: &Entity<Folio>, main: AnyWindowHandle, cx: &mut App) {
-    let hotkey = folio.read(cx).board.settings.quick_hotkey;
+    let s = &folio.read(cx).board.settings;
+    let keys = s.quick_hotkey.then(|| s.quick_keys.clone());
     folio.update(cx, |f, cx| {
         f.desktop.main = Some(main);
-        f.desktop.set_hotkey(hotkey);
+        if let Err(e) = f.desktop.set_hotkey(keys.as_deref()) {
+            eprintln!("quick-note shortcut: {e}");
+        }
         #[cfg(windows)]
         {
             f.desktop.tray = tray::Tray::new();
@@ -86,7 +146,7 @@ pub fn open_quick_note(folio: Entity<Folio>, cx: &mut App) {
     }
     let display = cx.primary_display();
     let screen = display.as_ref().map(|d| d.bounds()).unwrap_or(Bounds::new(Point::default(), size(px(1280.), px(800.))));
-    let (w, h) = (px(520.), px(216.));
+    let (w, h) = (px(560.), px(240.));
     let origin = Point::new(screen.origin.x + (screen.size.width - w) / 2., screen.origin.y + screen.size.height * 0.22);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::new(origin, size(w, h)))),
@@ -312,7 +372,7 @@ mod tray {
             let (w, h) = img.dimensions();
             let icon = Icon::from_rgba(img.into_raw(), w, h).ok()?;
             let open = MenuItem::new("Open Folio", true, None);
-            let quick = MenuItem::new("New quick note\tCtrl+Alt+N", true, None);
+            let quick = MenuItem::new("New quick note", true, None);
             let quit = MenuItem::new("Quit Folio", true, None);
             let menu = Menu::new();
             menu.append_items(&[&open, &quick, &PredefinedMenuItem::separator(), &quit]).ok()?;
@@ -352,5 +412,29 @@ mod tray {
         if let Some(w) = folio.read(cx).desktop.main {
             let _ = w.update(cx, |_, window, _| window.activate_window());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pressed_key_is_written_as_a_shortcut_that_parses() {
+        assert_eq!(shortcut_text(true, true, false, false, "n").unwrap(), "Ctrl+Alt+N");
+        assert_eq!(shortcut_text(true, false, true, false, "space").unwrap(), "Ctrl+Shift+Space");
+        assert_eq!(shortcut_text(false, false, false, true, "/").unwrap(), "Super+Slash");
+        assert_eq!(shortcut_text(false, false, false, false, "f9").unwrap(), "F9", "a function key can stand alone");
+        assert!(shortcut_text(false, false, true, false, "n").is_err(), "Shift alone would eat capitals");
+        assert!(shortcut_text(true, false, false, false, "é").is_err());
+        for keys in ["Ctrl+Alt+N", "Ctrl+Shift+Space", "Super+Slash", "F9", "Alt+Shift+BracketLeft"] {
+            assert!(keys.parse::<global_hotkey::hotkey::HotKey>().is_ok(), "{keys}");
+        }
+    }
+
+    #[test]
+    fn ctrl_alt_and_a_letter_may_type_something() {
+        assert!(may_type("Ctrl+Alt+N"));
+        assert!(!may_type("Ctrl+Shift+N") && !may_type("Ctrl+Alt+Space") && !may_type("Ctrl+Alt+Super+N"));
     }
 }

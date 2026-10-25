@@ -4,12 +4,12 @@
 //! Ctrl+K to change either; then Esc closes it.
 
 use gpui::component::input::Input;
-use gpui::component::Sizable as _;
-use gpui::{div, img, prelude::*, px, Context, MouseButton, SharedString, Window};
+use gpui::{canvas, div, img, prelude::*, px, Context, MouseButton, SharedString, Window};
 
 use super::app::Folio;
 use super::*;
 use crate::avatars;
+use crate::model::{Camera, NoteFont, Paper, Pattern, Pin, PinShape, PinSize, PinTone};
 use crate::theme::theme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,74 +91,80 @@ impl Folio {
         Some(motion::leave(div().absolute().inset_0().child(el), ("welcome-out", n), t.motion.dialog_out, t.motion.sink))
     }
 
+    /// A note pinned to the sheet asks your name, then has you pick a face;
+    /// the same note, the same size, for both steps. The author's signature
+    /// sits in the bottom-right corner.
     pub(super) fn render_welcome(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         let Some(w) = self.welcome.as_ref() else { return div().into_any_element() };
         let (step, pick, returning) = (w.step, w.pick, w.returning);
         let name = self.welcome_input.read(cx).value().trim().to_string();
 
+        let heading = |text: String| {
+            div().text_size(t.text.heading).font_weight(gpui::FontWeight::SEMIBOLD).text_color(t.colors.text).child(text)
+        };
+        let lede = |text: &'static str| div().text_size(t.text.title).text_color(t.colors.text_muted).child(text);
+        let intro = |title: String, line: &'static str| div().flex().flex_col().gap(t.space.sm).child(heading(title)).child(lede(line));
+        let footer = || div().flex().items_center().justify_between().gap(t.space.md);
+
         let body = match step {
             Step::Name => div()
                 .flex()
                 .flex_col()
-                .items_center()
-                .gap(t.space.lg)
+                .gap(t.space.xl)
+                .child(intro(
+                    if returning { "What should Folio call you?" } else { "Hello! What should we call you?" }.into(),
+                    "Folio greets you by name. It stays on this computer.",
+                ))
                 .child(
-                    div()
-                        .flex()
-                        .text_size(px(44.))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child("folio")
-                        .child(div().text_color(t.colors.brand).child(".")),
-                )
-                .child(
-                    div()
-                        .text_size(px(22.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child(if returning { "What should Folio call you?" } else { "Welcome. What should we call you?" }),
-                )
-                .child(
+                    // Your name, written on the note's line in its hand.
                     div()
                         .key_context("Welcome")
-                        .w(px(360.))
-                        .h(px(48.))
-                        .px(t.space.md)
-                        .flex()
-                        .items_center()
-                        .rounded(t.radius.card)
-                        .bg(t.colors.surface)
-                        .border_1()
-                        .border_color(t.colors.brand)
-                        .shadow(vec![gpui::BoxShadow {
-                            color: t.colors.brand.opacity(0.16),
-                            offset: gpui::point(px(0.), px(0.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(4.),
-                            inset: false,
-                        }])
-                        .text_size(px(17.))
-                        .child(Input::new(&self.welcome_input).appearance(false).large()),
+                        .font_family(t.note_font(NoteFont::Hand))
+                        .border_b_2()
+                        .border_color(if name.is_empty() { t.colors.rule } else { t.colors.brand })
+                        .child(
+                            // Back by the field's own inset, so the name starts
+                            // where the heading does.
+                            div().ml(px(-10.)).child(rem_scaled(t.text.heading / 0.875, Input::new(&self.welcome_input).appearance(false))),
+                        ),
                 )
                 .child(
-                    primary_button("w-next", "Continue", &t)
-                        .when(name.is_empty(), |d| d.opacity(0.5))
-                        .on_click(cx.listener(|this, _, window, cx| this.welcome_next(window, cx))),
+                    footer()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(t.space.xs)
+                                .text_size(t.text.caption)
+                                .text_color(t.colors.text_subtle)
+                                .child(icon("icons/corner-down-left.svg", t.size.icon_sm, t.colors.text_subtle))
+                                .child("Enter to continue"),
+                        )
+                        .child(
+                            primary_button("w-next", "Continue", &t)
+                                .when(name.is_empty(), |d| d.opacity(0.5))
+                                .on_click(cx.listener(|this, _, window, cx| this.welcome_next(window, cx))),
+                        ),
                 )
                 .into_any_element(),
             Step::Avatar => {
+                let d = t.size.avatar;
                 let row = |list: [&'static str; 6], cx: &mut Context<Self>| {
-                    div().flex().gap(t.space.md).children(list.into_iter().map(|a| {
+                    div().flex().justify_between().children(list.into_iter().map(|a| {
                         let on = a == pick;
                         div()
                             .id(SharedString::from(format!("avatar-{a}")))
-                            .size(px(72.))
+                            .size(d)
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .rounded(t.radius.full)
-                            .p(px(3.))
                             .border_2()
                             .border_color(if on { t.colors.brand } else { gpui::transparent_black() })
                             .cursor_pointer()
-                            .hover(|d| d.border_color(t.colors.text_subtle))
-                            .child(img(SharedString::from(avatars::path(a, 62))).size(px(62.)).rounded(t.radius.full))
+                            .hover(|h| h.border_color(if on { t.colors.brand } else { t.colors.text_subtle }))
+                            .child(img(SharedString::from(avatars::path(a, f32::from(d) as u32 - 10))).size(d - px(10.)).rounded(t.radius.full))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(w) = this.welcome.as_mut() {
                                     w.pick = a;
@@ -170,34 +176,73 @@ impl Folio {
                 div()
                     .flex()
                     .flex_col()
-                    .items_center()
-                    .gap(t.space.lg)
-                    .child(img(SharedString::from(avatars::path(pick, 96))).size(px(96.)).rounded(t.radius.full))
-                    .child(div().text_size(px(22.)).font_weight(gpui::FontWeight::SEMIBOLD).child(format!("Pick your look, {name}")))
-                    .child(div().text_color(t.colors.text_muted).child("It shows in the drawer. You can change it any time."))
-                    .child(row(avatars::WOMEN, cx))
-                    .child(row(avatars::MEN, cx))
+                    .gap(t.space.xl)
+                    .child(intro(format!("Nice to meet you, {name}"), "Pick a face. It sits beside your name in the drawer."))
+                    .child(div().flex().flex_col().gap(t.space.md).child(row(avatars::WOMEN, cx)).child(row(avatars::MEN, cx)))
                     .child(
-                        div()
-                            .flex()
-                            .gap(t.space.sm)
-                            .child(secondary_button("w-back", "Back", &t).on_click(cx.listener(|this, _, window, cx| {
-                                if let Some(w) = this.welcome.as_mut() {
-                                    w.step = Step::Name;
-                                }
-                                let input = this.welcome_input.clone();
-                                window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
-                                cx.notify();
-                            })))
+                        footer()
+                            // How you'll look: as the drawer shows you.
                             .child(
-                                primary_button("w-done", if returning { "Save" } else { "Start writing" }, &t)
-                                    .on_click(cx.listener(|this, _, window, cx| this.welcome_next(window, cx))),
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(t.space.sm)
+                                    .min_w_0()
+                                    .child(img(SharedString::from(avatars::path(pick, 32))).size(t.size.control).rounded(t.radius.full))
+                                    .child(div().truncate().text_size(t.text.body).font_weight(gpui::FontWeight::SEMIBOLD).text_color(t.colors.text).child(name)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .gap(t.space.sm)
+                                    .child(secondary_button("w-back", "Back", &t).on_click(cx.listener(|this, _, window, cx| {
+                                        if let Some(w) = this.welcome.as_mut() {
+                                            w.step = Step::Name;
+                                        }
+                                        let input = this.welcome_input.clone();
+                                        window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+                                        cx.notify();
+                                    })))
+                                    .child(
+                                        primary_button("w-done", if returning { "Save" } else { "Start writing" }, &t)
+                                            .on_click(cx.listener(|this, _, window, cx| this.welcome_next(window, cx))),
+                                    ),
                             ),
                     )
                     .into_any_element()
             }
         };
 
+        // Where you are: two short bars, the step you're on long and pink.
+        let steps = div().flex().gap(t.space.xs).children([Step::Name, Step::Avatar].map(|s| {
+            let on = s == step;
+            div().h(t.space.xs).w(if on { t.space.xl } else { t.space.md }).rounded(t.radius.full).bg(if on {
+                t.colors.brand
+            } else {
+                t.colors.rule
+            })
+        }));
+        let pin = Pin { shape: PinShape::Push, size: PinSize::Large, tone: PinTone::Pink };
+        let note = div()
+            .relative()
+            .w(t.size.welcome)
+            .px(t.space.xxl)
+            .pt(t.space.xxl + t.space.sm)
+            .pb(t.space.xxl)
+            .flex()
+            .flex_col()
+            .gap(t.space.xl)
+            .rounded(t.radius.card)
+            .bg(t.paper(Paper::Butter))
+            .border_1()
+            .border_color(t.colors.tape_edge)
+            .shadow(t.shadow_card(1.))
+            .child(steps)
+            .child(body)
+            .child(super::pins::pin_view(pin, f32::from(t.size.welcome), 1., None, &t));
+
+        let (grid, dot, line) = (t.size.dot_grid, t.colors.canvas_dot, t.colors.canvas_line);
         let step_key = format!("welcome-{step:?}");
         div()
             .id("welcome")
@@ -210,30 +255,20 @@ impl Folio {
             .items_center()
             .justify_center()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            // The sheet the note is pinned to.
             .child(
-                // A soft pink glow behind the card.
-                div().absolute().size(px(420.)).rounded(t.radius.full).shadow(vec![gpui::BoxShadow {
-                    color: t.colors.brand.opacity(if t.is_dark { 0.22 } else { 0.14 }),
-                    offset: gpui::point(px(0.), px(0.)),
-                    blur_radius: px(180.),
-                    spread_radius: px(40.),
-                    inset: false,
-                }]),
+                canvas(|_, _, _| {}, move |b, _, window, _| super::board::paint_pattern(b, Camera::default(), grid, Pattern::Dots, dot, line, window))
+                    .absolute()
+                    .inset_0(),
             )
-            .child(motion::enter(
-                div()
-                    .px(px(56.))
-                    .py(px(44.))
-                    .rounded(px(24.))
-                    .bg(t.colors.surface)
-                    .border_1()
-                    .border_color(t.colors.border)
-                    .shadow(t.shadow_float())
-                    .child(body),
+            // The note hangs from the top of its room: a taller step grows
+            // downwards and the pin stays where it was.
+            .child(div().h(t.size.welcome_h).flex().flex_col().items_center().child(motion::enter(
+                note,
                 gpui::ElementId::Name(step_key.into()),
                 t.motion.dialog_in,
                 t.motion.rise_dialog,
-            ))
+            )))
             .when(returning, |d| {
                 d.child(
                     div()
@@ -243,14 +278,8 @@ impl Folio {
                         .child(icon_button("w-close", "icons/x.svg", &t).on_click(cx.listener(|this, _, _, cx| this.welcome_close(cx)))),
                 )
             })
-            .child(
-                div()
-                    .absolute()
-                    .bottom(t.space.xl)
-                    .text_size(t.text.caption)
-                    .text_color(t.colors.text_subtle)
-                    .child("Created and designed by M. Amine Said"),
-            )
+            // Signed in the corner, as at the opening.
+            .child(div().absolute().right(t.space.xxl).bottom(t.space.xxl).opacity(0.8).child(signature(&t, t.colors.text_muted, t.colors.brand.opacity(0.6), 1., 1.)))
             .into_any_element()
     }
 }

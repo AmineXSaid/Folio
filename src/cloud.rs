@@ -365,11 +365,15 @@ pub struct Drive {
     pub ep: Endpoints,
     pub link: Link,
     access: Option<(String, Instant)>,
+    /// The pictures here as of the last time they were matched with Drive's
+    /// (this run of the app): while they and the board stay the same,
+    /// Drive's picture folder isn't listed again.
+    media_seen: Option<HashSet<String>>,
 }
 
 impl Drive {
     pub fn new(client: ClientId, ep: Endpoints, link: Link) -> Drive {
-        Drive { client, ep, link, access: None }
+        Drive { client, ep, link, access: None, media_seen: None }
     }
 
     fn token(&mut self) -> Result<String, String> {
@@ -582,7 +586,12 @@ impl Drive {
             (Some(Keep::Drive), _) if remote.is_some() => what = Plan::Pull,
             (Some(Keep::Drive), _) => what = Plan::Nothing,
         }
-        self.sync_media(media, &media_folder)?;
+        // Pictures travel with the notes that show them: they're matched
+        // when the board goes either way, or when pictures came or went here.
+        let here = local_pictures(media);
+        if what != Plan::Nothing || self.media_seen.as_ref() != Some(&here) {
+            self.media_seen = Some(self.sync_media(media, &media_folder, here)?);
+        }
         let outcome = match what {
             Plan::Nothing => Outcome::Same,
             Plan::Push => {
@@ -614,12 +623,11 @@ impl Drive {
     }
 
     /// Pictures go both ways by name (each name is unique).
-    fn sync_media(&mut self, media: &Path, folder: &str) -> Result<(), String> {
+    /// Sends the pictures Drive lacks and brings down the ones this
+    /// computer lacks. Returns the pictures here afterwards.
+    fn sync_media(&mut self, media: &Path, folder: &str, mut here: HashSet<String>) -> Result<HashSet<String>, String> {
         let remote = self.find(&format!("'{folder}' in parents and trashed = false"))?;
         let there: HashSet<String> = remote.iter().map(|f| f.name.clone()).collect();
-        let here: HashSet<String> = std::fs::read_dir(media)
-            .map(|r| r.flatten().filter(|e| e.path().is_file()).filter_map(|e| e.file_name().to_str().map(String::from)).collect())
-            .unwrap_or_default();
         for name in here.difference(&there) {
             if name.ends_with(".tmp") {
                 continue;
@@ -637,9 +645,17 @@ impl Drive {
             let tmp = media.join(format!("{}.tmp", f.name));
             std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
             std::fs::rename(tmp, media.join(&f.name)).map_err(|e| e.to_string())?;
+            here.insert(f.name);
         }
-        Ok(())
+        Ok(here)
     }
+}
+
+/// The picture files in `media` (none if it isn't there yet).
+fn local_pictures(media: &Path) -> HashSet<String> {
+    std::fs::read_dir(media)
+        .map(|r| r.flatten().filter(|e| e.path().is_file()).filter_map(|e| e.file_name().to_str().map(String::from)).collect())
+        .unwrap_or_default()
 }
 
 /// A picture name from Drive that stays inside the media folder.
@@ -714,6 +730,8 @@ mod tests {
         files: HashMap<String, (String, Option<String>, Vec<u8>, u32)>, // id → (name, parent, bytes, revision)
         next: u32,
         refreshes: u32,
+        /// Folder listings asked for.
+        lists: u32,
     }
 
     fn query_of(target: &str) -> HashMap<String, String> {
@@ -765,6 +783,7 @@ mod tests {
                     }
                     _ if !authed => respond(&mut stream, 401, "{}"),
                     ("GET", "/api/files") => {
+                        f.lists += 1;
                         let query = q.get("q").cloned().unwrap_or_default();
                         let list: Vec<_> = f
                             .files
@@ -853,6 +872,14 @@ mod tests {
         assert!(matches!(a.sync("board one", &media_a, None).unwrap(), Outcome::Pushed));
         assert!(matches!(a.sync("board one", &media_a, None).unwrap(), Outcome::Same));
         assert_eq!(fake.lock().unwrap().refreshes, 1, "the access token is reused");
+        // Nothing changed: one look at board.json, the pictures aren't listed.
+        let lists = fake.lock().unwrap().lists;
+        assert!(matches!(a.sync("board one", &media_a, None).unwrap(), Outcome::Same));
+        assert_eq!(fake.lock().unwrap().lists, lists + 1);
+        // A new picture here: they're matched again, and it goes up.
+        std::fs::write(media_a.join("8.png"), b"png 8").unwrap();
+        assert!(matches!(a.sync("board one", &media_a, None).unwrap(), Outcome::Same));
+        assert!(fake.lock().unwrap().files.values().any(|x| x.0 == "8.png"));
 
         // Computer B signs in with notes of its own: it's asked, and picks Drive's.
         let mut b = Drive::new(client.clone(), ep.clone(), account.clone());

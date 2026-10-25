@@ -183,12 +183,45 @@ impl Folio {
                 switch("s-start", s.start_with_windows, &t).on_click(cx.listener(|this, _, _, cx| this.set_setting(cx, |s| s.start_with_windows = !s.start_with_windows))),
                 &t,
             ))
-            .child(setting(
-                "Quick note shortcut",
-                "Ctrl+Alt+N from any app opens a small note that goes to your Inbox",
-                switch("s-hotkey", s.quick_hotkey, &t).on_click(cx.listener(|this, _, _, cx| this.set_setting(cx, |s| s.quick_hotkey = !s.quick_hotkey))),
-                &t,
-            ));
+            .child({
+                // The keys, in a field that listens for new ones when clicked.
+                let recording = self.keys_recorder.is_some();
+                let help: SharedString = match (&self.keys_hint, recording) {
+                    (Some(why), _) => why.clone(),
+                    (None, true) => "Press the keys you want · Esc keeps these".into(),
+                    (None, false) if crate::desktop::may_type(&s.quick_keys) => {
+                        format!("{} from any app opens a small note for your Inbox. Some keyboards type letters with Ctrl+Alt; if yours does, click to choose another", s.quick_keys).into()
+                    }
+                    (None, false) => format!("{} from any app opens a small note that goes to your Inbox · click the keys to change them", s.quick_keys).into(),
+                };
+                let field = div()
+                    .id("s-keys")
+                    .h(t.size.control)
+                    .px(t.space.md)
+                    .flex()
+                    .items_center()
+                    .rounded(t.radius.button)
+                    .border_1()
+                    .border_color(if recording { t.colors.brand } else { t.colors.border })
+                    .when(recording, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint))
+                    .when(!recording, |d| d.bg(t.colors.surface_sunk).hover(|d| d.border_color(t.colors.text_subtle)))
+                    .text_size(t.text.body)
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .cursor_pointer()
+                    .child(if recording { "Press keys…".to_string() } else { s.quick_keys.clone() })
+                    .on_click(cx.listener(|this, _, _, cx| this.record_quick_keys(cx)));
+                setting(
+                    "Quick note shortcut",
+                    help,
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(t.space.md)
+                        .child(field)
+                        .child(switch("s-hotkey", s.quick_hotkey, &t).on_click(cx.listener(|this, _, _, cx| this.set_setting(cx, |s| s.quick_hotkey = !s.quick_hotkey)))),
+                    &t,
+                )
+            });
 
         let dir = self.dir.clone();
         let days = store::backups(&self.dir).len();
@@ -224,7 +257,7 @@ impl Folio {
             div().flex().flex_wrap().gap_x(t.space.xl).gap_y(t.space.sm).children(
                 [
                     ("Ctrl+K", "Commands, sheets, notes"),
-                    ("Ctrl+Alt+N", "Quick note from anywhere"),
+                    (s.quick_keys.as_str(), "Quick note from anywhere"),
                     ("Ctrl+N / N", "New note"),
                     ("Ctrl+Shift+N", "New sheet"),
                     ("Ctrl+F", "Search"),

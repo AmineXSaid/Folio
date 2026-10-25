@@ -16,7 +16,7 @@ use gpui::{
     SharedString, Task, Window,
 };
 
-use crate::history::{Change, Way};
+use crate::history::{Before, Change, Way};
 use crate::markdown::{self, Prefix};
 use crate::model::*;
 use crate::store;
@@ -237,6 +237,9 @@ pub enum Selection {
 /// The opening, playing (every launch).
 pub struct Intro {
     pub start: Instant,
+    /// Where the opening's "folio." is drawn (window px), measured, for
+    /// its flight into the top bar.
+    pub word: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
 /// Somewhere you can go back to.
@@ -247,6 +250,16 @@ pub enum Place {
     Settings,
     Bin(BinTab),
     Transfer,
+    Tasks,
+}
+
+/// Which tasks the Tasks page shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TaskFilter {
+    #[default]
+    Open,
+    Done,
+    All,
 }
 
 /// How many places back and forward remember.
@@ -260,6 +273,8 @@ pub enum Screen {
     Bin,
     /// Sync & export.
     Transfer,
+    /// Every task on every sheet.
+    Tasks,
 }
 
 /// What the pointer is doing between press and release.
@@ -311,6 +326,23 @@ pub enum MenuPage {
     Background,
     /// What a note is pinned up with.
     Pin,
+    /// The notes that link to this one.
+    Backlinks,
+}
+
+/// Notes (and text on the sheet) copied or cut in Folio, as they were:
+/// Ctrl+V makes them again whole, paper, type, pin and the links between
+/// them, while the clipboard still holds the text written with them. Other
+/// apps get that text.
+#[derive(Clone)]
+pub struct Clip {
+    text: String,
+    notes: Vec<Sticker>,
+    links: Vec<Link>,
+    labels: Vec<Label>,
+    /// Cut, not copied: the first paste takes the notes back out of the
+    /// Trash, where cutting put them.
+    cut: bool,
 }
 
 #[derive(Clone)]
@@ -380,8 +412,11 @@ pub struct Folio {
     /// Windows the system does it).
     pub bar_drag: bool,
     pub drop_sheet: Option<usize>,
-    /// The undo snapshot taken when the current gesture began.
-    pub before: Option<Board>,
+    /// Notes copied or cut here, for Ctrl+V to make again whole.
+    pub clip: Option<Clip>,
+    /// The undo snapshot taken when the current gesture or edit began: the
+    /// sheets it can change, not the whole board.
+    pub before: Option<Before>,
     pub selection: Vec<Selection>,
     pub hovered: Option<Id>,
     /// The note or area edge under the pointer, for the resize arrow.
@@ -397,6 +432,14 @@ pub struct Folio {
     pub viewport: Rc<Cell<Bounds<Pixels>>>,
     /// Each note's natural height (world units), measured as it's drawn.
     pub heights: Rc<RefCell<HashMap<Id, f32>>>,
+    /// The edit bar's size as last drawn (screen px), to find it a place.
+    pub edit_bar_size: Rc<Cell<(f32, f32)>>,
+    /// Where the top bar's "folio." sits (window px): the opening's
+    /// wordmark lands there.
+    pub mark_at: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The top bar's Export button (window px), and its panel being open.
+    pub export_at: Rc<Cell<Option<Bounds<Pixels>>>>,
+    pub export_pop: bool,
     /// Each label's size (world units), measured as it's drawn.
     pub label_sizes: Rc<RefCell<HashMap<Id, (f32, f32)>>>,
     /// Where the sheet's name is drawn (window), for clicks and renaming.
@@ -413,6 +456,10 @@ pub struct Folio {
     pub palette_opened: usize,
     /// Commands and sheets run from the search lately, newest first.
     pub palette_recent: Vec<SharedString>,
+    /// Picking a note in the search links note `link_from` to it.
+    pub link_from: Option<Id>,
+    /// Which notes link to which, worked out once per change (`edits`).
+    backlinks: RefCell<(u64, Rc<HashMap<Id, Vec<Id>>>)>,
     pub palette_scroll: gpui::ScrollHandle,
     /// The selection moved by key: scroll it into view next frame.
     pub palette_reveal: bool,
@@ -424,6 +471,7 @@ pub struct Folio {
     pub welcome_input: Entity<InputState>,
     pub sort: Sort,
     pub bin_tab: BinTab,
+    pub task_filter: TaskFilter,
     /// The backup whose sheets are listed: (day, [(id, name, notes, icon)]).
     pub backup_open: Option<(String, Vec<(Id, String, usize, String)>)>,
     pub toast: Option<SharedString>,
@@ -446,6 +494,12 @@ pub struct Folio {
     pub label_edit: Option<Id>,
     /// Every ink, open under the bar of the text being written.
     pub label_palette: bool,
+    /// The edit bar's papers are open.
+    pub edit_papers: bool,
+    /// Settings is listening for a new quick-note shortcut.
+    pub keys_recorder: Option<gpui::Subscription>,
+    /// Why the keys just pressed can't be the shortcut.
+    pub keys_hint: Option<SharedString>,
     pub label_input: Entity<TextareaState>,
     pub desktop: crate::desktop::Desktop,
     pub sync: super::sync::DriveSync,
@@ -455,6 +509,12 @@ pub struct Folio {
     /// Writes the board off the UI thread; saves started so far.
     saver: store::Saver,
     saves: u64,
+    /// Counts changes to the board (each one saved): Drive's sync tells by
+    /// it whether anything changed while it ran.
+    pub edits: u64,
+    /// The view (where each sheet is scrolled to), saved on its own.
+    view_task: Option<Task<()>>,
+    view_saves: u64,
     _ticker: Task<()>,
     _subs: Vec<gpui::Subscription>,
 }
@@ -598,6 +658,7 @@ impl Folio {
             drop_tray: false,
             bar_drag: false,
             drop_sheet: None,
+            clip: None,
             before: None,
             selection: Vec::new(),
             hovered: None,
@@ -607,6 +668,10 @@ impl Folio {
             cursor: v2(0., 0.),
             viewport: Rc::new(Cell::new(Bounds::default())),
             heights: Rc::new(RefCell::new(HashMap::new())),
+            edit_bar_size: Rc::new(Cell::new((700., 76.))),
+            mark_at: Rc::default(),
+            export_at: Rc::default(),
+            export_pop: false,
             label_sizes: Rc::new(RefCell::new(HashMap::new())),
             head_name: Rc::default(),
             undo,
@@ -618,15 +683,18 @@ impl Folio {
             palette_ix: 0,
             palette_opened: 0,
             palette_recent: Vec::new(),
+            link_from: None,
+            backlinks: RefCell::new((u64::MAX, Rc::default())),
             palette_scroll: gpui::ScrollHandle::new(),
             palette_reveal: false,
             emoji_tab: 0,
             // The opening plays in full at every launch.
-            intro: Some(Intro { start: Instant::now() }),
+            intro: Some(Intro { start: Instant::now(), word: Rc::default() }),
             welcome: None,
             welcome_input,
             sort: Sort::Recent,
             bin_tab: BinTab::Trash,
+            task_filter: TaskFilter::Open,
             backup_open: None,
             toast: None,
             exits: Exits::default(),
@@ -643,6 +711,9 @@ impl Folio {
             secret_input,
             label_edit: None,
             label_palette: false,
+            edit_papers: false,
+            keys_recorder: None,
+            keys_hint: None,
             label_input,
             desktop: crate::desktop::Desktop::default(),
             sync: Default::default(),
@@ -651,6 +722,9 @@ impl Folio {
             save_task: None,
             saver,
             saves: 0,
+            edits: 0,
+            view_task: None,
+            view_saves: 0,
             _ticker: ticker,
             _subs: subs,
         };
@@ -724,6 +798,28 @@ impl Folio {
         self.selection = vec![s];
     }
 
+    /// What an action on note `id` applies to: every selected note when
+    /// `id` is one of them, otherwise just `id`.
+    pub fn targets(&self, id: Id) -> Vec<Id> {
+        if self.is_selected(Selection::Sticker(id)) {
+            self.selected_notes()
+        } else {
+            vec![id]
+        }
+    }
+
+    /// Adds `s` to the selection, or takes it out if it's there (Ctrl or
+    /// Shift and a click). Says whether it's selected now.
+    pub fn toggle_selected(&mut self, s: Selection) -> bool {
+        if self.is_selected(s) {
+            self.selection.retain(|x| *x != s);
+            false
+        } else {
+            self.selection.push(s);
+            true
+        }
+    }
+
     // ---------- Theme ----------
 
     pub fn dark(&self) -> bool {
@@ -777,10 +873,23 @@ impl Folio {
 
     /// Records `before` as an undo step, and saves soon.
     pub fn commit(&mut self, before: Board, cx: &mut Context<Self>) {
-        let mut step = Change::diff(&before, &self.board);
+        let step = Change::diff(&before, &self.board);
+        let moved = step.is_empty() && before != self.board;
+        self.record(step, moved, cx, |step, board, id| step.restamp(&before, board, id));
+    }
+
+    /// As `commit`, from a copy of only the sheets the edit could change.
+    pub fn commit_since(&mut self, before: Before, cx: &mut Context<Self>) {
+        let step = Change::since(&before, &self.board);
+        let moved = step.is_empty() && before.differs(&self.board);
+        self.record(step, moved, cx, |step, board, id| step.restamp_since(&before, board, id));
+    }
+
+    /// Keeps `step` for undo and saves. An empty step that `moved` the view
+    /// or the settings is saved, with nothing to undo.
+    fn record(&mut self, mut step: Change, moved: bool, cx: &mut Context<Self>, restamp: impl FnOnce(&mut Change, &Board, Id)) {
         if step.is_empty() {
-            // The view or the settings: saved, but nothing to undo.
-            if before != self.board {
+            if moved {
                 self.schedule_save(cx);
                 self.desktop_sync(cx);
             }
@@ -792,7 +901,7 @@ impl Folio {
         if let Some(c) = self.board.categories.get_mut(active) {
             c.edited = t;
             let id = c.id;
-            step.restamp(&before, &self.board, id);
+            restamp(&mut step, &self.board, id);
         }
         self.push_undo(step);
         self.schedule_save(cx);
@@ -843,7 +952,29 @@ impl Folio {
         }
     }
 
+    /// After the view moved (a pan, a zoom): where the sheets are scrolled
+    /// to is written a moment after it stops, to its own small file. The
+    /// board isn't saved and nothing goes to Drive.
+    pub fn schedule_view_save(&mut self, cx: &mut Context<Self>) {
+        self.view_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(350)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.view_task = None;
+                let (n, text) = this.next_view();
+                let saver = this.saver.clone();
+                cx.background_executor().spawn(async move { saver.write_view(n, &text) }).detach();
+            });
+        }));
+    }
+
+    /// The view's next save number, and its text.
+    fn next_view(&mut self) -> (u64, String) {
+        self.view_saves += 1;
+        (self.view_saves, store::view_text(&self.board))
+    }
+
     pub fn schedule_save(&mut self, cx: &mut Context<Self>) {
+        self.edits += 1;
         self.saved = false;
         self.save_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_millis(350)).await;
@@ -854,6 +985,7 @@ impl Folio {
     /// Saves now, off the UI thread: the board is copied here, turned to
     /// text and written to the disk in the background.
     pub fn save_now(&mut self, cx: &mut Context<Self>) {
+        self.edits += 1;
         self.save_task = None;
         self.saved = false;
         self.saves += 1;
@@ -861,7 +993,11 @@ impl Folio {
         let board = self.board.clone();
         let steps = self.undo.clone();
         let saver = self.saver.clone();
-        let job = cx.background_executor().spawn(async move { saver.write(n, &board, &steps) });
+        let (view_n, view) = self.next_view();
+        let job = cx.background_executor().spawn(async move {
+            let _ = saver.write_view(view_n, &view);
+            saver.write(n, &board, &steps)
+        });
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| this.saved_now(n, result, cx));
@@ -886,6 +1022,9 @@ impl Folio {
     /// the background.
     pub fn save_and_wait(&mut self) {
         self.save_task = None;
+        self.view_task = None;
+        let (view_n, view) = self.next_view();
+        let _ = self.saver.write_view(view_n, &view);
         self.saves += 1;
         if self.saver.write(self.saves, &self.board, &self.undo).is_ok() {
             self.saved = true;
@@ -961,6 +1100,7 @@ impl Folio {
             Screen::Settings => Place::Settings,
             Screen::Bin => Place::Bin(self.bin_tab),
             Screen::Transfer => Place::Transfer,
+            Screen::Tasks => Place::Tasks,
         }
     }
 
@@ -999,6 +1139,7 @@ impl Folio {
                 self.screen = Screen::Bin;
             }
             Place::Transfer => self.screen = Screen::Transfer,
+            Place::Tasks => self.screen = Screen::Tasks,
         }
         cx.notify();
         true
@@ -1041,6 +1182,68 @@ impl Folio {
         self.open_side(Screen::Settings, cx);
     }
 
+    /// For each note, the notes that link to it (`[[its name]]`), as of the
+    /// last change.
+    pub fn backlinks(&self) -> Rc<HashMap<Id, Vec<Id>>> {
+        let mut cache = self.backlinks.borrow_mut();
+        if cache.0 != self.edits {
+            *cache = (self.edits, Rc::new(self.board.backlinks()));
+        }
+        cache.1.clone()
+    }
+
+    /// A `folio:` link clicked in a note: to its note (framed and
+    /// selected, on its sheet) or its sheet.
+    pub fn follow_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(url) = super::LINK.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+        match LinkTo::parse(&url) {
+            Some(LinkTo::Note(id)) if self.board.find_note(id).is_some() => self.reveal_note(id, window, cx),
+            Some(LinkTo::Sheet(id)) => {
+                if let Some(ix) = self.board.categories.iter().position(|c| c.id == id) {
+                    self.open_sheet(ix, window, cx);
+                }
+            }
+            _ => self.notify("That note isn't there any more", cx),
+        }
+    }
+
+    /// Note `id`'s link to another: the search opens on notes, and the one
+    /// picked is linked from it.
+    pub fn start_link(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.open_palette_with("@", window, cx);
+        self.link_from = Some(id);
+        self.notify("Pick the note to link to", cx);
+    }
+
+    /// Writes `[[to's name]]` at the end of note `from`, on a line of its
+    /// own, or after the links already on its last line.
+    pub fn link_notes(&mut self, from: Id, to: Id, cx: &mut Context<Self>) {
+        let Some(name) = self.board.find_note(to).map(|s| s.name()).filter(|n| !n.is_empty()) else {
+            self.notify("That note has no name to link by: give it a title", cx);
+            return;
+        };
+        if from == to {
+            return;
+        }
+        let link = format!("[[{name}]]");
+        self.change_note(from, cx, |s| {
+            let body = s.body.trim_end();
+            s.body = match body.lines().last().map(str::trim) {
+                Some(last) if last.starts_with("[[") && last.ends_with("]]") => format!("{body} · {link}"),
+                Some(_) => format!("{body}\n\n{link}"),
+                None => link,
+            };
+        });
+        self.notify(format!("Linked to “{name}”"), cx);
+    }
+
+    /// Every task on every sheet.
+    pub fn open_tasks(&mut self, cx: &mut Context<Self>) {
+        self.open_side(Screen::Tasks, cx);
+        self.drawer = false;
+    }
+
     pub fn open_bin(&mut self, tab: BinTab, cx: &mut Context<Self>) {
         if self.screen == Screen::Bin && self.bin_tab != tab {
             self.bin_tab = tab;
@@ -1065,6 +1268,7 @@ impl Folio {
             cam.zoom = cam.zoom.max(0.8);
             let c = r.center();
             cam.pan = v2(w / 2. - c.x * cam.zoom, h / 2. - c.y * cam.zoom);
+            self.schedule_view_save(cx);
         }
         self.select(Selection::Sticker(id));
         cx.notify();
@@ -1115,7 +1319,8 @@ impl Folio {
         }
         let name = self.name_input.read(cx).value().trim().to_string();
         if keep && !name.is_empty() && name != self.sheet().name {
-            self.change(cx, |b| b.sheet_mut().name = name);
+            let (id, t) = (self.sheet().id, now());
+            self.change(cx, |b| b.rename_sheet(id, name, t));
         }
         cx.notify();
     }
@@ -1150,11 +1355,8 @@ impl Folio {
             }
             Dialog::RenameSheet(id) => {
                 if !name.is_empty() {
-                    self.change(cx, |b| {
-                        if let Some(c) = b.categories.iter_mut().find(|c| c.id == id) {
-                            c.name = name;
-                        }
-                    });
+                    let t = now();
+                    self.change(cx, |b| b.rename_sheet(id, name, t));
                 }
             }
             Dialog::RenameFrame(id) => {
@@ -1237,7 +1439,7 @@ impl Folio {
     /// A new note with its top-left near `at` (world), ready to type into.
     pub fn new_note_at(&mut self, at: Vec2, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_edit(cx);
-        let before = self.board.clone();
+        let before = Before::open(&self.board);
         let id = self.board.fresh_id();
         let set = &self.board.settings;
         let paper = self.sheet().next_paper(set.default_paper);
@@ -1307,7 +1509,7 @@ impl Folio {
             _ => "Write… - [ ] for a task, #tag, **bold**",
         };
         if self.before.is_none() {
-            self.before = Some(self.board.clone());
+            self.before = Some(Before::open(&self.board));
         }
         self.title_input.update(cx, |i, cx| i.set_value(title.clone(), window, cx));
         // The cursor goes to the end of the text, ready to add to it.
@@ -1336,11 +1538,14 @@ impl Folio {
     /// Ends typing: keeps the text (an empty new note goes away).
     pub fn finish_edit(&mut self, cx: &mut Context<Self>) {
         let Some(ed) = self.editing.take() else { return };
+        self.edit_papers = false;
         let title = self.title_input.read(cx).value().trim().to_string();
         let body = self.body_input.read(cx).value().trim_end().to_string();
-        let before = self.before.take().unwrap_or_else(|| self.board.clone());
+        let mut before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
         let t = now();
         let empty = title.is_empty() && body.trim().is_empty();
+        // Its name when the edit began: links to it follow a rename.
+        let old = before.note(ed.id).map(Sticker::name);
         if let Some(ix) = self.board.sheet_of(ed.id) {
             let sheet = &mut self.board.categories[ix];
             let keep = sheet.sticker(ed.id).is_some_and(|s| s.image.is_some() || s.link.is_some());
@@ -1355,7 +1560,14 @@ impl Folio {
                 }
             }
         }
-        self.commit(before, cx);
+        if let Some(old) = old {
+            let relinks = self.board.relinked(LinkTo::Note(ed.id), &old);
+            for r in &relinks {
+                before.keep(&self.board, r.sheet);
+            }
+            self.board.apply_relinks(relinks, t);
+        }
+        self.commit_since(before, cx);
         cx.notify();
     }
 
@@ -1363,7 +1575,11 @@ impl Folio {
     pub fn change_note(&mut self, id: Id, cx: &mut Context<Self>, f: impl FnOnce(&mut Sticker)) {
         let t = now();
         if self.editing.is_some() {
-            // The edit's snapshot covers it.
+            // The edit's snapshot covers it (a note on another sheet, from
+            // its desktop window, gets its sheet kept first).
+            if let (Some(b), Some(ix)) = (self.before.as_mut(), self.board.sheet_of(id)) {
+                b.keep(&self.board, ix);
+            }
             if let Some(s) = self.board.find_note_mut(id) {
                 f(s);
                 s.edited = t;
@@ -1372,12 +1588,21 @@ impl Folio {
             cx.notify();
             return;
         }
+        let old = self.board.find_note(id).map(Sticker::name);
         self.change(cx, |b| {
             if let Some(s) = b.find_note_mut(id) {
                 f(s);
                 s.edited = t;
             }
+            if let Some(old) = old {
+                b.relink(&[(LinkTo::Note(id), old)], t);
+            }
         });
+    }
+
+    /// The names of notes `ids` now, for links to follow if they change.
+    fn names(&self, ids: &[Id]) -> Vec<(LinkTo, String)> {
+        ids.iter().filter_map(|id| self.board.find_note(*id).map(|s| (LinkTo::Note(*id), s.name()))).collect()
     }
 
     pub fn toggle_task(&mut self, id: Id, n: usize, cx: &mut Context<Self>) {
@@ -1469,6 +1694,7 @@ impl Folio {
     pub fn markdown_notes(&mut self, ids: &[Id], cx: &mut Context<Self>) {
         let t = now();
         let mut changed = 0;
+        let names = self.names(ids);
         self.change(cx, |b| {
             for id in ids {
                 let Some(s) = b.find_note_mut(*id) else { continue };
@@ -1482,6 +1708,7 @@ impl Folio {
                     changed += 1;
                 }
             }
+            b.relink(&names, t);
         });
         let msg = match changed {
             0 => "Nothing to change: already Markdown".to_string(),
@@ -1515,18 +1742,55 @@ impl Folio {
         }
     }
 
-    pub fn bin_note(&mut self, id: Id, archived: bool, cx: &mut Context<Self>) {
+    /// Puts notes in the Trash (or the Archive), as one undo step.
+    pub fn bin_notes(&mut self, ids: &[Id], archived: bool, cx: &mut Context<Self>) {
         self.menu = None;
-        if self.editing.map(|e| e.id) == Some(id) {
+        if self.editing.is_some_and(|e| ids.contains(&e.id)) {
             self.finish_edit(cx);
         }
         let t = now();
         self.change(cx, |b| {
-            b.bin_note(id, archived, t);
+            for &id in ids {
+                b.bin_note(id, archived, t);
+            }
         });
-        self.selection.retain(|s| *s != Selection::Sticker(id));
-        let what = if archived { "Archived" } else { "Moved to Trash" };
+        self.selection.retain(|s| !matches!(s, Selection::Sticker(id) if ids.contains(id)));
+        let what = match (archived, ids.len()) {
+            (true, 1) => "Archived".to_string(),
+            (true, n) => format!("{n} notes archived"),
+            (false, 1) => "Moved to Trash".to_string(),
+            (false, n) => format!("{n} notes moved to Trash"),
+        };
         self.notify(format!("{what} · {} to undo", shortcut("Z")), cx);
+    }
+
+    /// Changes every note in `ids` as one undo step.
+    pub fn change_notes(&mut self, ids: &[Id], cx: &mut Context<Self>, f: impl Fn(&mut Sticker)) {
+        if let [id] = ids {
+            return self.change_note(*id, cx, f);
+        }
+        self.finish_edit(cx);
+        let t = now();
+        let names = self.names(ids);
+        self.change(cx, |b| {
+            for &id in ids {
+                if let Some(s) = b.find_note_mut(id) {
+                    f(s);
+                    s.edited = t;
+                }
+            }
+            b.relink(&names, t);
+        });
+    }
+
+    /// Locks the notes, or unlocks them when they're all locked already.
+    pub fn lock_notes(&mut self, ids: &[Id], cx: &mut Context<Self>) {
+        self.menu = None;
+        let lock = !ids.iter().all(|id| self.board.find_note(*id).is_some_and(|s| s.locked));
+        self.change_notes(ids, cx, |s| s.locked = lock);
+        if ids.len() > 1 {
+            self.notify(format!("{} notes {}", ids.len(), if lock { "locked" } else { "unlocked" }), cx);
+        }
     }
 
     pub fn duplicate_selection(&mut self, cx: &mut Context<Self>) {
@@ -1556,20 +1820,27 @@ impl Folio {
         self.selection = new;
     }
 
-    pub fn move_note_to(&mut self, id: Id, to: usize, cx: &mut Context<Self>) {
+    /// Moves notes to sheet `to`, as one undo step.
+    pub fn move_notes_to(&mut self, ids: &[Id], to: usize, cx: &mut Context<Self>) {
         self.menu = None;
+        self.finish_edit(cx);
         let name = self.board.categories.get(to).map(|c| c.name.clone()).unwrap_or_default();
-        let mut ok = false;
-        self.change(cx, |b| ok = b.move_note(id, to));
-        if ok {
-            self.selection.retain(|s| *s != Selection::Sticker(id));
-            self.notify(format!("Moved to “{name}”"), cx);
+        let mut moved = 0;
+        self.change(cx, |b| moved = ids.iter().filter(|&&id| b.move_note(id, to)).count());
+        if moved > 0 {
+            self.selection.retain(|s| !matches!(s, Selection::Sticker(id) if ids.contains(id)));
+            let what = if moved == 1 { "Moved".to_string() } else { format!("Moved {moved} notes") };
+            self.notify(format!("{what} to “{name}”"), cx);
         }
     }
 
     pub fn set_reminder(&mut self, id: Id, due: Option<u64>, cx: &mut Context<Self>) {
+        self.set_reminders(&[id], due, cx);
+    }
+
+    pub fn set_reminders(&mut self, ids: &[Id], due: Option<u64>, cx: &mut Context<Self>) {
         self.menu = None;
-        self.change_note(id, cx, |s| {
+        self.change_notes(ids, cx, |s| {
             s.due = due;
             s.reminded = false;
         });
@@ -1578,12 +1849,109 @@ impl Folio {
         }
     }
 
-    pub fn copy_note(&mut self, id: Id, cx: &mut Context<Self>) {
-        self.menu = None;
-        if let Some(s) = self.board.find_note(id) {
-            cx.write_to_clipboard(ClipboardItem::new_string(s.text()));
-            self.notify("Copied as text", cx);
+    /// Ctrl+C: words picked out of a note's text if there are any, else
+    /// the selected notes and text on the sheet.
+    pub fn copy_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if gpui::base::TextSelection::has_selection(window, cx) {
+            let text = gpui::base::TextSelection::selected_text(window, cx);
+            if !text.is_empty() {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                self.notify("Copied", cx);
+                return;
+            }
         }
+        if let Some((notes, texts)) = self.copy_notes(false, cx) {
+            self.notify(format!("Copied {} · {} pastes", things(notes, texts), shortcut("V")), cx);
+        }
+    }
+
+    /// Ctrl+X: the selected notes and text go on the clipboard and off the
+    /// sheet (the notes into the Trash, until they're pasted).
+    pub fn cut_selection(&mut self, cx: &mut Context<Self>) {
+        let Some((notes, texts)) = self.copy_notes(true, cx) else { return };
+        self.delete_selection(cx);
+        self.notify(format!("Cut {} · {} pastes", things(notes, texts), shortcut("V")), cx);
+    }
+
+    /// Puts the selected notes and text on the clipboard: their text for
+    /// other apps, the notes themselves for Folio. How many notes and
+    /// texts, if any.
+    pub fn copy_notes(&mut self, cut: bool, cx: &mut Context<Self>) -> Option<(usize, usize)> {
+        self.menu = None;
+        self.finish_edit(cx);
+        let sheet = self.sheet();
+        let notes: Vec<Sticker> = sheet.stickers.iter().filter(|s| self.is_selected(Selection::Sticker(s.id))).cloned().collect();
+        let labels: Vec<Label> = sheet.labels.iter().filter(|l| self.is_selected(Selection::Label(l.id))).cloned().collect();
+        if notes.is_empty() && labels.is_empty() {
+            return None;
+        }
+        let ids: std::collections::HashSet<Id> = notes.iter().map(|s| s.id).collect();
+        let links = sheet.links.iter().filter(|l| ids.contains(&l.from) && ids.contains(&l.to)).cloned().collect();
+        let mut text = notes.iter().map(|s| s.text()).chain(labels.iter().map(|l| l.text.clone())).filter(|t| !t.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
+        if text.is_empty() {
+            // Pictures alone: still something to paste, and to know as ours.
+            text = things(notes.len(), labels.len());
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        let n = (notes.len(), labels.len());
+        self.clip = Some(Clip { text, notes, links, labels, cut });
+        Some(n)
+    }
+
+    /// Makes the copied notes again, centred where the pointer is (or the
+    /// middle of the view), selected, as one undo step.
+    fn paste_clip(&mut self, cx: &mut Context<Self>) {
+        let Some(clip) = self.clip.as_mut() else { return };
+        let cut = std::mem::take(&mut clip.cut);
+        let clip = clip.clone();
+        let (w, h) = self.viewport_size();
+        let inside = self.cursor.x > 0. && self.cursor.y > 0. && self.cursor.x < w && self.cursor.y < h;
+        let cam = self.sheet().camera;
+        let target = cam.to_world(if inside { self.cursor } else { v2(w / 2., h / 2.) });
+        let Some(bounds) = clip.notes.iter().map(|s| s.rect).chain(clip.labels.iter().map(label_rect)).reduce(|a, b| a.union(&b)) else { return };
+        let d = target.sub(bounds.center());
+        let t = now();
+        let mut picked = Vec::new();
+        self.change(cx, |b| {
+            if cut {
+                let gone: std::collections::HashSet<Id> = clip.notes.iter().map(|s| s.id).collect();
+                b.bin.retain(|x| !matches!(&x.item, BinItem::Note { sticker, .. } if gone.contains(&sticker.id)));
+            }
+            let mut ids = HashMap::new();
+            for s in &clip.notes {
+                let id = b.fresh_id();
+                ids.insert(s.id, id);
+                let mut n = s.clone();
+                n.id = id;
+                n.rect.x += d.x;
+                n.rect.y += d.y;
+                n.edited = t;
+                n.popped = None;
+                if !cut {
+                    // A copy, like a duplicate, has no reminder of its own.
+                    n.due = None;
+                    n.reminded = false;
+                }
+                b.sheet_mut().stickers.push(n);
+                picked.push(Selection::Sticker(id));
+            }
+            for l in &clip.links {
+                if let (Some(&from), Some(&to)) = (ids.get(&l.from), ids.get(&l.to)) {
+                    let id = b.fresh_id();
+                    b.sheet_mut().links.push(Link { id, from, to, ink: l.ink });
+                }
+            }
+            for l in &clip.labels {
+                let mut n = l.clone();
+                n.id = b.fresh_id();
+                n.at = n.at.add(d);
+                picked.push(Selection::Label(n.id));
+                b.sheet_mut().labels.push(n);
+            }
+        });
+        self.selection = picked;
+        self.notify(format!("Pasted {}", things(clip.notes.len(), clip.labels.len())), cx);
+        cx.notify();
     }
 
     /// Lays the selected notes (or every note) out in tidy rows.
@@ -1608,7 +1976,7 @@ impl Folio {
 
     /// Starts writing a label on the sheet at `at` (world).
     pub fn new_label_at(&mut self, at: Vec2, window: &mut Window, cx: &mut Context<Self>) {
-        let before = self.board.clone();
+        let before = Before::open(&self.board);
         let id = self.board.fresh_id();
         let ink = self.ink;
         let label = Label::new(id, v2(at.x, at.y - LabelSize::M.line() / 2.), ink);
@@ -1625,7 +1993,7 @@ impl Folio {
         let text = l.text.clone();
         self.finish_label(cx);
         if self.before.is_none() {
-            self.before = Some(self.board.clone());
+            self.before = Some(Before::open(&self.board));
         }
         self.label_edit = Some(id);
         self.menu = None;
@@ -1645,14 +2013,14 @@ impl Folio {
         let Some(id) = self.label_edit.take() else { return };
         self.label_palette = false;
         let text = self.label_input.read(cx).value().trim_end().to_string();
-        let before = self.before.take().unwrap_or_else(|| self.board.clone());
+        let before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
         let sheet = self.board.sheet_mut();
         if text.trim().is_empty() {
             sheet.labels.retain(|l| l.id != id);
         } else if let Some(l) = sheet.labels.iter_mut().find(|l| l.id == id) {
             l.text = text;
         }
-        self.commit(before, cx);
+        self.commit_since(before, cx);
         cx.notify();
     }
 
@@ -1844,6 +2212,11 @@ impl Folio {
     /// other text a note; with `tidy`, its text turned into Markdown.
     pub fn paste(&mut self, tidy: bool, cx: &mut Context<Self>) {
         let Some(item) = cx.read_from_clipboard() else { return };
+        // Notes copied here, while the clipboard still holds their text.
+        if !tidy && self.clip.as_ref().is_some_and(|c| item.text().as_deref() == Some(c.text.as_str())) {
+            self.paste_clip(cx);
+            return;
+        }
         let (w, h) = self.viewport_size();
         let at = self.sheet().camera.to_world(v2(w / 2., h / 2.));
         for entry in item.entries() {
@@ -1972,7 +2345,7 @@ impl Folio {
     pub fn zoom_by(&mut self, factor: f32, cx: &mut Context<Self>) {
         let (w, h) = self.viewport_size();
         self.board.sheet_mut().camera.zoom_at(v2(w / 2., h / 2.), factor);
-        self.schedule_save(cx);
+        self.schedule_view_save(cx);
         cx.notify();
     }
 
@@ -1989,7 +2362,7 @@ impl Folio {
             }
             None => sheet.camera = Camera::default(),
         }
-        self.schedule_save(cx);
+        self.schedule_view_save(cx);
         cx.notify();
     }
 
@@ -2012,7 +2385,7 @@ impl Folio {
                 let c = r.center();
                 let cam = &mut self.board.sheet_mut().camera;
                 cam.pan = v2(w / 2. - c.x * cam.zoom, h / 2. - c.y * cam.zoom);
-                self.schedule_save(cx);
+                self.schedule_view_save(cx);
             }
         }
         cx.notify();
@@ -2100,10 +2473,76 @@ impl Folio {
                 self.notify(e, cx);
             }
         }
-        if s.quick_hotkey != before.quick_hotkey {
-            self.desktop.set_hotkey(s.quick_hotkey);
+        if s.quick_hotkey != before.quick_hotkey || s.quick_keys != before.quick_keys {
+            if let Err(e) = self.desktop.set_hotkey(s.quick_hotkey.then_some(s.quick_keys.as_str())) {
+                // The one before comes back.
+                self.board.settings.quick_hotkey = before.quick_hotkey;
+                self.board.settings.quick_keys = before.quick_keys.clone();
+                let _ = self.desktop.set_hotkey(before.quick_hotkey.then_some(before.quick_keys.as_str()));
+                self.notify(e, cx);
+            }
         }
         self.schedule_save(cx);
+        cx.notify();
+    }
+
+    /// Settings › Quick note shortcut: the next keys pressed become the
+    /// shortcut. Every key goes to the recorder first (no command runs),
+    /// and the shortcut is let go meanwhile so pressing it is heard here;
+    /// Esc, or a click on the field again, keeps the one there was.
+    pub fn record_quick_keys(&mut self, cx: &mut Context<Self>) {
+        if self.keys_recorder.take().is_some() {
+            self.stop_recording(cx);
+            return;
+        }
+        let _ = self.desktop.set_hotkey(None);
+        self.keys_hint = None;
+        let me = cx.entity().downgrade();
+        self.keys_recorder = Some(cx.intercept_keystrokes(move |ev, _, cx| {
+            let k = ev.keystroke.clone();
+            if matches!(k.key.as_str(), "shift" | "control" | "alt" | "platform" | "function") {
+                return;
+            }
+            cx.stop_propagation();
+            let _ = me.update(cx, |this, cx| this.recorded_keys(&k, cx));
+        }));
+        cx.notify();
+    }
+
+    fn recorded_keys(&mut self, k: &gpui::Keystroke, cx: &mut Context<Self>) {
+        let m = k.modifiers;
+        if k.key == "escape" && !(m.control || m.alt || m.shift || m.platform) {
+            self.stop_recording(cx);
+            return;
+        }
+        match crate::desktop::shortcut_text(m.control, m.alt, m.shift, m.platform, &k.key) {
+            Err(why) => self.keys_hint = Some(why.into()),
+            Ok(keys) => match self.desktop.set_hotkey(Some(&keys)) {
+                Ok(()) => {
+                    self.keys_recorder = None;
+                    self.keys_hint = None;
+                    let s = &mut self.board.settings;
+                    s.quick_hotkey = true;
+                    s.quick_keys = keys.clone();
+                    self.schedule_save(cx);
+                    self.notify(format!("{keys} opens a quick note now"), cx);
+                }
+                // Taken: say so and keep listening for others.
+                Err(e) => self.keys_hint = Some(e.into()),
+            },
+        }
+        cx.notify();
+    }
+
+    /// Recording stopped without new keys: the shortcut there was is back.
+    fn stop_recording(&mut self, cx: &mut Context<Self>) {
+        self.keys_recorder = None;
+        self.keys_hint = None;
+        let s = &self.board.settings;
+        let keys = s.quick_hotkey.then(|| s.quick_keys.clone());
+        if let Err(e) = self.desktop.set_hotkey(keys.as_deref()) {
+            self.notify(e, cx);
+        }
         cx.notify();
     }
 
@@ -2128,16 +2567,17 @@ impl Folio {
 
     // ---------- Quick notes ----------
 
-    /// A note from the quick-note window, into the Inbox.
-    pub fn quick_note(&mut self, text: &str, cx: &mut Context<Self>) {
+    /// A note from the quick-note window (or the palette), onto sheet `to`
+    /// or the Inbox. The window's choice is remembered for next time.
+    pub fn quick_note(&mut self, text: &str, to: Option<Id>, cx: &mut Context<Self>) {
         if text.trim().is_empty() {
             return;
         }
         let t = now();
-        self.change(cx, |b| {
-            b.quick_note(text, t);
-        });
-        self.notify("Saved to Inbox", cx);
+        let mut id = 0;
+        self.change(cx, |b| id = b.quick_note_to(text, to, t));
+        let name = self.board.sheet_of(id).map(|ix| self.board.categories[ix].name.clone()).unwrap_or_default();
+        self.notify(format!("Saved to {name}"), cx);
     }
 }
 
@@ -2204,6 +2644,7 @@ impl Render for Folio {
             Screen::Settings => self.render_settings(window, cx).into_any_element(),
             Screen::Bin => self.render_bin(window, cx).into_any_element(),
             Screen::Transfer => self.render_transfer(window, cx).into_any_element(),
+            Screen::Tasks => self.render_tasks(window, cx).into_any_element(),
         };
         div()
             .id("folio")
@@ -2220,6 +2661,7 @@ impl Render for Folio {
             .on_action(cx.listener(|this, _: &Undo, _, cx| this.undo(cx)))
             .on_action(cx.listener(|this, _: &Redo, _, cx| this.redo(cx)))
             .on_action(cx.listener(|this, _: &ToggleTheme, _, cx| this.toggle_theme(cx)))
+            .on_action(cx.listener(|this, _: &ExportSheet, _, cx| this.toggle_export(cx)))
             .on_action(cx.listener(|this, _: &NewSheet, window, cx| this.new_sheet_dialog(window, cx)))
             .on_action(cx.listener(|this, _: &NewNote, window, cx| this.new_note(window, cx)))
             .on_action(cx.listener(|this, _: &NextSheet, window, cx| this.next_sheet(1, window, cx)))
@@ -2236,7 +2678,12 @@ impl Render for Folio {
                 this.open_palette_with("@", window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(cx)))
-            .on_action(cx.listener(|_, _: &QuickNote, _, cx| crate::desktop::open_quick_note(cx.entity(), cx)))
+            .on_action(cx.listener(|this, _: &FollowLink, window, cx| this.follow_link(window, cx)))
+            .on_action(cx.listener(|_, _: &QuickNote, _, cx| {
+                // Opened once this update is over: it reads Folio.
+                let f = cx.entity();
+                cx.defer(move |cx| crate::desktop::open_quick_note(f, cx));
+            }))
             .on_action(cx.listener(|this, _: &Quit, _, cx| {
                 this.finish_edit(cx);
                 this.save_and_wait();
@@ -2256,13 +2703,15 @@ impl Render for Folio {
                     window.focus(&this.focus, cx);
                 } else if this.palette {
                     this.close_palette(window, cx);
+                } else if this.export_pop {
+                    this.export_pop = false;
                 } else if this.menu.is_some() {
                     this.menu = None;
                 } else if this.dialog.is_some() {
                     this.dialog_cancel(window, cx);
                 } else if this.drawer {
                     this.drawer = false;
-                } else if matches!(this.screen, Screen::Settings | Screen::Bin | Screen::Transfer) {
+                } else if matches!(this.screen, Screen::Settings | Screen::Bin | Screen::Transfer | Screen::Tasks) {
                     this.close_side(cx);
                 }
                 cx.notify();
@@ -2282,6 +2731,7 @@ impl Render for Folio {
             .children(self.render_dialog_leaving(cx))
             .children(self.palette.then(|| self.render_palette_scrim(cx)))
             .children(self.render_palette_scrim_leaving(cx))
+            .children(self.render_export_pop(cx))
             .children(self.menu.is_some().then(|| self.render_menu(window, cx)))
             .children(self.render_menu_leaving(cx))
             .children(self.toast.clone().map(|msg| toast(&t, msg)))
@@ -2326,4 +2776,15 @@ fn is_text_file(path: &std::path::Path) -> bool {
         path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
         Some("md" | "markdown" | "txt")
     )
+}
+
+/// What was copied, in words: "the note", "3 notes", "the text", "4 things".
+fn things(notes: usize, texts: usize) -> String {
+    match (notes, texts) {
+        (1, 0) => "the note".into(),
+        (n, 0) => format!("{n} notes"),
+        (0, 1) => "the text".into(),
+        (0, n) => format!("{n} texts"),
+        (a, b) => format!("{} things", a + b),
+    }
 }

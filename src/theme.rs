@@ -105,6 +105,9 @@ pub struct Sizes {
     pub dialog_w: Pixels,  // 460
     pub drawer: Pixels,    // 304: the sheets drawer
     pub card_min: Pixels,  // 270: a home card's least width
+    pub welcome: Pixels,   // 540: the welcome's note
+    pub welcome_h: Pixels, // 380: the room it grows down into, so its pin stays put
+    pub avatar: Pixels,    // 56: an avatar to pick
     pub grip: Pixels,      // 14: the resize corner
     pub dot_grid: f32,     // 22: world units between canvas dots
 }
@@ -247,6 +250,9 @@ const SIZE: Sizes = Sizes {
     dialog_w: px(460.),
     drawer: px(304.),
     card_min: px(270.),
+    welcome: px(540.),
+    welcome_h: px(380.),
+    avatar: px(56.),
     grip: px(14.),
     dot_grid: 22.,
 };
@@ -500,6 +506,17 @@ impl Theme {
         ]
     }
 
+    /// A small mark of Folio's pink glowing faintly: the tool in use.
+    pub fn shadow_glow(&self) -> Vec<BoxShadow> {
+        vec![BoxShadow {
+            color: self.colors.brand.opacity(if self.is_dark { 0.6 } else { 0.45 }),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(4.),
+            spread_radius: px(0.),
+            inset: false,
+        }]
+    }
+
     /// A sticker being dragged: higher, so it reads as picked up.
     pub fn shadow_lifted(&self, zoom: f32) -> Vec<BoxShadow> {
         let a = if self.is_dark { 0.6 } else { 0.16 };
@@ -617,7 +634,7 @@ impl Theme {
         for p in [
             &mut z.sidebar, &mut z.topbar, &mut z.control, &mut z.icon_sm, &mut z.icon, &mut z.icon_lg, &mut z.dot,
             &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.card_min,
-            &mut z.search, &mut z.search_open,
+            &mut z.search, &mut z.search_open, &mut z.welcome, &mut z.welcome_h, &mut z.avatar,
         ] {
             m(p);
         }
@@ -634,6 +651,18 @@ impl Theme {
     }
 
 }
+
+/// Highlight colours by name, as `<mark color="green">` in a note, light
+/// and dark: soft enough that the note's text stays readable on them.
+pub const MARKS: [(&str, u32, u32); 7] = [
+    ("yellow", 0xfde68a, 0x6b5310),
+    ("green", 0xbbf0cc, 0x1f5133),
+    ("blue", 0xc7dcfb, 0x1e3a66),
+    ("red", 0xfbcaca, 0x6b2525),
+    ("pink", 0xf9d0e6, 0x6a2850),
+    ("purple", 0xddd6fe, 0x44336f),
+    ("orange", 0xfdd6ad, 0x6b3d14),
+];
 
 pub fn theme(cx: &App) -> &Theme {
     &cx.global::<ActiveTheme>().0
