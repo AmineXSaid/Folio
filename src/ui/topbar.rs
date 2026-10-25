@@ -24,6 +24,7 @@ impl Folio {
             Screen::Settings => Some("Settings".into()),
             Screen::Bin => Some("Trash & archive".into()),
             Screen::Transfer => Some("Sync & export".into()),
+            Screen::Tasks => Some("Tasks".into()),
         };
         // Everything in the bar is small and quiet: 28px controls, 14px icons.
         let bar_button = |id: &'static str, path: &'static str| {

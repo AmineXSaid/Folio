@@ -17,7 +17,8 @@ workbook. Written in Rust on [GPUI](https://www.gpui.rs/) (through
   Four types of note: card, taped, cheat card (the title on a band) and
   index card (ruled, with a pin); a pin for any note, in 18 shapes (classic
   push pins, tech, cute, stars, fun), three sizes and eight colours;
-  Remember boxes from `>` lines; an edit
+  Remember boxes from `>` lines; a **Tasks** page (drawer or Ctrl+K)
+  with every task on every sheet, ticked right there; an edit
   bar with bold, italic, lists, tasks, tables and more, each with a
   shortcut; pasted plain text turned into Markdown in one go.
 - **The sheet:** pan and zoom, box-select and move groups with alignment

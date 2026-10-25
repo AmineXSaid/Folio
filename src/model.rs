@@ -663,6 +663,18 @@ pub fn task_progress(body: &str) -> (usize, usize) {
     body.lines().filter_map(task_line).fold((0, 0), |(d, n), (done, _)| (d + done as usize, n + 1))
 }
 
+/// One task (a `- [ ]` line) in a note, for the list of every task.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskRef {
+    /// The sheet it's on (index) and its note.
+    pub sheet: usize,
+    pub note: Id,
+    /// Which task in the note it is, as `toggle_task` counts them.
+    pub n: usize,
+    pub done: bool,
+    pub text: String,
+}
+
 /// Ticks or unticks the `n`th task line.
 pub fn toggle_task(body: &str, n: usize) -> String {
     let mut seen = 0;
@@ -1618,6 +1630,20 @@ impl Board {
         0
     }
 
+    /// Every task in every note: the sheets in the drawer's order, the
+    /// notes front to back as they lie on the sheet, the tasks in order.
+    pub fn tasks(&self) -> Vec<TaskRef> {
+        let mut out = Vec::new();
+        for sheet in self.ordered() {
+            for s in &self.categories[sheet].stickers {
+                for (n, (done, text)) in s.body.split('\n').filter_map(task_line).enumerate() {
+                    out.push(TaskRef { sheet, note: s.id, n, done, text: text.trim().to_string() });
+                }
+            }
+        }
+        out
+    }
+
     /// A quick note into the Inbox: the first line is its title.
     #[cfg(test)]
     pub fn quick_note(&mut self, text: &str, now: u64) -> Id {
@@ -2156,6 +2182,25 @@ mod tests {
         assert_eq!(b.sheet_of(id3), Some(1));
         let id4 = b.quick_note_to("nowhere", Some(9_999), 103);
         assert!(b.categories[b.sheet_of(id4).unwrap()].inbox);
+    }
+
+    #[test]
+    fn every_task_on_every_sheet_is_listed_and_ticks_in_its_note() {
+        let mut b = Board::empty();
+        b.add_sheet("Second");
+        let mut a = sticker(1, 0., 0.);
+        a.body = "Intro\n- [ ] Call Sam\n- [x] Book the bench\n  - [ ] nested".into();
+        b.categories[0].stickers.push(a);
+        let mut c = sticker(2, 0., 0.);
+        c.body = "* [ ] Buy milk".into();
+        b.categories[1].stickers.push(c);
+        let all = b.tasks();
+        let texts: Vec<(&str, bool, usize)> = all.iter().map(|t| (t.text.as_str(), t.done, t.n)).collect();
+        assert_eq!(texts, vec![("Call Sam", false, 0), ("Book the bench", true, 1), ("nested", false, 2), ("Buy milk", false, 0)]);
+        assert_eq!((all[0].sheet, all[3].sheet, all[3].note), (0, 1, 2));
+        // The number ticks that very line.
+        let body = toggle_task(&b.find_note(1).unwrap().body, all[1].n);
+        assert!(body.contains("- [ ] Book the bench") && body.contains("- [ ] Call Sam"));
     }
 
     #[test]

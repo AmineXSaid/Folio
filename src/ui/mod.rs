@@ -18,6 +18,7 @@ pub mod popout;
 pub mod quick;
 mod selection;
 mod settings;
+mod tasks;
 mod sticker;
 mod sync;
 mod toolbar;

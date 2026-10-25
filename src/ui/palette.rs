@@ -25,6 +25,7 @@ enum Cmd {
     Home,
     Drawer,
     Settings,
+    Tasks,
     Trash,
     Archive,
     Backups,
@@ -43,10 +44,11 @@ enum Cmd {
     Rename,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 22] = [
+const CMDS: [(Cmd, &str, &str, &str); 23] = [
     (Cmd::NewNote, "New note", "Ctrl N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl Shift N", "icons/plus.svg"),
-    (Cmd::QuickNote, "Quick note to Inbox", "Ctrl Alt N", "icons/inbox.svg"),
+    (Cmd::QuickNote, "Quick note to Inbox or any sheet", "Ctrl Alt N", "icons/inbox.svg"),
+    (Cmd::Tasks, "Tasks on every sheet", "", "icons/list-checks.svg"),
     (Cmd::Rename, "Rename this sheet", "", "icons/pencil.svg"),
     (Cmd::Home, "Go to all sheets", "Ctrl Shift H", "icons/layout-grid.svg"),
     (Cmd::Drawer, "Show the sheets drawer", "Ctrl B", "icons/panel-left.svg"),
@@ -621,6 +623,7 @@ impl Folio {
                 Cmd::Home => self.go_home(cx),
                 Cmd::Drawer => self.drawer = true,
                 Cmd::Settings => self.open_settings(cx),
+                Cmd::Tasks => self.open_tasks(cx),
                 Cmd::Trash => self.open_bin(BinTab::Trash, cx),
                 Cmd::Archive => self.open_bin(BinTab::Archive, cx),
                 Cmd::Backups => self.open_bin(BinTab::Backups, cx),

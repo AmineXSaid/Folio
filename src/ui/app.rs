@@ -250,6 +250,16 @@ pub enum Place {
     Settings,
     Bin(BinTab),
     Transfer,
+    Tasks,
+}
+
+/// Which tasks the Tasks page shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TaskFilter {
+    #[default]
+    Open,
+    Done,
+    All,
 }
 
 /// How many places back and forward remember.
@@ -263,6 +273,8 @@ pub enum Screen {
     Bin,
     /// Sync & export.
     Transfer,
+    /// Every task on every sheet.
+    Tasks,
 }
 
 /// What the pointer is doing between press and release.
@@ -450,6 +462,7 @@ pub struct Folio {
     pub welcome_input: Entity<InputState>,
     pub sort: Sort,
     pub bin_tab: BinTab,
+    pub task_filter: TaskFilter,
     /// The backup whose sheets are listed: (day, [(id, name, notes, icon)]).
     pub backup_open: Option<(String, Vec<(Id, String, usize, String)>)>,
     pub toast: Option<SharedString>,
@@ -668,6 +681,7 @@ impl Folio {
             welcome_input,
             sort: Sort::Recent,
             bin_tab: BinTab::Trash,
+            task_filter: TaskFilter::Open,
             backup_open: None,
             toast: None,
             exits: Exits::default(),
@@ -1073,6 +1087,7 @@ impl Folio {
             Screen::Settings => Place::Settings,
             Screen::Bin => Place::Bin(self.bin_tab),
             Screen::Transfer => Place::Transfer,
+            Screen::Tasks => Place::Tasks,
         }
     }
 
@@ -1111,6 +1126,7 @@ impl Folio {
                 self.screen = Screen::Bin;
             }
             Place::Transfer => self.screen = Screen::Transfer,
+            Place::Tasks => self.screen = Screen::Tasks,
         }
         cx.notify();
         true
@@ -1151,6 +1167,12 @@ impl Folio {
 
     pub fn open_settings(&mut self, cx: &mut Context<Self>) {
         self.open_side(Screen::Settings, cx);
+    }
+
+    /// Every task on every sheet.
+    pub fn open_tasks(&mut self, cx: &mut Context<Self>) {
+        self.open_side(Screen::Tasks, cx);
+        self.drawer = false;
     }
 
     pub fn open_bin(&mut self, tab: BinTab, cx: &mut Context<Self>) {
@@ -2533,6 +2555,7 @@ impl Render for Folio {
             Screen::Settings => self.render_settings(window, cx).into_any_element(),
             Screen::Bin => self.render_bin(window, cx).into_any_element(),
             Screen::Transfer => self.render_transfer(window, cx).into_any_element(),
+            Screen::Tasks => self.render_tasks(window, cx).into_any_element(),
         };
         div()
             .id("folio")
@@ -2595,7 +2618,7 @@ impl Render for Folio {
                     this.dialog_cancel(window, cx);
                 } else if this.drawer {
                     this.drawer = false;
-                } else if matches!(this.screen, Screen::Settings | Screen::Bin | Screen::Transfer) {
+                } else if matches!(this.screen, Screen::Settings | Screen::Bin | Screen::Transfer | Screen::Tasks) {
                     this.close_side(cx);
                 }
                 cx.notify();
