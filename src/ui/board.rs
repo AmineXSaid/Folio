@@ -817,7 +817,7 @@ impl Folio {
                     .text_size(t.text.caption)
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .cursor_pointer()
-                    .child(icon("icons/check.svg", px(13.), t.colors.primary_fg))
+                    .child(icon("icons/check.svg", px(13.), t.colors.accent_ink))
                     .child("Done")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.finish_edit(cx);

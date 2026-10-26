@@ -171,20 +171,18 @@ pub fn icon_button(id: impl Into<gpui::ElementId>, path: &'static str, t: &Theme
         .child(icon(path, t.size.icon, t.colors.text_muted))
 }
 
-/// A main action's face: lit from above with a darker rim and a glow in
-/// its own colour that spreads under the pointer and goes as it's pressed.
+/// A main action's face: a thin pink outline and pink words, no fill;
+/// a pink wash under the pointer, a deeper one as it's pressed.
 pub fn primary_face(d: gpui::Stateful<gpui::Div>, t: &Theme) -> gpui::Stateful<gpui::Div> {
-    let (hover, pressed, glow) = (t.primary_fill_hover(), t.primary_fill_pressed(), t.shadow_primary_hover());
-    d.bg(t.primary_fill())
-        .border_1()
-        .border_color(t.colors.primary_edge)
-        .shadow(t.shadow_primary())
-        .hover(move |d| d.bg(hover).shadow(glow))
-        .active(move |d| d.bg(pressed).shadow(Vec::new()))
-        .text_color(t.colors.primary_fg)
+    let ink = t.colors.accent_ink;
+    d.border_1()
+        .border_color(ink)
+        .hover(move |d| d.bg(ink.opacity(0.08)))
+        .active(move |d| d.bg(ink.opacity(0.16)))
+        .text_color(ink)
 }
 
-/// The filled button for a view's one main action.
+/// The outlined button for a view's one main action.
 pub fn primary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>, t: &Theme) -> gpui::Stateful<gpui::Div> {
     primary_face(div().id(id), t)
         .h(t.size.control)
@@ -207,12 +205,10 @@ pub fn secondary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedS
         .flex()
         .items_center()
         .rounded(t.radius.button)
-        .bg(t.raised_fill())
         .border_1()
         .border_color(t.colors.border)
-        .shadow(t.shadow_raised())
-        .hover(|d| d.bg(t.colors.surface).border_color(t.colors.text_subtle).text_color(t.colors.text))
-        .active(|d| d.bg(t.colors.hover).shadow(Vec::new()))
+        .hover(|d| d.bg(t.colors.hover).border_color(t.colors.text_subtle).text_color(t.colors.text))
+        .active(|d| d.bg(t.colors.border))
         .text_color(t.colors.text_body)
         .text_size(t.text.caption)
         .font_weight(gpui::FontWeight::MEDIUM)

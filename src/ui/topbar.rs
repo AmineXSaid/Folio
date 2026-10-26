@@ -54,7 +54,6 @@ impl Folio {
                 .items_center()
                 .gap(px(2.))
                 .rounded(t.radius.button)
-                .bg(t.colors.surface_sunk)
                 .border_1()
                 .border_color(t.colors.border)
         };
@@ -77,8 +76,8 @@ impl Folio {
                 .map(|d| {
                     if live {
                         d.cursor_pointer()
-                            .hover(|d| d.bg(t.colors.surface).shadow(t.shadow_raised()))
-                            .active(|d| d.bg(t.colors.hover).shadow(Vec::new()))
+                            .hover(|d| d.bg(t.colors.hover))
+                            .active(|d| d.bg(t.colors.border))
                     } else {
                         // Nothing to do yet: faded, and the pointer says so.
                         d.opacity(0.4)
@@ -234,38 +233,20 @@ impl Folio {
 
         // The screen's main action: the one coloured thing in the bar.
         let new_button = |id: &'static str, label: &'static str, tip: String| {
-            div()
-                .id(id)
+            super::primary_face(div().id(id), &t)
                 .occlude()
                 .h(t.size.bar_control)
-                .pl(px(5.))
+                .pl(px(10.))
                 .pr(t.space.md)
                 .ml(t.space.xs)
                 .flex()
                 .items_center()
-                .gap(px(7.))
+                .gap(px(6.))
                 .rounded(t.radius.button)
-                .bg(t.primary_fill())
-                .border_1()
-                .border_color(t.colors.primary_edge)
-                .shadow(t.shadow_primary())
-                .hover(|d| d.bg(t.primary_fill_hover()).shadow(t.shadow_primary_hover()))
-                .active(|d| d.bg(t.primary_fill_pressed()).shadow(Vec::new()))
-                .text_color(t.colors.primary_fg)
                 .text_size(t.text.caption)
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .cursor_pointer()
-                // The plus sits in a small lit disc of its own.
-                .child(
-                    div()
-                        .size(px(20.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_full()
-                        .bg(t.colors.primary_fg.opacity(0.2))
-                        .child(icon("icons/plus.svg", px(13.), t.colors.primary_fg)),
-                )
+                .child(icon("icons/plus.svg", px(14.), t.colors.accent_ink))
                 .child(label)
                 .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
         };
@@ -288,9 +269,9 @@ impl Folio {
                 .rounded(t.radius.button)
                 .border_1()
                 .border_color(if open { t.colors.brand.opacity(0.5) } else { t.colors.border })
-                .map(|d| if open { d.bg(t.colors.brand_tint) } else { d.bg(t.raised_fill()).shadow(t.shadow_raised()) })
-                .when(!open, |d| d.hover(|d| d.bg(t.colors.surface).border_color(t.colors.text_subtle)))
-                .active(|d| d.bg(t.colors.hover).shadow(Vec::new()))
+                .when(open, |d| d.bg(t.colors.brand_tint))
+                .when(!open, |d| d.hover(|d| d.bg(t.colors.hover).border_color(t.colors.text_subtle)))
+                .active(|d| d.bg(t.colors.border))
                 .text_color(ink)
                 .text_size(t.text.caption)
                 .font_weight(gpui::FontWeight::SEMIBOLD)

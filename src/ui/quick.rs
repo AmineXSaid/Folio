@@ -200,7 +200,7 @@ impl Render for QuickNoteWindow {
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .cursor_pointer()
             .child("Save")
-            .child(icon("icons/corner-down-left.svg", t.size.icon_sm, t.colors.primary_fg))
+            .child(icon("icons/corner-down-left.svg", t.size.icon_sm, t.colors.accent_ink))
             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx)));
 
         let card = div()

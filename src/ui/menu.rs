@@ -642,7 +642,7 @@ impl Folio {
                                 .text_size(t.text.caption)
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .cursor_pointer()
-                                .child(super::icon("icons/bell.svg", px(13.), t.colors.primary_fg))
+                                .child(super::icon("icons/bell.svg", px(13.), t.colors.accent_ink))
                                 .child(format!("Remind me {} {}", time::day_label(pick, now()).to_lowercase(), time::clock(pick)))
                                 .on_click({
                                     let targets = targets.clone();
