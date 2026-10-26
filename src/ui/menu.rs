@@ -982,7 +982,7 @@ impl Folio {
                         .when(on, |d| d.border_2())
                         .cursor_pointer()
                 };
-                if !shape.geom.is_line() {
+                if shape.geom.fills() {
                     items.push(caption("Fill", &t).into_any_element());
                     let none = {
                         let ids = ids.clone();
@@ -1094,8 +1094,7 @@ impl Folio {
                             chip("m-turn-straight".into(), false)
                                 .child("Straighten")
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.menu = None;
-                                    this.change_shapes(&ids, cx, |s| s.rot = 0.)
+                                    this.set_turn(&ids, cx, |_| 0.)
                                 }))
                         })
                         .child(div().flex_1())

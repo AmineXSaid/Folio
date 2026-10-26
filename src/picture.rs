@@ -1238,7 +1238,7 @@ fn draw_shape(svg: &mut Svg, s: &Shape, t: &Theme) {
         d
     };
     let outlines = s.outlines();
-    if let (Some(p), Some(o)) = (s.fill, outlines.first()) {
+    if let (Some(p), Some(o)) = (s.fill.filter(|_| s.geom.fills()), outlines.first()) {
         if o.closed {
             svg.fill(&path(o), rgba(t.paper(p)));
         }
@@ -1258,8 +1258,9 @@ fn draw_shape(svg: &mut Svg, s: &Shape, t: &Theme) {
         return;
     }
     let font = Font::new(SANS, SHAPE_TEXT, crate::glyphs::WEIGHT);
-    let r = s.rect;
-    let lines = crate::glyphs::wrap(text, SHAPE_TEXT, (r.w - 2. * TEXT_PAD).max(SHAPE_TEXT));
+    let r = s.text_rect();
+    let pad = if s.geom.is_figure() { 0. } else { TEXT_PAD };
+    let lines = crate::glyphs::wrap(text, SHAPE_TEXT, (r.w - 2. * pad).max(SHAPE_TEXT));
     let lh = SHAPE_TEXT * crate::glyphs::LEADING;
     let top = r.y + (r.h - lh * lines.len() as f32) / 2.;
     let c = s.center();

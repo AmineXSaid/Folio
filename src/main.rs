@@ -9,6 +9,7 @@ mod fonts;
 mod glyphs;
 mod greeting;
 mod history;
+mod icons;
 mod desktop;
 mod links;
 mod markdown;

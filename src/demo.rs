@@ -3,6 +3,7 @@
 //! data folder), and to tell the samples older versions started with from
 //! sheets people made.
 
+use crate::icons::Icon;
 use crate::model::*;
 
 fn note(b: &mut Board, rect: (f32, f32, f32, f32), paper: Paper, title: &str, body: &str) -> Sticker {
@@ -270,8 +271,11 @@ fn network(b: &mut Board, now: u64) {
             s.fill = Some(Paper::Blush);
         }),
         shape(b, Geom::Terminator, (330., 400., 150., 56.), "Done", &|s| s.fill = Some(Paper::Sage)),
+        shape(b, Geom::Icon(Icon::Laptop), (880., 240., 64., 64.), "Laptop", &plain),
+        shape(b, Geom::Icon(Icon::Phone), (1010., 240., 64., 64.), "Phone", &|s| s.ink = Ink::Cobalt),
+        shape(b, Geom::Icon(Icon::Wifi), (945., 360., 64., 64.), "Office Wi-Fi", &|s| s.ink = Ink::Forest),
     ];
-    let mut tip = note(b, (860., 40., 230., 150.), Paper::Butter, "Shapes", "Pick one from the dock. Drag the round handle to turn it; **[** and **]** turn by 15°.");
+    let mut tip = note(b, (860., 40., 230., 150.), Paper::Butter, "Shapes", "Open the shapes panel from the dock (Ctrl+Shift+S). Drag the round handle, or just outside a corner, to turn; [ and ] turn it by 15 degrees.");
     tip.edited = now;
     let sheet = b.sheet_mut();
     sheet.icon = "🛜".into();

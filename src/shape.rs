@@ -1,4 +1,5 @@
-//! Shapes drawn on a sheet: boxes, flowchart symbols, lines and arrows.
+//! Shapes drawn on a sheet: boxes, flowchart and UML symbols, lines,
+//! arrows and line icons.
 //! Each is a kind of outline fitted to a box, turned about the box's
 //! centre. Plain geometry only; nothing here knows about GPUI. The board
 //! paints these outlines and the PNG/PDF export writes them, so both draw
@@ -8,6 +9,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use serde::{Deserialize, Serialize};
 
+use crate::icons::{self, Icon, IconLibrary, GRID};
 use crate::model::{segment_distance, v2, Id, Ink, Paper, Rect, Vec2};
 
 /// The smallest a shape's box can be made, in world units.
@@ -20,83 +22,239 @@ pub const TEXT_PAD: f32 = 10.;
 /// Which outline a shape has.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Geom {
+    // General.
     Rect,
     Rounded,
+    Square,
     Ellipse,
+    Circle,
     Diamond,
     Triangle,
     Hexagon,
     Parallelogram,
+    Trapezoid,
+    Pentagon,
+    Octagon,
+    Star,
+    Cross,
+    Heart,
     Cylinder,
     Cloud,
     Document,
+    Note,
+    Card,
+    Callout,
+    Cube,
+    Step,
+    Tape,
+    // Flowchart.
     Terminator,
     Delay,
     ManualInput,
     OffPage,
     Predefined,
     ManualOp,
+    Display,
+    Collate,
+    Sort,
+    Merge,
+    Or,
+    SummingJunction,
+    InternalStorage,
+    LoopLimit,
+    MultiDocument,
+    SequentialData,
+    // Lines and arrows.
     Line,
     Arrow,
     DoubleArrow,
     Elbow,
+    CurvedArrow,
+    BlockArrow,
+    BlockDoubleArrow,
+    Chevron,
+    // UML.
+    Actor,
+    Class,
+    Package,
+    Component,
+    /// A line icon (network, devices, people...).
+    Icon(Icon),
+}
+
+/// One thing to pick in the shapes panel: a shape under the name its
+/// library knows it by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Entry {
+    pub geom: Geom,
+    pub name: &'static str,
+    /// Other words it's found by.
+    pub keywords: &'static str,
+}
+
+/// A family of shapes, as the panel shows them.
+pub struct Library {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub entries: Vec<Entry>,
+}
+
+const fn e(geom: Geom, name: &'static str, keywords: &'static str) -> Entry {
+    Entry { geom, name, keywords }
+}
+
+/// Every shape there is, family by family.
+pub fn libraries() -> Vec<Library> {
+    use Geom as G;
+    let general = vec![
+        e(G::Rect, "Rectangle", "box square process"),
+        e(G::Rounded, "Rounded rectangle", "box card button"),
+        e(G::Square, "Square", "box"),
+        e(G::Ellipse, "Ellipse", "oval"),
+        e(G::Circle, "Circle", "round dot"),
+        e(G::Diamond, "Diamond", "rhombus decision"),
+        e(G::Triangle, "Triangle", "extract"),
+        e(G::Hexagon, "Hexagon", "preparation"),
+        e(G::Parallelogram, "Parallelogram", "data input output"),
+        e(G::Trapezoid, "Trapezoid", ""),
+        e(G::Pentagon, "Pentagon", ""),
+        e(G::Octagon, "Octagon", "stop"),
+        e(G::Star, "Star", "favourite rating"),
+        e(G::Cross, "Cross", "plus add"),
+        e(G::Heart, "Heart", "love like"),
+        e(G::Cylinder, "Cylinder", "database storage"),
+        e(G::Cloud, "Cloud", "internet"),
+        e(G::Document, "Document", "paper file"),
+        e(G::Note, "Note", "folded corner"),
+        e(G::Card, "Card", "punched card cut corner"),
+        e(G::Callout, "Callout", "speech bubble comment"),
+        e(G::Cube, "Cube", "box 3d"),
+        e(G::Step, "Step", "chevron process"),
+        e(G::Tape, "Tape", "punched tape banner"),
+    ];
+    let flow = vec![
+        e(G::Rect, "Process", "step task"),
+        e(G::Diamond, "Decision", "if choice"),
+        e(G::Terminator, "Start / end", "terminator begin stop pill"),
+        e(G::Parallelogram, "Data", "input output"),
+        e(G::Predefined, "Predefined process", "subroutine"),
+        e(G::Document, "Document", "report"),
+        e(G::MultiDocument, "Documents", "multiple reports"),
+        e(G::Cylinder, "Database", "stored data storage"),
+        e(G::ManualInput, "Manual input", "keyboard"),
+        e(G::ManualOp, "Manual operation", "trapezoid"),
+        e(G::Hexagon, "Preparation", "setup"),
+        e(G::Delay, "Delay", "wait"),
+        e(G::Display, "Display", "screen output"),
+        e(G::OffPage, "Off-page link", "connector"),
+        e(G::Merge, "Merge", "triangle down"),
+        e(G::Triangle, "Extract", "triangle up"),
+        e(G::Collate, "Collate", "hourglass"),
+        e(G::Sort, "Sort", "order"),
+        e(G::Or, "Or", "junction"),
+        e(G::SummingJunction, "Summing junction", "and"),
+        e(G::InternalStorage, "Internal storage", "memory"),
+        e(G::LoopLimit, "Loop limit", "repeat"),
+        e(G::Card, "Punched card", "card"),
+        e(G::SequentialData, "Sequential data", "tape storage"),
+    ];
+    let arrows = vec![
+        e(G::Line, "Line", "connector"),
+        e(G::Arrow, "Arrow", "connector direction"),
+        e(G::DoubleArrow, "Double arrow", "both ways"),
+        e(G::Elbow, "Elbow arrow", "orthogonal"),
+        e(G::CurvedArrow, "Curved arrow", "bend"),
+        e(G::BlockArrow, "Block arrow", "fat arrow right"),
+        e(G::BlockDoubleArrow, "Block double arrow", "fat both ways"),
+        e(G::Chevron, "Chevron", "next step"),
+    ];
+    let uml = vec![
+        e(G::Actor, "Actor", "person user stick figure"),
+        e(G::Class, "Class", "object table"),
+        e(G::Package, "Package", "module folder"),
+        e(G::Component, "Component", "module part"),
+        e(G::Note, "Comment", "note"),
+    ];
+    let icons = |lib: IconLibrary| -> Vec<Entry> { Icon::ALL.iter().filter(|i| i.library() == lib).map(|&i| e(G::Icon(i), i.name(), i.keywords())).collect() };
+    vec![
+        Library { id: "general", name: "General", entries: general },
+        Library { id: "flow", name: "Flowchart", entries: flow },
+        Library { id: "arrows", name: "Arrows & lines", entries: arrows },
+        Library { id: "uml", name: "UML", entries: uml },
+        Library { id: "network", name: "Network", entries: icons(IconLibrary::Network) },
+        Library { id: "devices", name: "Devices", entries: icons(IconLibrary::Devices) },
+        Library { id: "people", name: "People & office", entries: icons(IconLibrary::People) },
+        Library { id: "software", name: "Software", entries: icons(IconLibrary::Software) },
+    ]
+}
+
+/// The entries matching `q` (name, keywords or family; every word must
+/// match the start of one), best first: names that start with it, then
+/// the rest. Each shape once.
+pub fn search(q: &str) -> Vec<(Entry, &'static str)> {
+    let words: Vec<String> = q.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let mut hits: Vec<(u8, Entry, &'static str)> = Vec::new();
+    for lib in libraries() {
+        for en in &lib.entries {
+            // "Wi-Fi" is found by "wifi" too.
+            let compact: String = en.name.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+            let hay = format!("{} {} {} {compact}", en.name, en.keywords, lib.name).to_lowercase();
+            let terms: Vec<&str> = hay.split(|c: char| !c.is_alphanumeric()).filter(|t| !t.is_empty()).collect();
+            if !words.iter().all(|w| terms.iter().any(|t| t.starts_with(w.as_str()))) {
+                continue;
+            }
+            if hits.iter().any(|h| h.1.geom == en.geom && h.1.name == en.name) {
+                continue;
+            }
+            let rank = u8::from(!compact.starts_with(words[0].as_str()) && !en.name.to_lowercase().starts_with(words[0].as_str()));
+            hits.push((rank, *en, lib.name));
+        }
+    }
+    hits.sort_by_key(|h| h.0);
+    hits.into_iter().map(|h| (h.1, h.2)).collect()
 }
 
 impl Geom {
-    /// The boxes and symbols, in the order the picker shows them.
-    pub const BASIC: [Geom; 10] = [
-        Geom::Rect,
-        Geom::Rounded,
-        Geom::Ellipse,
-        Geom::Diamond,
-        Geom::Triangle,
-        Geom::Hexagon,
-        Geom::Parallelogram,
-        Geom::Cylinder,
-        Geom::Cloud,
-        Geom::Document,
-    ];
-    pub const FLOW: [Geom; 6] = [Geom::Terminator, Geom::Delay, Geom::ManualInput, Geom::OffPage, Geom::Predefined, Geom::ManualOp];
-    pub const LINES: [Geom; 4] = [Geom::Line, Geom::Arrow, Geom::DoubleArrow, Geom::Elbow];
-
     pub fn name(self) -> &'static str {
-        match self {
-            Geom::Rect => "Rectangle",
-            Geom::Rounded => "Rounded rectangle",
-            Geom::Ellipse => "Ellipse",
-            Geom::Diamond => "Diamond",
-            Geom::Triangle => "Triangle",
-            Geom::Hexagon => "Hexagon",
-            Geom::Parallelogram => "Parallelogram",
-            Geom::Cylinder => "Cylinder",
-            Geom::Cloud => "Cloud",
-            Geom::Document => "Document",
-            Geom::Terminator => "Start / end",
-            Geom::Delay => "Delay",
-            Geom::ManualInput => "Manual input",
-            Geom::OffPage => "Off-page link",
-            Geom::Predefined => "Predefined process",
-            Geom::ManualOp => "Manual operation",
-            Geom::Line => "Line",
-            Geom::Arrow => "Arrow",
-            Geom::DoubleArrow => "Double arrow",
-            Geom::Elbow => "Elbow arrow",
+        if let Geom::Icon(i) = self {
+            return i.name();
         }
+        libraries().into_iter().flat_map(|l| l.entries).find(|e| e.geom == self).map_or("Shape", |e| e.name)
     }
 
     /// A line or an arrow: drawn, never filled, and caught along its line.
     pub fn is_line(self) -> bool {
-        matches!(self, Geom::Line | Geom::Arrow | Geom::DoubleArrow | Geom::Elbow)
+        matches!(self, Geom::Line | Geom::Arrow | Geom::DoubleArrow | Geom::Elbow | Geom::CurvedArrow)
+    }
+
+    /// Lines drawn in a box, with no body to fill (icons, the actor): caught
+    /// anywhere in the box, their words written under it.
+    pub fn is_figure(self) -> bool {
+        matches!(self, Geom::Icon(_) | Geom::Actor)
+    }
+
+    /// Has a body that takes a fill.
+    pub fn fills(self) -> bool {
+        !self.is_line() && !self.is_figure()
     }
 
     /// The box a new one gets, in world units.
     pub fn default_size(self) -> (f32, f32) {
         match self {
             Geom::Line | Geom::Arrow | Geom::DoubleArrow => (160., 24.),
-            Geom::Elbow => (160., 80.),
-            Geom::Ellipse | Geom::Diamond | Geom::Triangle | Geom::Hexagon => (140., 100.),
+            Geom::Elbow | Geom::CurvedArrow => (160., 80.),
+            Geom::BlockArrow | Geom::BlockDoubleArrow | Geom::Chevron => (140., 70.),
+            Geom::Square | Geom::Circle | Geom::Star | Geom::Cross | Geom::Heart | Geom::Octagon | Geom::Pentagon => (100., 100.),
+            Geom::Or | Geom::SummingJunction | Geom::SequentialData => (80., 80.),
+            Geom::Ellipse | Geom::Diamond | Geom::Triangle | Geom::Hexagon | Geom::Merge | Geom::Collate | Geom::Sort => (140., 100.),
             Geom::Cylinder => (110., 120.),
             Geom::Terminator => (150., 60.),
+            Geom::Note | Geom::Cube | Geom::Class | Geom::Callout => (160., 120.),
+            Geom::Actor => (40., 80.),
+            Geom::Icon(_) => (64., 64.),
             _ => (160., 96.),
         }
     }
@@ -108,7 +266,15 @@ impl Geom {
         let (cx, cy) = (x + w / 2., y + h / 2.);
         let closed = |points: Vec<Vec2>| Outline { points, closed: true };
         let open = |points: Vec<Vec2>| Outline { points, closed: false };
-        let poly = |pts: &[(f32, f32)]| closed(pts.iter().map(|&(u, v)| v2(x + u * w, y + v * h)).collect());
+        let at = |u: f32, v: f32| v2(x + u * w, y + v * h);
+        let poly = |pts: &[(f32, f32)]| closed(pts.iter().map(|&(u, v)| at(u, v)).collect());
+        let seg = |a: (f32, f32), b: (f32, f32)| open(vec![at(a.0, a.1), at(b.0, b.1)]);
+        let oval = |c: Vec2, rx: f32, ry: f32| {
+            let mut p = Vec::new();
+            arc(&mut p, c, rx, ry, 0., TAU);
+            p.pop();
+            closed(p)
+        };
         // An arrowhead at `tip`, pointing along (dx, dy), `spread` either
         // side of the line.
         let len = (w.max(h) * 0.3).min(16.);
@@ -118,8 +284,17 @@ impl Geom {
             let (nx, ny) = (-dy * spread, dx * spread);
             open(vec![v2(bx + nx, by + ny), tip, v2(bx - nx, by - ny)])
         };
+        let fold = 18f32.min(w * 0.2).min(h * 0.2);
+        let wave = |from: f32, to: f32, base: f32, amp: f32| -> Vec<Vec2> {
+            (0..=24)
+                .map(|i| {
+                    let u = from + (to - from) * i as f32 / 24.;
+                    v2(x + u * w, base + (u * TAU).sin() * amp)
+                })
+                .collect()
+        };
         match self {
-            Geom::Rect => vec![poly(&[(0., 0.), (1., 0.), (1., 1.), (0., 1.)])],
+            Geom::Rect | Geom::Square => vec![poly(&[(0., 0.), (1., 0.), (1., 1.), (0., 1.)])],
             Geom::Rounded => {
                 let k = 14f32.min(w * 0.2).min(h * 0.2);
                 let mut p = Vec::new();
@@ -129,24 +304,71 @@ impl Geom {
                 arc(&mut p, v2(x + k, y + k), k, k, PI, PI + FRAC_PI_2);
                 vec![closed(p)]
             }
-            Geom::Ellipse => {
-                let mut p = Vec::new();
-                arc(&mut p, v2(cx, cy), w / 2., h / 2., 0., TAU);
-                p.pop();
-                vec![closed(p)]
-            }
+            Geom::Ellipse | Geom::Circle => vec![oval(v2(cx, cy), w / 2., h / 2.)],
             Geom::Diamond => vec![poly(&[(0.5, 0.), (1., 0.5), (0.5, 1.), (0., 0.5)])],
             Geom::Triangle => vec![poly(&[(0.5, 0.), (1., 1.), (0., 1.)])],
+            Geom::Merge => vec![poly(&[(0., 0.), (1., 0.), (0.5, 1.)])],
             Geom::Hexagon => vec![poly(&[(0.2, 0.), (0.8, 0.), (1., 0.5), (0.8, 1.), (0.2, 1.), (0., 0.5)])],
             Geom::Parallelogram => vec![poly(&[(0.2, 0.), (1., 0.), (0.8, 1.), (0., 1.)])],
+            Geom::Trapezoid => vec![poly(&[(0.2, 0.), (0.8, 0.), (1., 1.), (0., 1.)])],
+            Geom::Pentagon => vec![poly(&[(0.5, 0.), (1., 0.38), (0.81, 1.), (0.19, 1.), (0., 0.38)])],
+            Geom::Octagon => {
+                let k = 0.29;
+                vec![poly(&[(k, 0.), (1. - k, 0.), (1., k), (1., 1. - k), (1. - k, 1.), (k, 1.), (0., 1. - k), (0., k)])]
+            }
+            Geom::Star => {
+                let p = (0..10)
+                    .map(|i| {
+                        let a = -FRAC_PI_2 + PI * i as f32 / 5.;
+                        let k = if i % 2 == 0 { 0.5 } else { 0.2 };
+                        v2(cx + a.cos() * w * k, y + h * 0.53 + a.sin() * h * k)
+                    })
+                    .collect();
+                vec![closed(p)]
+            }
+            Geom::Cross => {
+                let t = 0.33;
+                let u = 1. - t;
+                vec![poly(&[(t, 0.), (u, 0.), (u, t), (1., t), (1., u), (u, u), (u, 1.), (t, 1.), (t, u), (0., u), (0., t), (t, t)])]
+            }
+            Geom::Heart => {
+                let p = (0..72)
+                    .map(|i| {
+                        let a = TAU * i as f32 / 72.;
+                        let (hx, hy) = (16. * a.sin().powi(3), 13. * a.cos() - 5. * (2. * a).cos() - 2. * (3. * a).cos() - (4. * a).cos());
+                        v2(cx + hx / 34. * w, y + h * 0.42 - hy / 30. * h)
+                    })
+                    .collect();
+                vec![closed(p)]
+            }
             Geom::ManualInput => vec![poly(&[(0., 0.25), (1., 0.), (1., 1.), (0., 1.)])],
             Geom::OffPage => vec![poly(&[(0., 0.), (1., 0.), (1., 0.65), (0.5, 1.), (0., 0.65)])],
             Geom::ManualOp => vec![poly(&[(0., 0.), (1., 0.), (0.8, 1.), (0.2, 1.)])],
-            Geom::Predefined => vec![
-                poly(&[(0., 0.), (1., 0.), (1., 1.), (0., 1.)]),
-                open(vec![v2(x + w * 0.1, y), v2(x + w * 0.1, y + h)]),
-                open(vec![v2(x + w * 0.9, y), v2(x + w * 0.9, y + h)]),
-            ],
+            Geom::Predefined => vec![poly(&[(0., 0.), (1., 0.), (1., 1.), (0., 1.)]), seg((0.1, 0.), (0.1, 1.)), seg((0.9, 0.), (0.9, 1.))],
+            Geom::InternalStorage => vec![poly(&[(0., 0.), (1., 0.), (1., 1.), (0., 1.)]), seg((0.15, 0.), (0.15, 1.)), seg((0., 0.2), (1., 0.2))],
+            Geom::LoopLimit => vec![poly(&[(0.15, 0.), (0.85, 0.), (1., 0.3), (1., 1.), (0., 1.), (0., 0.3)])],
+            Geom::Collate => vec![poly(&[(0., 0.), (1., 0.), (0., 1.), (1., 1.)])],
+            Geom::Sort => vec![poly(&[(0.5, 0.), (1., 0.5), (0.5, 1.), (0., 0.5)]), seg((0., 0.5), (1., 0.5))],
+            Geom::Or | Geom::SummingJunction => {
+                let (rx, ry) = (w / 2., h / 2.);
+                let lines = if self == Geom::Or {
+                    vec![seg((0.5, 0.), (0.5, 1.)), seg((0., 0.5), (1., 0.5))]
+                } else {
+                    let k = std::f32::consts::FRAC_1_SQRT_2 / 2.;
+                    vec![seg((0.5 - k, 0.5 - k), (0.5 + k, 0.5 + k)), seg((0.5 + k, 0.5 - k), (0.5 - k, 0.5 + k))]
+                };
+                let mut out = vec![oval(v2(cx, cy), rx, ry)];
+                out.extend(lines);
+                out
+            }
+            Geom::SequentialData => vec![oval(v2(cx, cy), w / 2., h / 2.), seg((0.5, 1.), (1., 1.))],
+            Geom::Display => {
+                let k = (h / 2.).min(w * 0.3);
+                let mut p = vec![v2(x, cy), v2(x + w * 0.18, y)];
+                arc(&mut p, v2(x + w - k, cy), k, h / 2., -FRAC_PI_2, FRAC_PI_2);
+                p.push(v2(x + w * 0.18, y + h));
+                vec![closed(p)]
+            }
             Geom::Cylinder => {
                 let ry = (h * 0.15).min(16.);
                 let mut body = Vec::new();
@@ -169,13 +391,51 @@ impl Geom {
                 vec![closed(p)]
             }
             Geom::Document => {
-                let base = y + h * 0.85;
                 let mut p = vec![v2(x, y), v2(x + w, y)];
-                for i in 0..=24 {
-                    let u = 1. - i as f32 / 24.;
-                    p.push(v2(x + u * w, base + (u * TAU).sin() * h * 0.08));
-                }
+                p.extend(wave(1., 0., y + h * 0.85, h * 0.08));
                 vec![closed(p)]
+            }
+            Geom::MultiDocument => {
+                // The front page, with two more peeking out behind it.
+                let (dx, dy) = (8f32.min(w * 0.06), 8f32.min(h * 0.08));
+                let fw = w - 2. * dx;
+                let front_y = y + 2. * dy;
+                let mut p = vec![v2(x, front_y), v2(x + fw, front_y)];
+                p.extend((0..=24).map(|i| {
+                    let u = 1. - i as f32 / 24.;
+                    v2(x + u * fw, y + h * 0.85 + (u * TAU).sin() * h * 0.08)
+                }));
+                vec![
+                    closed(p),
+                    open(vec![v2(x + dx, front_y), v2(x + dx, y + dy), v2(x + fw + dx, y + dy), v2(x + fw + dx, y + h * 0.8)]),
+                    open(vec![v2(x + 2. * dx, y + dy), v2(x + 2. * dx, y), v2(x + w, y), v2(x + w, y + h * 0.74)]),
+                ]
+            }
+            Geom::Tape => {
+                let amp = h * 0.08;
+                let mut p = wave(0., 1., y + h * 0.1, amp);
+                p.extend(wave(1., 0., y + h * 0.9, amp));
+                vec![closed(p)]
+            }
+            Geom::Note => vec![
+                closed(vec![v2(x, y), v2(x + w - fold, y), v2(x + w, y + fold), v2(x + w, y + h), v2(x, y + h)]),
+                open(vec![v2(x + w - fold, y), v2(x + w - fold, y + fold), v2(x + w, y + fold)]),
+            ],
+            Geom::Card => vec![closed(vec![v2(x + fold, y), v2(x + w, y), v2(x + w, y + h), v2(x, y + h), v2(x, y + fold)])],
+            Geom::Callout => vec![poly(&[(0., 0.), (1., 0.), (1., 0.75), (0.45, 0.75), (0.25, 1.), (0.3, 0.75), (0., 0.75)])],
+            Geom::Cube => {
+                let d = 16f32.min(w * 0.2).min(h * 0.2);
+                vec![
+                    closed(vec![v2(x, y + d), v2(x + d, y), v2(x + w, y), v2(x + w, y + h - d), v2(x + w - d, y + h), v2(x, y + h)]),
+                    open(vec![v2(x, y + d), v2(x + w - d, y + d), v2(x + w, y)]),
+                    open(vec![v2(x + w - d, y + d), v2(x + w - d, y + h)]),
+                ]
+            }
+            Geom::Step => vec![poly(&[(0., 0.), (0.8, 0.), (1., 0.5), (0.8, 1.), (0., 1.), (0.2, 0.5)])],
+            Geom::Chevron => vec![poly(&[(0., 0.), (0.65, 0.), (1., 0.5), (0.65, 1.), (0., 1.), (0.35, 0.5)])],
+            Geom::BlockArrow => vec![poly(&[(0., 0.3), (0.6, 0.3), (0.6, 0.), (1., 0.5), (0.6, 1.), (0.6, 0.7), (0., 0.7)])],
+            Geom::BlockDoubleArrow => {
+                vec![poly(&[(0., 0.5), (0.3, 0.), (0.3, 0.3), (0.7, 0.3), (0.7, 0.), (1., 0.5), (0.7, 1.), (0.7, 0.7), (0.3, 0.7), (0.3, 1.)])]
             }
             Geom::Terminator => {
                 let k = (h / 2.).min(w / 2.);
@@ -191,6 +451,34 @@ impl Geom {
                 p.push(v2(x, y + h));
                 vec![closed(p)]
             }
+            Geom::Class => vec![poly(&[(0., 0.), (1., 0.), (1., 1.), (0., 1.)]), seg((0., 0.25), (1., 0.25)), seg((0., 0.62), (1., 0.62))],
+            Geom::Package => {
+                let tab = 18f32.min(h * 0.25);
+                vec![
+                    closed(vec![v2(x, y), v2(x + w * 0.4, y), v2(x + w * 0.4, y + tab), v2(x + w, y + tab), v2(x + w, y + h), v2(x, y + h)]),
+                    open(vec![v2(x, y + tab), v2(x + w * 0.4, y + tab)]),
+                ]
+            }
+            Geom::Component => {
+                let (bw, bh) = (16f32.min(w * 0.2), 10f32.min(h * 0.15));
+                let lug = |top: f32| closed(vec![v2(x - bw / 2., top), v2(x + bw / 2., top), v2(x + bw / 2., top + bh), v2(x - bw / 2., top + bh)]);
+                vec![poly(&[(0., 0.), (1., 0.), (1., 1.), (0., 1.)]), lug(y + h * 0.25 - bh / 2.), lug(y + h * 0.65 - bh / 2.)]
+            }
+            Geom::Actor => {
+                let r = (w * 0.25).min(h * 0.13);
+                let (neck, hip) = (y + 2. * r, y + h * 0.62);
+                vec![
+                    oval(v2(cx, y + r), r, r),
+                    open(vec![v2(cx, neck), v2(cx, hip)]),
+                    open(vec![v2(x, y + h * 0.38), v2(x + w, y + h * 0.38)]),
+                    open(vec![v2(x, y + h), v2(cx, hip), v2(x + w, y + h)]),
+                ]
+            }
+            Geom::Icon(i) => {
+                let k = w.min(h) / GRID;
+                let (ox, oy) = (cx - GRID * k / 2., cy - GRID * k / 2.);
+                icons::lines(i).iter().map(|(pts, c)| Outline { points: pts.iter().map(|p| v2(ox + p.x * k, oy + p.y * k)).collect(), closed: *c }).collect()
+            }
             Geom::Line => vec![open(vec![v2(x, cy), v2(x + w, cy)])],
             Geom::Arrow => vec![open(vec![v2(x, cy), v2(x + w, cy)]), head(v2(x + w, cy), 1., 0.)],
             Geom::DoubleArrow => vec![open(vec![v2(x, cy), v2(x + w, cy)]), head(v2(x + w, cy), 1., 0.), head(v2(x, cy), -1., 0.)],
@@ -198,6 +486,18 @@ impl Geom {
                 // The top run sits low enough for its arrowhead to fit.
                 let top = y + spread.min(h / 2.);
                 vec![open(vec![v2(x, y + h), v2(cx, y + h), v2(cx, top), v2(x + w, top)]), head(v2(x + w, top), 1., 0.)]
+            }
+            Geom::CurvedArrow => {
+                let top = y + spread.min(h / 2.);
+                let (a, c, b) = (v2(x, y + h), v2(x + w * 0.15, top), v2(x + w, top));
+                let p = (0..=24)
+                    .map(|i| {
+                        let t = i as f32 / 24.;
+                        let u = 1. - t;
+                        v2(u * u * a.x + 2. * u * t * c.x + t * t * b.x, u * u * a.y + 2. * u * t * c.y + t * t * b.y)
+                    })
+                    .collect();
+                vec![open(p), head(b, 1., 0.)]
             }
         }
     }
@@ -281,9 +581,10 @@ impl Shape {
             geom,
             rect: Rect { x: at.x - w / 2., y: at.y - h / 2., w, h },
             rot: 0.,
-            fill: (!geom.is_line()).then_some(Paper::Plain),
+            fill: geom.fills().then_some(Paper::Plain),
             ink: Ink::Graphite,
-            line: LineWidth::Regular,
+            // Icons are drawn small on a fine grid: a heavier line reads.
+            line: if matches!(geom, Geom::Icon(_)) { LineWidth::Bold } else { LineWidth::Regular },
             dashed: false,
             text: String::new(),
             locked: false,
@@ -318,6 +619,18 @@ impl Shape {
         out
     }
 
+    /// Where its words go, upright: inside it, or under an icon or actor,
+    /// as many lines deep as they wrap to.
+    pub fn text_rect(&self) -> Rect {
+        let r = self.rect;
+        if !self.geom.is_figure() {
+            return r;
+        }
+        let w = r.w.max(160.);
+        let lines = crate::glyphs::wrap(self.text.trim(), SHAPE_TEXT, w).len().max(1);
+        Rect { x: r.x + (r.w - w) / 2., y: r.y + r.h + 4., w, h: lines as f32 * SHAPE_TEXT * crate::glyphs::LEADING }
+    }
+
     /// The box round the turned shape and its line.
     pub fn bounds(&self) -> Rect {
         let pad = self.line.units() / 2.;
@@ -349,6 +662,10 @@ impl Shape {
         };
         if self.geom.is_line() {
             return outlines.iter().any(near);
+        }
+        if self.geom.is_figure() {
+            let r = self.rect;
+            return Rect { x: r.x - radius, y: r.y - radius, w: r.w + 2. * radius, h: r.h + 2. * radius }.contains(local);
         }
         outlines.first().is_some_and(|o| inside(local, &o.points)) || outlines.iter().any(near)
     }
@@ -401,14 +718,44 @@ mod tests {
     #[test]
     fn every_shape_has_a_body_inside_its_box() {
         let r = Rect { x: 10., y: 20., w: 160., h: 96. };
-        for g in Geom::BASIC.iter().chain(&Geom::FLOW).chain(&Geom::LINES) {
-            let o = g.outlines(r);
-            assert!(!o.is_empty(), "{g:?}");
-            assert_eq!(o[0].closed, !g.is_line(), "{g:?}");
-            for p in o.iter().flat_map(|o| &o.points) {
-                assert!(p.x >= r.x - 0.01 && p.x <= r.x + r.w + 0.01 && p.y >= r.y - 0.01 && p.y <= r.y + r.h + 0.01, "{g:?} {p:?}");
+        for lib in libraries() {
+            for en in lib.entries {
+                let g = en.geom;
+                let o = g.outlines(r);
+                assert!(!o.is_empty(), "{g:?}");
+                if g.is_line() || g.fills() {
+                    assert_eq!(o[0].closed, g.fills(), "{g:?}");
+                }
+                // A component's lugs sit across its left edge.
+                let slack = if g == Geom::Component { 9. } else { 0.01 };
+                for p in o.iter().flat_map(|o| &o.points) {
+                    assert!(p.x >= r.x - slack && p.x <= r.x + r.w + 0.01 && p.y >= r.y - 0.01 && p.y <= r.y + r.h + 0.01, "{g:?} {p:?}");
+                }
             }
         }
+    }
+
+    #[test]
+    fn search_finds_by_name_keyword_and_family() {
+        let names = |q: &str| search(q).iter().map(|(e, _)| e.name).collect::<Vec<_>>();
+        assert_eq!(names("wifi")[0], "Wi-Fi");
+        assert!(names("wifi").contains(&"Router") && names("wifi").contains(&"Access point"));
+        assert_eq!(names("anten")[0], "Antenna");
+        assert!(names("decision").contains(&"Decision"));
+        assert!(names("network serv").contains(&"Server"));
+        assert!(names("zzz").is_empty() && names("  ").is_empty());
+        // Every shape is somewhere, and icons and the actor have no fill.
+        assert!(libraries().iter().map(|l| l.entries.len()).sum::<usize>() > 100);
+        assert!(Shape::new(1, Geom::Icon(Icon::Router), v2(0., 0.)).fill.is_none());
+    }
+
+    #[test]
+    fn icons_are_caught_anywhere_in_their_box_and_labelled_under_it() {
+        let mut s = Shape::new(1, Geom::Icon(Icon::Wifi), v2(0., 0.));
+        assert!(s.hit(v2(-30., 30.), 0.));
+        s.text = "Office Wi-Fi".into();
+        let t = s.text_rect();
+        assert!(t.y > s.rect.y + s.rect.h && t.w >= s.rect.w);
     }
 
     #[test]

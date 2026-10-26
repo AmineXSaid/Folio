@@ -433,8 +433,15 @@ pub struct Folio {
     pub hover_label_grip: bool,
     /// The pointer is on a selected shape's corner or turning handle.
     pub hover_shape_grip: Option<super::shapes::ShapeGrip>,
-    /// The shapes to pick from are open above the dock.
-    pub shape_picker: bool,
+    /// The shapes panel is open on the right.
+    pub shapes_panel: bool,
+    /// The panel's search, and which of its families are open.
+    pub shape_search: Entity<InputState>,
+    pub shape_open: std::collections::HashSet<&'static str>,
+    /// The shape under the pointer, outlined faintly.
+    pub hover_shape: Option<Id>,
+    /// Shapes arriving and turning, drawn in between.
+    pub shape_motion: super::shapes::ShapeMotion,
     /// Space is held: drag pans.
     pub space: bool,
     /// The last pointer position over the sheet, in sheet-local pixels.
@@ -538,6 +545,8 @@ pub struct Exits {
     pub dialog: Exit<Dialog>,
     pub toast: Exit<SharedString>,
     pub drawer: Exit<()>,
+    /// The shapes panel, sliding back out to the right.
+    pub shapes_panel: Exit<()>,
     pub palette: Exit<()>,
     pub notes: super::motion::NoteMotion,
     /// The edit bar, by the note being typed into.
@@ -574,7 +583,20 @@ impl Folio {
         let secret_input = cx.new(|cx| InputState::new(window, cx).placeholder("GOCSPX-…").masked(true));
         let welcome_input = cx.new(|cx| InputState::new(window, cx).placeholder("Your name"));
         let label_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 30).placeholder("Write…"));
+        let shape_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search shapes: wifi, decision, arrow…"));
         let subs = vec![
+            cx.subscribe_in(&shape_search, window, |this, _, ev, window, cx| match ev {
+                InputEvent::Change => cx.notify(),
+                // Enter adds the first match.
+                InputEvent::PressEnter { .. } => {
+                    let q = this.shape_search.read(cx).value().to_string();
+                    if let Some((e, _)) = crate::shape::search(&q).first() {
+                        this.add_shape(e.geom, None, cx);
+                        window.focus(&this.focus, cx);
+                    }
+                }
+                _ => {}
+            }),
             cx.observe(&search_input, |this, _, cx| {
                 if this.screen != Screen::Home && !this.search_text(cx).is_empty() {
                     this.screen = Screen::Home;
@@ -677,7 +699,11 @@ impl Folio {
             hover_grip: None,
             hover_label_grip: false,
             hover_shape_grip: None,
-            shape_picker: false,
+            shapes_panel: false,
+            shape_search,
+            shape_open: ["general", "flow", "arrows", "network"].into_iter().collect(),
+            hover_shape: None,
+            shape_motion: Default::default(),
             space: false,
             cursor: v2(0., 0.),
             viewport: Rc::new(Cell::new(Bounds::default())),
@@ -1826,6 +1852,7 @@ impl Folio {
             return;
         }
         let mut new = Vec::new();
+        let mut arrived = Vec::new();
         let t = now();
         self.change(cx, |b| {
             for id in shapes {
@@ -1837,6 +1864,7 @@ impl Folio {
                     s.rect.y += 24.;
                     sheet.shapes.push(s);
                     new.push(Selection::Shape(nid));
+                    arrived.push(nid);
                 }
             }
             for id in ids {
@@ -1855,6 +1883,9 @@ impl Folio {
                 }
             }
         });
+        for id in arrived {
+            self.shape_motion.arrive(id);
+        }
         self.selection = new;
     }
 
@@ -2636,6 +2667,10 @@ impl Folio {
             gone.push(m.toast_out);
         }
         if self.exits.drawer.track(self.drawer.then_some(&())) {
+            gone.push(m.drawer_out);
+        }
+        let panel = self.shapes_panel && self.screen == Screen::Sheet;
+        if self.exits.shapes_panel.track(panel.then_some(&())) {
             gone.push(m.drawer_out);
         }
         if self.exits.palette.track(self.palette.then_some(&())) {

@@ -104,6 +104,8 @@ pub struct Sizes {
     pub logo: Pixels,      // 30
     pub dialog_w: Pixels,  // 460
     pub drawer: Pixels,    // 304: the sheets drawer
+    pub shapes_panel: Pixels, // 300: the shapes panel, on the right
+    pub shape_tile: Pixels, // 48: a shape to pick in it
     pub card_min: Pixels,  // 270: a home card's least width
     pub welcome: Pixels,   // 540: the welcome's note
     pub welcome_h: Pixels, // 380: the room it grows down into, so its pin stays put
@@ -150,6 +152,10 @@ pub struct Motion {
     pub tip_in: u64,
     /// Light and dark: the old one fades off the window.
     pub theme_fade: u64,
+    /// A shape arriving on the sheet (it springs up from a little
+    /// smaller), and a shape turning by a key or the menu.
+    pub shape_in: u64,
+    pub shape_turn: u64,
     /// How far things rise as they arrive.
     pub rise: f32,
     pub rise_dialog: f32,
@@ -181,6 +187,8 @@ const MOTION: Motion = Motion {
     window_out: 140,
     tip_in: 120,
     theme_fade: 220,
+    shape_in: 280,
+    shape_turn: 180,
     rise: 8.,
     rise_dialog: 14.,
     rise_window: 10.,
@@ -249,6 +257,8 @@ const SIZE: Sizes = Sizes {
     logo: px(30.),
     dialog_w: px(460.),
     drawer: px(304.),
+    shapes_panel: px(300.),
+    shape_tile: px(48.),
     card_min: px(270.),
     welcome: px(540.),
     welcome_h: px(380.),
@@ -633,7 +643,7 @@ impl Theme {
         let z = &mut self.size;
         for p in [
             &mut z.sidebar, &mut z.topbar, &mut z.control, &mut z.icon_sm, &mut z.icon, &mut z.icon_lg, &mut z.dot,
-            &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.card_min,
+            &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.shapes_panel, &mut z.shape_tile, &mut z.card_min,
             &mut z.search, &mut z.search_open, &mut z.welcome, &mut z.welcome_h, &mut z.avatar,
         ] {
             m(p);

@@ -56,16 +56,17 @@ impl Folio {
         } else {
             self.exits.inks.leaving(m.pop_out).map(|(_, n)| super::motion::leave(self.ink_pill(&t, None, cx), ("inks-out", n), m.pop_out, m.sink))
         };
+        // Centred on what's left of the sheet beside the shapes panel.
+        let right = if self.shapes_panel { t.size.shapes_panel } else { px(0.) };
         div()
             .absolute()
             .bottom(t.space.xl)
             .left_0()
-            .right_0()
+            .right(right)
             .flex()
             .flex_col()
             .items_center()
             .children(self.render_selection_bar(&t, cx))
-            .children(self.render_shape_picker(&t, cx))
             .child(
                 dock(&t)
                     .id("dock")
@@ -199,12 +200,14 @@ impl Folio {
     pub(super) fn render_zoom(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         let pct = format!("{}%", (self.sheet().camera.zoom * 100.).round());
+        // Beside the shapes panel while it's open, not under it.
+        let right = if self.shapes_panel { t.space.xl + t.size.shapes_panel } else { t.space.xl };
         div()
             .id("zoom")
             .occlude()
             .absolute()
             .bottom(t.space.xl)
-            .right(t.space.xl)
+            .right(right)
             .flex()
             .items_center()
             .p(t.space.xxs)

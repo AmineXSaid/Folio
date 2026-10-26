@@ -17,7 +17,7 @@ use gpui::{
 use std::time::Instant;
 
 use super::app::{Folio, Format, Gesture, MenuKind, MenuPage, Selection, Tool};
-use super::shapes::ShapeGrip;
+use super::shapes::{ShapeDrag, ShapeGrip};
 use super::sticker::size_factor;
 use super::*;
 use crate::history::Before;
@@ -205,7 +205,7 @@ impl Folio {
             })
             .collect();
 
-        let (shape_layer, shape_words) = self.render_shapes(view, &t);
+        let (shape_layer, shape_words) = self.render_shapes(view, &t, window);
 
         let labels: Vec<_> = sheet
             .labels
@@ -308,10 +308,7 @@ impl Folio {
                     .collect();
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &ToggleShapes, _, cx| {
-                this.shape_picker = !this.shape_picker;
-                cx.notify();
-            }))
+            .on_action(cx.listener(|this, _: &ToggleShapes, window, cx| this.toggle_shapes_panel(window, cx)))
             .on_action(cx.listener(|this, _: &TurnLeft, _, cx| this.turn_shapes(&this.selected_shapes(), -15., cx)))
             .on_action(cx.listener(|this, _: &TurnRight, _, cx| this.turn_shapes(&this.selected_shapes(), 15., cx)))
             .on_action(cx.listener(|this, _: &EditSelection, window, cx| match this.selection.first().copied() {
@@ -334,7 +331,7 @@ impl Folio {
             .on_action(cx.listener(|this, _: &CycleStyle, _, cx| this.cycle_style(cx)))
             .on_action(cx.listener(|this, _: &Escape, _, cx| {
                 // An open menu or the drawer goes first.
-                if this.menu.take().is_some() || std::mem::take(&mut this.drawer) || std::mem::take(&mut this.shape_picker) {
+                if this.menu.take().is_some() || std::mem::take(&mut this.drawer) || std::mem::take(&mut this.shapes_panel) {
                     cx.notify();
                     return;
                 }
@@ -394,6 +391,16 @@ impl Folio {
             .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
                 this.drop_paths(paths.paths().to_vec(), cx);
             }))
+            // A shape dragged from the panel lands where it's let go.
+            .drag_over::<ShapeDrag>({
+                let wash = t.colors.brand.opacity(0.05);
+                move |d, _, _, _| d.bg(wash)
+            })
+            .on_drop(cx.listener(|this, d: &ShapeDrag, window, cx| {
+                let at = this.sheet().camera.to_world(this.local(window.mouse_position()));
+                this.add_shape(d.0, Some(at), cx);
+                window.focus(&this.focus, cx);
+            }))
             .children(picture)
             .child(underlay)
             .children(frames)
@@ -441,6 +448,7 @@ impl Folio {
             .children(self.render_label_edit(&t, cx))
             .children(edit_layer)
             .children(edit_bar_leaving)
+            .children(self.render_shapes_panel(cx))
             .child(self.render_toolbar(window, cx))
             .child(self.render_zoom(cx))
             .when(self.board.settings.minimap && !empty, |d| d.child(self.render_minimap(&t, cx)))
@@ -1323,7 +1331,15 @@ impl Folio {
                 let grip = self.grip_at(at).or_else(|| self.frame_grip_at(at)).map(|(_, g)| g);
                 let label_grip = self.label_grip_at(at).is_some();
                 let shape_grip = self.shape_grip_at(at).map(|(_, g)| g);
-                if hovered != self.hovered || grip != self.hover_grip || label_grip != self.hover_label_grip || shape_grip != self.hover_shape_grip {
+                let hover_shape = if hovered.is_none() && self.tool == Tool::Select { self.shape_at(world) } else { None };
+                if hovered != self.hovered
+                    || grip != self.hover_grip
+                    || label_grip != self.hover_label_grip
+                    || shape_grip != self.hover_shape_grip
+                    || hover_shape != self.hover_shape
+                    || shape_grip.is_some()
+                {
+                    self.hover_shape = hover_shape;
                     self.hovered = hovered;
                     self.hover_grip = grip;
                     self.hover_label_grip = label_grip;
@@ -1408,7 +1424,8 @@ impl Folio {
             Gesture::TurnShape { id } => {
                 let id = *id;
                 if let Some(s) = self.board.sheet_mut().shapes.iter_mut().find(|s| s.id == id) {
-                    s.rot = handle_angle(s.center(), world, 4.);
+                    // Shift turns freely; otherwise it settles on every 15°.
+                    s.rot = handle_angle(s.center(), world, if ev.modifiers.shift { 0. } else { 4. });
                 }
             }
             Gesture::LabelWidth { id, start, w } => {

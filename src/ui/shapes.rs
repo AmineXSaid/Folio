@@ -1,30 +1,71 @@
 //! Shapes on the sheet: painting them and the words in them, the frame and
-//! handles of a selected one, the picker above the dock, and the edits a
-//! shape takes (adding, turning, its words).
+//! handles of a selected one (resize at the corners, turn by the knob above
+//! or just outside a corner), the shapes panel on the right, and the edits
+//! a shape takes (adding, turning, its words). Shapes spring in as they
+//! arrive and swing round when turned by a key or the menu.
 
-use gpui::{canvas, div, point, prelude::*, px, Context, Hsla, PathBuilder, Pixels, Window};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
-use super::app::{Dialog, Folio, Selection, Tool};
+use gpui::component::input::Input;
+use gpui::component::Sizable as _;
+use gpui::{canvas, div, point, prelude::*, px, Animation, AnimationExt, Context, Hsla, MouseButton, PathBuilder, Pixels, Window};
+
+use super::app::{Dialog, Folio, Gesture, Selection, Tool};
 use super::*;
 use crate::model::*;
-use crate::shape::{rotate, SHAPE_TEXT, TEXT_PAD};
-use crate::theme::{theme, Theme};
+use crate::shape::{libraries, rotate, search, Entry, SHAPE_TEXT, TEXT_PAD};
+use crate::theme::{theme, Motion, Theme};
 
 /// A selected shape's frame: how far outside the shape it's drawn, how far
-/// above it the turning handle sits, and the handles' sizes (screen px).
-const FRAME_GAP: f32 = 6.;
-const TURN_STALK: f32 = 22.;
-const TURN_R: f32 = 6.5;
-const CORNER: f32 = 4.5;
-/// How close a press must come to a handle to take it (screen px).
+/// above it the turning knob sits, and the handles' sizes (screen px).
+const FRAME_GAP: f32 = 7.;
+const TURN_STALK: f32 = 30.;
+const TURN_R: f32 = 10.;
+const TURN_R_HOT: f32 = 12.;
+const CORNER: f32 = 5.;
+/// How close a press must come to take a handle (screen px): a corner to
+/// resize, the knob to turn; and the band just outside each corner that
+/// turns the shape too.
 const REACH: f32 = 9.;
+const KNOB_REACH: f32 = 16.;
+const TURN_BAND: f32 = 30.;
 
 /// Which handle of a selected shape: a corner (resize) or the knob above
-/// it (turn).
+/// it, or the band outside a corner (turn).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ShapeGrip {
     Corner(Grip),
     Turn,
+}
+
+/// A shape picked up in the panel, being dragged onto the sheet.
+#[derive(Clone, Copy)]
+pub struct ShapeDrag(pub Geom);
+
+/// What follows the pointer while a shape is dragged from the panel.
+pub struct ShapeGhost {
+    geom: Geom,
+    ink: Hsla,
+    fill: Hsla,
+    w: f32,
+    h: f32,
+}
+
+impl Render for ShapeGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let (geom, ink, fill, w, h) = (self.geom, self.ink, self.fill, self.w, self.h);
+        div().w(px(w)).h(px(h)).opacity(0.85).child(
+            canvas(
+                |_, _, _| {},
+                move |b, _, window, _| {
+                    let r = Rect { x: f32::from(b.origin.x) + 2., y: f32::from(b.origin.y) + 2., w: w - 4., h: h - 4. };
+                    paint_outlines(window, &geom.outlines(r), geom.fills().then_some(fill), ink, 1.75, None);
+                },
+            )
+            .size_full(),
+        )
+    }
 }
 
 /// The corners' grips, in the order `frame` gives the corners.
@@ -50,22 +91,135 @@ fn frame(s: &Shape, cam: Camera) -> ([Vec2; 4], Vec2, Vec2) {
     )
 }
 
-/// One shape, ready to paint (screen px).
-struct Paint {
-    fill: Option<(Vec<gpui::Point<Pixels>>, Hsla)>,
-    lines: Vec<(Vec<gpui::Point<Pixels>>, bool)>,
-    ink: Hsla,
-    width: f32,
-    dash: Option<f32>,
-    /// The words as outlines, when the shape is turned.
-    words: Vec<Vec<gpui::Point<Pixels>>>,
-    word_color: Hsla,
-    /// Selected: its frame's corners, top middle and knob.
-    chrome: Option<([Vec2; 4], Vec2, Vec2)>,
+/// Shapes arriving and turning: when each began, and where a turn began.
+#[derive(Default)]
+pub struct ShapeMotion {
+    arrivals: HashMap<Id, Instant>,
+    turns: HashMap<Id, (f32, Instant)>,
+}
+
+impl ShapeMotion {
+    pub fn arrive(&mut self, id: Id) {
+        if !super::motion::reduced() {
+            self.arrivals.insert(id, Instant::now());
+        }
+    }
+    pub fn turn_from(&mut self, id: Id, from: f32) {
+        if !super::motion::reduced() {
+            self.turns.insert(id, (from, Instant::now()));
+        }
+    }
+    /// Anything still moving.
+    pub fn busy(&self, m: &Motion) -> bool {
+        let live = |at: &Instant, ms: u64| at.elapsed() < Duration::from_millis(super::motion::ms(ms));
+        self.arrivals.values().any(|a| live(a, m.shape_in)) || self.turns.values().any(|(_, a)| live(a, m.shape_turn))
+    }
+    /// How far along a shape's arrival is, 0 to 1, while it lasts.
+    fn arriving(&self, id: Id, m: &Motion) -> Option<f32> {
+        let k = self.arrivals.get(&id)?.elapsed().as_secs_f32() * 1000. / super::motion::ms(m.shape_in) as f32;
+        (k < 1.).then_some(k)
+    }
+    /// The angle to draw a shape at: on its way from where a turn began.
+    fn rot(&self, s: &Shape, m: &Motion) -> f32 {
+        let Some((from, at)) = self.turns.get(&s.id) else { return s.rot };
+        let k = at.elapsed().as_secs_f32() * 1000. / super::motion::ms(m.shape_turn) as f32;
+        if k >= 1. {
+            return s.rot;
+        }
+        // The short way round.
+        let d = (s.rot - from + 540.).rem_euclid(360.) - 180.;
+        from + d * ease_out_cubic(k)
+    }
+}
+
+fn ease_out_cubic(k: f32) -> f32 {
+    1. - (1. - k).powi(3)
+}
+
+/// Overshoots a little and settles: a shape springing into place.
+fn ease_out_back(k: f32) -> f32 {
+    let c = 1.7;
+    1. + (c + 1.) * (k - 1.).powi(3) + c * (k - 1.).powi(2)
 }
 
 fn pt(p: Vec2) -> gpui::Point<Pixels> {
     point(px(p.x), px(p.y))
+}
+
+/// Fills `lines`' body (when `fill`) and strokes each line, `o` being where
+/// the canvas sits.
+fn paint_outlines(window: &mut Window, lines: &[crate::shape::Outline], fill: Option<Hsla>, ink: Hsla, width: f32, dash: Option<f32>) {
+    let to = |pts: &[Vec2]| pts.iter().map(|p| pt(*p)).collect::<Vec<_>>();
+    if let (Some(color), Some(o)) = (fill, lines.first()) {
+        if o.closed {
+            let mut b = PathBuilder::fill();
+            b.add_polygon(&to(&o.points), true);
+            if let Ok(path) = b.build() {
+                window.paint_path(path, color);
+            }
+        }
+    }
+    for o in lines {
+        let mut b = PathBuilder::stroke(px(width));
+        if let Some(d) = dash {
+            b = b.dash_array(&[px(d), px(d * 0.7)]);
+        }
+        b.add_polygon(&to(&o.points), o.closed);
+        if let Ok(path) = b.build() {
+            window.paint_path(path, ink);
+        }
+    }
+}
+
+/// The turning sign: three quarters of a ring with an arrowhead, round `c`.
+fn paint_turn_sign(window: &mut Window, c: gpui::Point<Pixels>, r: f32, color: Hsla) {
+    let (cx, cy) = (f32::from(c.x), f32::from(c.y));
+    let ring: Vec<_> = (0..=18)
+        .map(|i| {
+            let a = -2.3 + 4.6 * i as f32 / 18.;
+            pt(v2(cx + r * a.cos(), cy + r * a.sin()))
+        })
+        .collect();
+    let mut b = PathBuilder::stroke(px(1.6));
+    b.add_polygon(&ring, false);
+    if let Ok(path) = b.build() {
+        window.paint_path(path, color);
+    }
+    // The head, at the ring's end, pointing on round it.
+    let a = 2.3f32;
+    let tip = v2(cx + r * a.cos(), cy + r * a.sin());
+    let along = v2(-a.sin(), a.cos());
+    let side = v2(a.cos(), a.sin());
+    let k = r * 0.75;
+    let mut b = PathBuilder::fill();
+    b.add_polygon(
+        &[
+            pt(v2(tip.x + along.x * k * 0.6, tip.y + along.y * k * 0.6)),
+            pt(v2(tip.x + side.x * k * 0.55 - along.x * k * 0.3, tip.y + side.y * k * 0.55 - along.y * k * 0.3)),
+            pt(v2(tip.x - side.x * k * 0.55 - along.x * k * 0.3, tip.y - side.y * k * 0.55 - along.y * k * 0.3)),
+        ],
+        true,
+    );
+    if let Ok(path) = b.build() {
+        window.paint_path(path, color);
+    }
+}
+
+/// One shape, ready to paint (screen px, before the canvas's origin).
+struct Paint {
+    lines: Vec<crate::shape::Outline>,
+    fill: Option<Hsla>,
+    ink: Hsla,
+    width: f32,
+    dash: Option<f32>,
+    /// The words as outlines, when the shape is turned.
+    words: Vec<Vec<Vec2>>,
+    word_color: Hsla,
+    /// Selected: its frame's corners, top middle and knob, and whether the
+    /// knob is hot (under the pointer, or turning).
+    chrome: Option<([Vec2; 4], Vec2, Vec2, bool)>,
+    /// Under the pointer, not selected: a faint frame.
+    hover: Option<[Vec2; 4]>,
 }
 
 impl Folio {
@@ -75,22 +229,41 @@ impl Folio {
         self.sheet().shapes.iter().rev().find(|s| s.hit(p, reach)).map(|s| s.id)
     }
 
-    /// The handle of a selected shape under `at` (screen), and which.
+    /// The handle of a selected shape under `at` (screen), and which: the
+    /// knob above it or the band just outside a corner turn it; a corner
+    /// resizes it.
     pub fn shape_grip_at(&self, at: Vec2) -> Option<(Id, ShapeGrip)> {
         let cam = self.sheet().camera;
-        self.sheet().shapes.iter().rev().filter(|s| !s.locked && self.is_selected(Selection::Shape(s.id))).find_map(|s| {
+        let picked = |s: &&Shape| !s.locked && self.is_selected(Selection::Shape(s.id));
+        let shapes = &self.sheet().shapes;
+        if let Some(hit) = shapes.iter().rev().filter(picked).find_map(|s| {
             let (corners, _, knob) = frame(s, cam);
-            if knob.sub(at).len() <= REACH {
+            if knob.sub(at).len() <= KNOB_REACH {
                 return Some((s.id, ShapeGrip::Turn));
             }
             corners.iter().position(|c| c.sub(at).len() <= REACH).map(|i| (s.id, ShapeGrip::Corner(CORNER_GRIPS[i])))
+        }) {
+            return Some(hit);
+        }
+        // Just outside a corner, off the shape: turn.
+        let world = cam.to_world(at);
+        if self.shape_at(world).is_some() || self.note_at(world).is_some() {
+            return None;
+        }
+        shapes.iter().rev().filter(picked).find_map(|s| {
+            let (corners, _, _) = frame(s, cam);
+            let g = FRAME_GAP / cam.zoom;
+            let local = s.unturn(world);
+            let r = s.rect;
+            let outside = local.x < r.x - g || local.x > r.x + r.w + g || local.y < r.y - g || local.y > r.y + r.h + g;
+            (outside && corners.iter().any(|c| c.sub(at).len() <= TURN_BAND)).then_some((s.id, ShapeGrip::Turn))
         })
     }
 
-    /// The pointer over a shape's handle: a resize arrow for a corner as
-    /// it lies once turned, a hand for the knob.
+    /// The pointer over a shape's handle: a resize arrow for a corner as it
+    /// lies once turned, an open hand to turn.
     pub fn shape_grip_cursor(&self, id: Id, g: ShapeGrip) -> gpui::CursorStyle {
-        let ShapeGrip::Corner(grip) = g else { return gpui::CursorStyle::PointingHand };
+        let ShapeGrip::Corner(grip) = g else { return gpui::CursorStyle::OpenHand };
         let rot = self.sheet().shapes.iter().find(|s| s.id == id).map_or(0., |s| s.rot);
         // The corner's direction from the middle, turned, read to the
         // nearest of the two diagonals or the two axes.
@@ -105,13 +278,13 @@ impl Folio {
         }
     }
 
-    /// A new `geom` in the middle of the view, selected.
-    pub fn add_shape(&mut self, geom: Geom, cx: &mut Context<Self>) {
+    /// A new `geom` at `at` (world), or in the middle of the view; selected,
+    /// springing in.
+    pub fn add_shape(&mut self, geom: Geom, at: Option<Vec2>, cx: &mut Context<Self>) {
         self.finish_edit(cx);
-        self.shape_picker = false;
         let (w, h) = self.viewport_size();
         let cam = self.sheet().camera;
-        let mut at = cam.to_world(v2(w / 2., h / 2.));
+        let mut at = at.unwrap_or_else(|| cam.to_world(v2(w / 2., h / 2.)));
         // Not right on top of the last one added.
         while self.sheet().shapes.iter().any(|s| s.rect.center().sub(at).len() < 4.) {
             at = v2(at.x + 24., at.y + 24.);
@@ -121,6 +294,7 @@ impl Folio {
             id = b.fresh_id();
             b.sheet_mut().shapes.push(Shape::new(id, geom, at));
         });
+        self.shape_motion.arrive(id);
         self.tool = Tool::Select;
         self.select(Selection::Shape(id));
         cx.notify();
@@ -145,14 +319,22 @@ impl Folio {
         }
     }
 
-    /// Turns the selected shapes `by` degrees, from the nearest 15°.
-    pub fn turn_shapes(&mut self, ids: &[Id], by: f32, cx: &mut Context<Self>) {
+    /// Turns shapes to `to(angle now)`, swinging round to it.
+    pub fn set_turn(&mut self, ids: &[Id], cx: &mut Context<Self>, to: impl Fn(f32) -> f32) {
         self.menu = None;
         let ids: Vec<Id> = ids.iter().copied().filter(|id| self.sheet().shapes.iter().any(|s| s.id == *id && !s.locked)).collect();
         if ids.is_empty() {
             return;
         }
-        self.change_shapes(&ids, cx, |s| s.rot = ((s.rot / 15.).round() * 15. + by).rem_euclid(360.));
+        for s in self.sheet().shapes.iter().filter(|s| ids.contains(&s.id)).map(|s| (s.id, s.rot)).collect::<Vec<_>>() {
+            self.shape_motion.turn_from(s.0, s.1);
+        }
+        self.change_shapes(&ids, cx, |s| s.rot = to(s.rot).rem_euclid(360.));
+    }
+
+    /// Turns the shapes `by` degrees, from the nearest 15°.
+    pub fn turn_shapes(&mut self, ids: &[Id], by: f32, cx: &mut Context<Self>) {
+        self.set_turn(ids, cx, |r| (r / 15.).round() * 15. + by);
     }
 
     /// Asks for the words in shape `id`.
@@ -167,42 +349,77 @@ impl Folio {
         cx.notify();
     }
 
+    /// Opens or closes the shapes panel; open, its search is ready to type.
+    pub fn toggle_shapes_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.shapes_panel = !self.shapes_panel;
+        if self.shapes_panel {
+            let input = self.shape_search.clone();
+            window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+        } else {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+
     /// The shapes in view, painted, with a selected one's frame and
-    /// handles; and the words of the upright ones, as text over them.
-    pub(super) fn render_shapes(&self, view: Rect, t: &Theme) -> (gpui::AnyElement, Vec<gpui::AnyElement>) {
+    /// handles, the turning sign by the pointer and the angle while one
+    /// turns; and the words of the upright ones, as text over them.
+    pub(super) fn render_shapes(&self, view: Rect, t: &Theme, window: &mut Window) -> (gpui::AnyElement, Vec<gpui::AnyElement>) {
         let sheet = self.sheet();
         let cam = sheet.camera;
         let z = cam.zoom;
+        let m = t.motion;
+        if self.shape_motion.busy(&m) {
+            window.request_animation_frame();
+        }
+        let turning = match &self.gesture {
+            Gesture::TurnShape { id } => Some(*id),
+            _ => None,
+        };
+        let hot = |id: Id| turning == Some(id) || (self.hover_shape_grip == Some(ShapeGrip::Turn) && self.shape_grip_at(self.cursor).is_some_and(|(g, _)| g == id));
         let mut paints = Vec::new();
         let mut words = Vec::new();
-        for s in sheet.shapes.iter().filter(|s| s.bounds().intersects(&view)) {
-            let outlines = s.outlines();
-            let screen = |pts: &[Vec2]| pts.iter().map(|p| pt(cam.to_screen(*p))).collect::<Vec<_>>();
-            let fill = match (s.fill, outlines.first()) {
-                (Some(p), Some(o)) if o.closed => Some((screen(&o.points), t.paper(p))),
-                _ => None,
-            };
-            let width = (s.line.units() * z).max(1.);
+        for s0 in sheet.shapes.iter().filter(|s| s.bounds().intersects(&view)) {
+            // As drawn this frame: swinging round, springing in.
+            let mut s = s0.clone();
+            s.rot = self.shape_motion.rot(s0, &m);
+            let arriving = self.shape_motion.arriving(s.id, &m);
+            if let Some(k) = arriving {
+                let f = 0.82 + 0.18 * ease_out_back(k);
+                let c = s.rect.center();
+                s.rect = Rect { x: c.x - s.rect.w * f / 2., y: c.y - s.rect.h * f / 2., w: s.rect.w * f, h: s.rect.h * f };
+            }
+            let alpha = arriving.map_or(1., |k| (k * 2.5).min(1.));
+            let lines = s
+                .outlines()
+                .into_iter()
+                .map(|mut o| {
+                    o.points.iter_mut().for_each(|p| *p = cam.to_screen(*p));
+                    o
+                })
+                .collect();
             let text = s.text.trim();
             let turned = s.rot.rem_euclid(360.) != 0.;
+            let tr = s.text_rect();
             let glyphs = if turned && !text.is_empty() {
-                crate::glyphs::outlines(text, SHAPE_TEXT, s.rect, TEXT_PAD)
+                let pad = if s.geom.is_figure() { 0. } else { TEXT_PAD };
+                crate::glyphs::outlines(text, SHAPE_TEXT, tr, pad)
                     .into_iter()
-                    .map(|c| c.into_iter().map(|p| pt(cam.to_screen(s.turn(p)))).collect())
+                    .map(|c| c.into_iter().map(|p| cam.to_screen(s.turn(p))).collect())
                     .collect()
             } else {
                 Vec::new()
             };
             if !turned && !text.is_empty() {
-                let a = cam.to_screen(v2(s.rect.x, s.rect.y));
+                let a = cam.to_screen(v2(tr.x, tr.y));
                 words.push(
                     div()
                         .absolute()
                         .left(px(a.x))
                         .top(px(a.y))
-                        .w(px(s.rect.w * z))
-                        .h(px(s.rect.h * z))
-                        .p(px(TEXT_PAD * z))
+                        .w(px(tr.w * z))
+                        .h(px(tr.h * z))
+                        .when(!s.geom.is_figure(), |d| d.p(px(TEXT_PAD * z)))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -212,77 +429,128 @@ impl Folio {
                         .line_height(px(SHAPE_TEXT * crate::glyphs::LEADING * z))
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(t.colors.text)
+                        .opacity(alpha)
                         .child(text.to_string())
                         .into_any_element(),
                 );
             }
+            let selected = self.is_selected(Selection::Shape(s.id));
             paints.push(Paint {
-                fill,
-                lines: outlines.iter().map(|o| (screen(&o.points), o.closed)).collect(),
-                ink: t.ink(s.ink),
-                width,
+                lines,
+                fill: s.fill.filter(|_| s.geom.fills()).map(|p| t.paper(p).opacity(alpha)),
+                ink: t.ink(s.ink).opacity(alpha),
+                width: (s.line.units() * z).max(1.),
                 dash: s.dashed.then_some((6. * z).max(3.)),
                 words: glyphs,
-                word_color: t.colors.text,
-                chrome: self.is_selected(Selection::Shape(s.id)).then(|| frame(s, cam)),
+                word_color: t.colors.text.opacity(alpha),
+                chrome: selected.then(|| {
+                    let (c, top, knob) = frame(&s, cam);
+                    (c, top, knob, hot(s.id))
+                }),
+                hover: (!selected && self.hover_shape == Some(s.id)).then(|| frame(&s, cam).0),
             });
+            // The angle, by the knob, while it turns.
+            if turning == Some(s.id) {
+                let (_, _, knob) = frame(&s, cam);
+                words.push(
+                    div()
+                        .absolute()
+                        .left(px(knob.x + 18.))
+                        .top(px(knob.y - 12.))
+                        .px(px(7.))
+                        .py(px(2.))
+                        .rounded(t.radius.full)
+                        .bg(t.colors.brand)
+                        .text_color(t.colors.primary_fg)
+                        .text_size(t.text.caption)
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child(format!("{}°", s.rot.round() as i32 % 360))
+                        .into_any_element(),
+                );
+            }
         }
-        let (brand, surface) = (t.colors.brand, t.colors.surface);
+        // The turning sign by the pointer, over a turning handle or while
+        // turning, so it's plain what a drag there does.
+        let sign = (turning.is_some() || self.hover_shape_grip == Some(ShapeGrip::Turn)).then_some(self.cursor);
+        // The circle a turn follows, faintly.
+        let orbit = turning.and_then(|id| sheet.shapes.iter().find(|s| s.id == id)).map(|s| {
+            let c = cam.to_screen(s.center());
+            (c, frame(s, cam).2.sub(c).len())
+        });
+        let (brand, surface, on_brand) = (t.colors.brand, t.colors.surface, t.colors.primary_fg);
         let layer = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
                 let o = bounds.origin;
-                let at = |p: &gpui::Point<Pixels>| *p + o;
+                let shift = |p: Vec2| v2(p.x + f32::from(o.x), p.y + f32::from(o.y));
+                let at = |p: Vec2| pt(shift(p));
                 for p in &paints {
-                    if let Some((pts, color)) = &p.fill {
-                        let mut b = PathBuilder::fill();
-                        b.add_polygon(&pts.iter().map(at).collect::<Vec<_>>(), true);
-                        if let Ok(path) = b.build() {
-                            window.paint_path(path, *color);
-                        }
-                    }
-                    for (pts, closed) in &p.lines {
-                        let mut b = PathBuilder::stroke(px(p.width));
-                        if let Some(d) = p.dash {
-                            b = b.dash_array(&[px(d), px(d * 0.7)]);
-                        }
-                        b.add_polygon(&pts.iter().map(at).collect::<Vec<_>>(), *closed);
-                        if let Ok(path) = b.build() {
-                            window.paint_path(path, p.ink);
-                        }
-                    }
+                    let lines: Vec<crate::shape::Outline> = p
+                        .lines
+                        .iter()
+                        .map(|l| crate::shape::Outline { points: l.points.iter().map(|q| shift(*q)).collect(), closed: l.closed })
+                        .collect();
+                    paint_outlines(window, &lines, p.fill, p.ink, p.width, p.dash);
                     if !p.words.is_empty() {
                         let mut b = PathBuilder::fill();
                         for c in &p.words {
-                            b.add_polygon(&c.iter().map(at).collect::<Vec<_>>(), true);
+                            b.add_polygon(&c.iter().map(|q| at(*q)).collect::<Vec<_>>(), true);
                         }
                         if let Ok(path) = b.build() {
                             window.paint_path(path, p.word_color);
                         }
                     }
-                    if let Some((corners, top, knob)) = p.chrome {
-                        let ring: Vec<_> = corners.iter().map(|c| at(&pt(*c))).collect();
-                        let mut b = PathBuilder::stroke(px(1.25)).dash_array(&[px(4.), px(3.)]);
-                        b.add_polygon(&ring, true);
+                    if let Some(corners) = p.hover {
+                        let mut b = PathBuilder::stroke(px(1.));
+                        b.add_polygon(&corners.iter().map(|c| at(*c)).collect::<Vec<_>>(), true);
                         if let Ok(path) = b.build() {
-                            window.paint_path(path, brand);
+                            window.paint_path(path, brand.opacity(0.4));
                         }
-                        let mut b = PathBuilder::stroke(px(1.25));
-                        b.add_polygon(&[at(&pt(top)), at(&pt(knob))], false);
-                        if let Ok(path) = b.build() {
-                            window.paint_path(path, brand);
-                        }
-                        let dot = |c: Vec2, r: f32, round: bool, window: &mut Window| {
-                            let c = at(&pt(c));
-                            let bounds = gpui::Bounds::new(point(c.x - px(r), c.y - px(r)), gpui::size(px(2. * r), px(2. * r)));
-                            let q = gpui::fill(bounds, surface).border_widths(px(1.5)).border_color(brand);
-                            window.paint_quad(if round { q.corner_radii(px(r)) } else { q.corner_radii(px(1.5)) });
-                        };
-                        for c in corners {
-                            dot(c, CORNER, false, window);
-                        }
-                        dot(knob, TURN_R, true, window);
                     }
+                    if let Some((corners, top, knob, hot)) = p.chrome {
+                        let mut b = PathBuilder::stroke(px(1.25)).dash_array(&[px(4.), px(3.)]);
+                        b.add_polygon(&corners.iter().map(|c| at(*c)).collect::<Vec<_>>(), true);
+                        if let Ok(path) = b.build() {
+                            window.paint_path(path, brand);
+                        }
+                        let mut b = PathBuilder::stroke(px(1.5));
+                        b.add_polygon(&[at(top), at(knob)], false);
+                        if let Ok(path) = b.build() {
+                            window.paint_path(path, brand);
+                        }
+                        for c in corners {
+                            let c = at(c);
+                            let r = px(CORNER);
+                            let q = gpui::fill(gpui::Bounds::new(point(c.x - r, c.y - r), gpui::size(r * 2., r * 2.)), surface);
+                            window.paint_quad(q.border_widths(px(1.5)).border_color(brand).corner_radii(px(1.5)));
+                        }
+                        // The knob: white with the turning sign, brand and
+                        // a little bigger when it's under the pointer.
+                        let r = if hot { TURN_R_HOT } else { TURN_R };
+                        let c = at(knob);
+                        let bounds = gpui::Bounds::new(point(c.x - px(r), c.y - px(r)), gpui::size(px(2. * r), px(2. * r)));
+                        let face = if hot { brand } else { surface };
+                        window.paint_quad(gpui::fill(bounds, face).border_widths(px(1.75)).border_color(brand).corner_radii(px(r)));
+                        paint_turn_sign(window, c, r * 0.5, if hot { on_brand } else { brand });
+                    }
+                }
+                if let Some((c, r)) = orbit {
+                    let ring: Vec<_> = (0..72).map(|i| {
+                        let a = std::f32::consts::TAU * i as f32 / 72.;
+                        at(v2(c.x + r * a.cos(), c.y + r * a.sin()))
+                    }).collect();
+                    let mut b = PathBuilder::stroke(px(1.)).dash_array(&[px(3.), px(4.)]);
+                    b.add_polygon(&ring, true);
+                    if let Ok(path) = b.build() {
+                        window.paint_path(path, brand.opacity(0.35));
+                    }
+                }
+                if let Some(p) = sign {
+                    let c = at(v2(p.x + 22., p.y + 22.));
+                    let r = px(10.);
+                    let bounds = gpui::Bounds::new(point(c.x - r, c.y - r), gpui::size(r * 2., r * 2.));
+                    window.paint_quad(gpui::fill(bounds, brand).corner_radii(r));
+                    paint_turn_sign(window, c, 5., on_brand);
                 }
             },
         )
@@ -292,78 +560,10 @@ impl Folio {
         (layer, words)
     }
 
-    /// The shapes to add, above the dock: boxes, flowchart symbols, lines
-    /// and arrows, each drawn as it comes.
-    pub(super) fn render_shape_picker(&self, t: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if !self.shape_picker {
-            return None;
-        }
-        let ink = t.colors.text_body;
-        let tile = |g: Geom, cx: &mut Context<Self>| {
-            let name = g.name();
-            div()
-                .id(("shape-tile", g as usize))
-                .size(px(40.))
-                .rounded(t.radius.button)
-                .cursor_pointer()
-                .hover(|d| d.bg(t.colors.hover))
-                .tooltip(move |window, cx| super::tip(name, window, cx))
-                .on_click(cx.listener(move |this, _, _, cx| this.add_shape(g, cx)))
-                .child(
-                    canvas(
-                        |_, _, _| {},
-                        move |bounds, _, window, _| {
-                            let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-                            let o = bounds.origin;
-                            let r = Rect { x: f32::from(o.x) + 7., y: f32::from(o.y) + 10., w: w - 14., h: h - 20. };
-                            for ol in g.outlines(r) {
-                                let mut b = PathBuilder::stroke(px(1.5));
-                                b.add_polygon(&ol.points.iter().map(|p| pt(*p)).collect::<Vec<_>>(), ol.closed);
-                                if let Ok(path) = b.build() {
-                                    window.paint_path(path, ink);
-                                }
-                            }
-                        },
-                    )
-                    .size_full(),
-                )
-        };
-        let group = |title: &'static str, geoms: &[Geom], cx: &mut Context<Self>| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(div().px(px(4.)).text_size(t.text.micro).text_color(t.colors.text_muted).child(title))
-                .child(div().flex().flex_wrap().w(px(5. * 40. + 4. * 2.)).gap(px(2.)).children(geoms.iter().map(|&g| tile(g, cx))))
-        };
-        Some(
-            super::motion::rise_in(
-                div()
-                    .id("shape-picker")
-                    .occlude()
-                    .mb(t.space.sm)
-                    .p(t.space.sm)
-                    .flex()
-                    .gap(t.space.md)
-                    .rounded(t.radius.card)
-                    .bg(t.colors.surface)
-                    .border_1()
-                    .border_color(t.colors.border)
-                    .shadow(t.shadow_float())
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(group("Basic", &Geom::BASIC, cx))
-                    .child(div().flex().flex_col().gap(t.space.sm).child(group("Flowchart", &Geom::FLOW, cx)).child(group("Lines & arrows", &Geom::LINES, cx))),
-                "shape-picker-in",
-                t,
-            )
-            .into_any_element(),
-        )
-    }
-
-    /// The dock's Shapes button: opens and closes the picker.
+    /// The dock's Shapes button: opens and closes the panel.
     pub(super) fn shapes_button(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = theme(cx).clone();
-        let on = self.shape_picker;
+        let on = self.shapes_panel;
         let tip = format!("Shapes   {}", shortcut("Shift+S"));
         div()
             .id("dock-shapes")
@@ -375,12 +575,262 @@ impl Folio {
             .cursor_pointer()
             .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
             .when(on, |d| d.bg(t.colors.brand_tint))
-            .when(!on, |d| d.hover(|d| d.bg(t.colors.hover)))
+            .when(!on, |d| d.hover(|d| d.bg(t.colors.hover)).active(|d| d.bg(t.colors.border)))
             .child(icon("icons/shapes.svg", px(17.), if on { t.colors.brand_on_tint } else { t.colors.text_muted }))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.shape_picker = !this.shape_picker;
-                cx.notify();
-            }))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_shapes_panel(window, cx)))
             .into_any_element()
+    }
+
+    /// The shapes panel, sliding in from the right while open.
+    pub(super) fn render_shapes_panel(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let t = theme(cx).clone();
+        let w = f32::from(t.size.shapes_panel);
+        if self.shapes_panel {
+            let ms = super::motion::ms(t.motion.drawer_in);
+            let panel = self.shapes_panel_card(&t, cx).with_animation(
+                "shapes-panel-in",
+                Animation::new(Duration::from_millis(ms)).with_easing(ease_out_cubic),
+                move |d, k| d.right(px(-w * (1. - k))).opacity(0.4 + 0.6 * k),
+            );
+            return Some(panel.into_any_element());
+        }
+        let (_, n) = self.exits.shapes_panel.leaving(t.motion.drawer_out)?;
+        let ms = super::motion::ms(t.motion.drawer_out);
+        let panel = self
+            .shapes_panel_card(&t, cx)
+            .child(div().absolute().inset_0().occlude())
+            .with_animation(("shapes-panel-out", n), Animation::new(Duration::from_millis(ms)).with_easing(|k: f32| k * k * k), move |d, k| {
+                d.right(px(-w * k)).opacity(1. - 0.6 * k)
+            });
+        Some(panel.into_any_element())
+    }
+
+    /// The panel: its search, then every family of shapes, each folding
+    /// open; or what the search found.
+    fn shapes_panel_card(&mut self, t: &Theme, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let q = self.shape_search.read(cx).value().trim().to_string();
+        let mut body: Vec<gpui::AnyElement> = Vec::new();
+        if q.is_empty() {
+            for (li, lib) in libraries().into_iter().enumerate() {
+                let open = self.shape_open.contains(lib.id);
+                let id = lib.id;
+                let head = div()
+                    .id(gpui::ElementId::Name(format!("shape-lib-{id}").into()))
+                    .h(px(34.))
+                    .px(t.space.sm)
+                    .mx(t.space.xs)
+                    .flex()
+                    .items_center()
+                    .gap(t.space.sm)
+                    .rounded(t.radius.button)
+                    .cursor_pointer()
+                    .hover(|d| d.bg(t.colors.hover))
+                    .active(|d| d.bg(t.colors.border))
+                    .child(icon(if open { "icons/chevron-down.svg" } else { "icons/chevron-right.svg" }, t.size.icon_sm, t.colors.text_muted))
+                    .child(div().flex_1().text_size(t.text.body).font_weight(gpui::FontWeight::SEMIBOLD).text_color(t.colors.text).child(lib.name))
+                    .child(div().text_size(t.text.micro).text_color(t.colors.text_subtle).child(lib.entries.len().to_string()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.shape_open.remove(id) {
+                            this.shape_open.insert(id);
+                        }
+                        cx.notify();
+                    }));
+                body.push(super::motion::row_in(head, ("shape-lib-in", li), li, t));
+                if open {
+                    let tiles: Vec<_> = lib.entries.iter().enumerate().map(|(i, e)| self.shape_tile(*e, lib.name, format!("{id}-{i}"), t, cx)).collect();
+                    let grid = div().flex().flex_wrap().gap(px(2.)).px(t.space.sm).pb(t.space.sm).children(tiles);
+                    body.push(super::motion::enter(grid, gpui::ElementId::Name(format!("shape-grid-{id}").into()), t.motion.pop_in, t.motion.rise));
+                }
+            }
+        } else {
+            let found = search(&q);
+            body.push(
+                div()
+                    .px(t.space.md)
+                    .pt(t.space.xs)
+                    .pb(t.space.sm)
+                    .text_size(t.text.caption)
+                    .text_color(t.colors.text_muted)
+                    .child(match found.len() {
+                        0 => format!("Nothing called “{q}”"),
+                        1 => format!("1 shape for “{q}” · Enter adds it"),
+                        n => format!("{n} shapes for “{q}” · Enter adds the first"),
+                    })
+                    .into_any_element(),
+            );
+            if found.is_empty() {
+                body.push(
+                    div().px(t.space.md).text_size(t.text.caption).text_color(t.colors.text_subtle).child("Try another word: router, person, decision, arrow…").into_any_element(),
+                );
+            }
+            let tiles: Vec<_> = found.iter().enumerate().map(|(i, (e, lib))| self.shape_tile(*e, lib, format!("found-{i}"), t, cx)).collect();
+            body.push(
+                super::motion::enter(
+                    div().flex().flex_wrap().gap(px(2.)).px(t.space.sm).children(tiles),
+                    gpui::ElementId::Name(format!("shape-found-{q}").into()),
+                    t.motion.pop_in,
+                    t.motion.rise,
+                ),
+            );
+        }
+        let chips = ["wifi", "router", "person", "decision", "arrow"].map(|word| {
+            div()
+                .id(gpui::ElementId::Name(format!("shape-chip-{word}").into()))
+                .h(px(22.))
+                .px(px(9.))
+                .flex()
+                .items_center()
+                .rounded(t.radius.full)
+                .border_1()
+                .border_color(t.colors.border)
+                .bg(t.colors.surface_sunk)
+                .text_size(t.text.micro)
+                .text_color(t.colors.text_body)
+                .cursor_pointer()
+                .hover(|d| d.bg(t.colors.hover).border_color(t.colors.text_subtle))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.shape_search.update(cx, |i, cx| i.set_value(word, window, cx));
+                    cx.notify();
+                }))
+                .child(word)
+        });
+        let has_query = !q.is_empty();
+        div()
+            .id("shapes-panel")
+            .occlude()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .right_0()
+            .w(t.size.shapes_panel)
+            .flex()
+            .flex_col()
+            .bg(t.colors.surface)
+            .border_l_1()
+            .border_color(t.colors.border)
+            .shadow(t.shadow_float())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .px(t.space.md)
+                    .pt(t.space.md)
+                    .pb(t.space.sm)
+                    .flex()
+                    .flex_col()
+                    .gap(t.space.sm)
+                    .border_b_1()
+                    .border_color(t.colors.border)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(t.space.sm)
+                            .child(icon("icons/shapes.svg", t.size.icon, t.colors.brand))
+                            .child(div().flex_1().text_size(t.text.title).font_weight(gpui::FontWeight::SEMIBOLD).child("Shapes"))
+                            .child(div().px(px(5.)).py(px(1.)).rounded(t.radius.small).border_1().border_color(t.colors.border).text_size(t.text.micro).text_color(t.colors.text_subtle).child(shortcut("Shift+S")))
+                            .child(
+                                icon_button("shapes-close", "icons/x.svg", t)
+                                    .tooltip(|window, cx| super::tip("Close", window, cx))
+                                    .on_click(cx.listener(|this, _, window, cx| this.toggle_shapes_panel(window, cx))),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .h(px(34.))
+                            .px(t.space.sm)
+                            .flex()
+                            .items_center()
+                            .gap(t.space.xs)
+                            .rounded(t.radius.button)
+                            .border_1()
+                            .border_color(if has_query { t.colors.brand } else { t.colors.border })
+                            .bg(t.colors.surface_sunk)
+                            .child(icon("icons/search.svg", t.size.icon_sm, t.colors.text_muted))
+                            .child(div().flex_1().child(Input::new(&self.shape_search).appearance(false).small()))
+                            .when(has_query, |d| {
+                                d.child(
+                                    div()
+                                        .id("shape-search-clear")
+                                        .size(px(20.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(t.radius.small)
+                                        .cursor_pointer()
+                                        .hover(|d| d.bg(t.colors.hover))
+                                        .child(icon("icons/x.svg", px(12.), t.colors.text_muted))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.shape_search.update(cx, |i, cx| i.set_value("", window, cx));
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
+                    )
+                    .when(!has_query, |d| d.child(div().flex().flex_wrap().gap(px(5.)).children(chips))),
+            )
+            .child(div().id("shapes-list").flex_1().min_h_0().overflow_y_scroll().py(t.space.sm).children(body))
+            .child(
+                div()
+                    .px(t.space.md)
+                    .py(t.space.sm)
+                    .border_t_1()
+                    .border_color(t.colors.border)
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .text_size(t.text.micro)
+                    .text_color(t.colors.text_muted)
+                    .child("Click to add, or drag onto the sheet.")
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(5.))
+                            .child(div().pt(px(2.)).child(icon("icons/rotate-cw.svg", px(11.), t.colors.text_muted)))
+                            .child(div().flex_1().min_w_0().child("Turn: drag the round knob or just outside a corner. [ and ] turn by 15°, Shift turns freely.")),
+                    ),
+            )
+    }
+
+    /// One shape to pick: drawn as it comes; click to add it in the middle
+    /// of the view, or drag it onto the sheet.
+    fn shape_tile(&self, e: Entry, lib: &'static str, key: String, t: &Theme, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let (geom, name) = (e.geom, e.name);
+        let ink = t.colors.text_body;
+        let tip = format!("{name}  ·  {lib}");
+        let ghost_ink = t.ink(Ink::Graphite);
+        let ghost_fill = t.paper(Paper::Plain);
+        let zoom = self.sheet().camera.zoom;
+        div()
+            .id(gpui::ElementId::Name(format!("shape-tile-{key}").into()))
+            .size(t.size.shape_tile)
+            .rounded(t.radius.button)
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .cursor_pointer()
+            .hover(|d| d.bg(t.colors.hover).border_color(t.colors.border))
+            .active(|d| d.bg(t.colors.brand_tint).border_color(t.colors.brand))
+            .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
+            .on_click(cx.listener(move |this, _, _, cx| this.add_shape(geom, None, cx)))
+            .on_drag(ShapeDrag(geom), move |d, _, _, cx| {
+                let (w, h) = d.0.default_size();
+                let k = zoom.clamp(0.4, 1.2);
+                cx.new(|_| ShapeGhost { geom: d.0, ink: ghost_ink, fill: ghost_fill, w: w * k, h: h * k })
+            })
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |b, _, window, _| {
+                        let (bw, bh) = (f32::from(b.size.width), f32::from(b.size.height));
+                        // Fitted to the tile, keeping its own proportions.
+                        let (dw, dh) = geom.default_size();
+                        let room = if geom.is_figure() { 26. } else { bw - 16. };
+                        let k = (room / dw).min((bh - 18.) / dh).min(if geom.is_figure() { 26. / dw.max(dh) } else { f32::MAX });
+                        let (w, h) = ((dw * k).max(6.), (dh * k).max(6.));
+                        let r = Rect { x: f32::from(b.origin.x) + (bw - w) / 2., y: f32::from(b.origin.y) + (bh - h) / 2., w, h };
+                        paint_outlines(window, &geom.outlines(r), None, ink, 1.4, None);
+                    },
+                )
+                .size_full(),
+            )
     }
 }

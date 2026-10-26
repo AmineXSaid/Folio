@@ -128,7 +128,7 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &T
         .iter()
         .map(|s| {
             let lines = s.outlines().into_iter().map(|o| (o.points.iter().map(|p| (ox + p.x * k, oy + p.y * k)).collect(), o.closed)).collect();
-            (s.fill.filter(|_| !s.geom.is_line()).map(|p| t.paper(p)), t.ink(s.ink), lines)
+            (s.fill.filter(|_| s.geom.fills()).map(|p| t.paper(p)), t.ink(s.ink), lines)
         })
         .collect();
     base.child(pattern(Camera { pan: v2(ox, oy), zoom: k })).child(
