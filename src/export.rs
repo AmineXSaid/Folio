@@ -86,6 +86,16 @@ pub fn sheet_markdown(c: &Category) -> String {
         }
     }
 
+    let mut shapes: Vec<&Shape> = c.shapes.iter().filter(|s| !s.text.trim().is_empty()).collect();
+    if !shapes.is_empty() {
+        shapes.sort_by(|a, b| a.rect.y.total_cmp(&b.rect.y).then(a.rect.x.total_cmp(&b.rect.x)));
+        md.push_str("## Shapes\n\n");
+        for s in shapes {
+            md.push_str(&format!("- {}: {}\n", s.geom.name(), s.text.trim()));
+        }
+        md.push('\n');
+    }
+
     let mut labels: Vec<&Label> = c.labels.iter().filter(|l| !l.text.trim().is_empty()).collect();
     if !labels.is_empty() {
         labels.sort_by(|a, b| a.at.y.total_cmp(&b.at.y).then(a.at.x.total_cmp(&b.at.x)));
@@ -260,6 +270,8 @@ mod tests {
         };
         c.stickers = vec![note(3, "Later", "x", 900., 50.), note(2, "Temple", "- [ ] Fushimi", 10., 200.), note(4, "First", "y", 800., 10.)];
         c.labels.push(Label { text: "don't forget".into(), ..Label::new(5, v2(0., 0.), Ink::Graphite) });
+        c.shapes.push(Shape { text: "Book the hotel?".into(), ..Shape::new(6, Geom::Diamond, v2(0., 0.)) });
+        c.shapes.push(Shape::new(7, Geom::Arrow, v2(0., 90.)));
         let md = sheet_markdown(&c);
         assert!(md.starts_with("# ✈️ Trip\n"));
         let first = md.find("## First").unwrap();
@@ -268,6 +280,7 @@ mod tests {
         assert!(first < later && later < area, "{md}");
         assert!(md.contains("### Temple\n\n- [ ] Fushimi"));
         assert!(md.contains("> don't forget"));
+        assert!(md.contains("## Shapes\n\n- Diamond: Book the hotel?\n\n"), "{md}");
     }
 
     #[test]

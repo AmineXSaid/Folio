@@ -65,6 +65,7 @@ impl Folio {
             .flex_col()
             .items_center()
             .children(self.render_selection_bar(&t, cx))
+            .children(self.render_shape_picker(&t, cx))
             .child(
                 dock(&t)
                     .id("dock")
@@ -74,6 +75,8 @@ impl Folio {
                     .gap(px(3.))
                     .p(px(5.))
                     .children(tools)
+                    .child(div().w(px(1.)).h(px(22.)).mx(px(2.)).bg(t.colors.border))
+                    .child(self.shapes_button(cx))
                     .children(swatches),
             )
     }

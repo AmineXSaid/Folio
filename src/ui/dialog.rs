@@ -75,6 +75,7 @@ impl Folio {
             Dialog::NewSheet { .. } => ("New sheet", "Create sheet"),
             Dialog::RenameSheet(_) => ("Rename sheet", "Save"),
             Dialog::RenameFrame(_) => ("Name this area", "Save"),
+            Dialog::ShapeText(_) => ("Words in the shape", "Save"),
             Dialog::DriveChoice(_) => ("Google Drive already has Folio notes", "Continue"),
             Dialog::GoogleSetup => ("Connect Folio to Google", "Save and sign in"),
             Dialog::DriveReplace(Keep::ThisComputer) => ("Replace Google Drive's notes?", "Replace Drive's"),
@@ -308,7 +309,7 @@ impl Folio {
                             .child("Kept on this computer only, in Folio's data folder."),
                     );
             }
-            Dialog::RenameSheet(_) | Dialog::RenameFrame(_) => {
+            Dialog::RenameSheet(_) | Dialog::RenameFrame(_) | Dialog::ShapeText(_) => {
                 body = body.child(Input::new(&self.dialog_input));
             }
         }

@@ -1,5 +1,5 @@
-//! A sheet in miniature: its areas, notes (in their papers, with titles
-//! when there's room) and links, scaled to fit a box. Used by the home
+//! A sheet in miniature: its areas, shapes, notes (in their papers, with
+//! titles when there's room) and links, scaled to fit a box. Used by the home
 //! cards and the drawer.
 
 use std::path::Path;
@@ -13,7 +13,12 @@ use crate::theme::Theme;
 /// from `media`). `titles`: write note titles when legible.
 pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &Theme) -> Div {
     let rects: Vec<Rect> = c.stickers.iter().map(|s| s.rect).collect();
-    let bounds = rects.iter().copied().chain(c.frames.iter().map(|f| f.rect)).reduce(|a, b| a.union(&b));
+    let bounds = rects
+        .iter()
+        .copied()
+        .chain(c.frames.iter().map(|f| f.rect))
+        .chain(c.shapes.iter().map(Shape::bounds))
+        .reduce(|a, b| a.union(&b));
     let bd = &c.backdrop;
     let paper = t.tint(bd.tint);
     let picture = bd.image.as_ref().map(|name| {
@@ -117,10 +122,37 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &T
         .map(|(a, b2)| link_curve(&a.rect, &b2.rect).map(|p| (ox + p.x * k, oy + p.y * k)))
         .collect();
     let link_color = t.colors.text_subtle.opacity(0.7);
+    // Shapes: their paper and outline, thin at this size.
+    let shapes: Vec<(Option<gpui::Hsla>, gpui::Hsla, Vec<(Vec<(f32, f32)>, bool)>)> = c
+        .shapes
+        .iter()
+        .map(|s| {
+            let lines = s.outlines().into_iter().map(|o| (o.points.iter().map(|p| (ox + p.x * k, oy + p.y * k)).collect(), o.closed)).collect();
+            (s.fill.filter(|_| !s.geom.is_line()).map(|p| t.paper(p)), t.ink(s.ink), lines)
+        })
+        .collect();
     base.child(pattern(Camera { pan: v2(ox, oy), zoom: k })).child(
         canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
+                let o = bounds.origin;
+                for (fill, ink, lines) in &shapes {
+                    for (i, (pts, closed)) in lines.iter().enumerate() {
+                        let pts: Vec<_> = pts.iter().map(|(x, y)| point(o.x + px(*x), o.y + px(*y))).collect();
+                        if let (0, Some(fill)) = (i, fill) {
+                            let mut b = PathBuilder::fill();
+                            b.add_polygon(&pts, true);
+                            if let Ok(path) = b.build() {
+                                window.paint_path(path, *fill);
+                            }
+                        }
+                        let mut b = PathBuilder::stroke(px(1.));
+                        b.add_polygon(&pts, *closed);
+                        if let Ok(path) = b.build() {
+                            window.paint_path(path, *ink);
+                        }
+                    }
+                }
                 for l in &links {
                     let o = bounds.origin;
                     let p = |i: usize| point(o.x + px(l[i].0), o.y + px(l[i].1));

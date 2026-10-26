@@ -1,6 +1,6 @@
 //! Undo steps as changes: what one edit did to the board, item by item,
 //! rather than a copy of the whole board. A step keeps the notes, strokes,
-//! text, links, frames, sheets and Trash entries it touched, each as it was
+//! text, links, frames, shapes, sheets and Trash entries it touched, each as it was
 //! before and after, and where any came, went or moved to, so it plays back
 //! either way. Moving one note on a 2,000-note sheet is a step of a few
 //! hundred bytes.
@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Binned, Board, Category, Frame, Id, Label, Link, Sticker, Stroke};
+use crate::model::{Binned, Board, Category, Frame, Id, Label, Link, Shape, Sticker, Stroke};
 
 /// Something kept in a list by its id.
 pub trait Keyed: Clone + PartialEq {
@@ -36,7 +36,7 @@ macro_rules! keyed {
         })*
     };
 }
-keyed!(Stroke, Label, Link, Frame, Binned, Category);
+keyed!(Stroke, Label, Link, Frame, Shape, Binned, Category);
 
 /// A note's desktop window (where it is, see-through) and whether its
 /// reminder was shown change outside undo, by the window and the clock:
@@ -308,6 +308,8 @@ pub struct SheetChange {
     pub links: Edits<Link>,
     #[serde(default, skip_serializing_if = "Edits::is_empty")]
     pub frames: Edits<Frame>,
+    #[serde(default, skip_serializing_if = "Edits::is_empty")]
+    pub shapes: Edits<Shape>,
 }
 
 impl SheetChange {
@@ -320,13 +322,15 @@ impl SheetChange {
             labels: Edits::diff(&before.labels, &after.labels),
             links: Edits::diff(&before.links, &after.links),
             frames: Edits::diff(&before.frames, &after.frames),
+            shapes: Edits::diff(&before.shapes, &after.shapes),
         };
         let empty = c.head.is_none()
             && c.stickers.is_empty()
             && c.strokes.is_empty()
             && c.labels.is_empty()
             && c.links.is_empty()
-            && c.frames.is_empty();
+            && c.frames.is_empty()
+            && c.shapes.is_empty();
         (!empty).then_some(c)
     }
 
@@ -339,6 +343,7 @@ impl SheetChange {
         self.labels.apply(&mut c.labels, way);
         self.links.apply(&mut c.links, way);
         self.frames.apply(&mut c.frames, way);
+        self.shapes.apply(&mut c.shapes, way);
     }
 
     fn fits(&self, c: &Category, way: Way) -> bool {
@@ -347,6 +352,7 @@ impl SheetChange {
             && self.labels.fits(&c.labels, way)
             && self.links.fits(&c.links, way)
             && self.frames.fits(&c.frames, way)
+            && self.shapes.fits(&c.shapes, way)
     }
 }
 
@@ -364,6 +370,7 @@ fn head(c: &Category) -> Category {
         labels: _,
         links: _,
         frames: _,
+        shapes: _,
         inbox,
         pinned,
         icon,
@@ -382,6 +389,7 @@ fn head(c: &Category) -> Category {
         labels: Vec::new(),
         links: Vec::new(),
         frames: Vec::new(),
+        shapes: Vec::new(),
         inbox: *inbox,
         pinned: *pinned,
         icon: icon.clone(),
@@ -581,6 +589,7 @@ impl Change {
                 labels: Edits::default(),
                 links: Edits::default(),
                 frames: Edits::default(),
+                shapes: Edits::default(),
             }),
             None => {}
         }
@@ -666,6 +675,24 @@ mod tests {
         assert_eq!(step, Change::diff(&after_move, &b));
         step.apply(&mut b, Way::Back);
         assert_eq!(content(&b), content(&after_move));
+    }
+
+    #[test]
+    fn shapes_added_turned_and_removed_undo() {
+        let before = board(3);
+        let mut added = before.clone();
+        let id = added.fresh_id();
+        added.sheet_mut().shapes.push(Shape::new(id, crate::model::Geom::Diamond, crate::model::v2(0., 0.)));
+        round_trip(&before, &added);
+        let mut turned = added.clone();
+        turned.sheet_mut().shapes[0].rot = 45.;
+        turned.sheet_mut().shapes[0].text = "Online?".into();
+        let step = round_trip(&added, &turned);
+        assert_eq!(step.inside[0].shapes.changed.len(), 1);
+        assert!(step.inside[0].stickers.is_empty());
+        let mut gone = turned.clone();
+        gone.sheet_mut().shapes.clear();
+        round_trip(&turned, &gone);
     }
 
     #[test]

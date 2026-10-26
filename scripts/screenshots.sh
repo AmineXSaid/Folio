@@ -20,6 +20,9 @@
 #   background  the sheet menu's Background page: patterns, colours, a picture
 #   pins    a note menu's Pin page: shapes, sizes, colours
 #   text    writing on the sheet: wrapping Markdown, its bar, an ink
+#   shapes  the Home network sheet: shapes, two turned, one selected
+#   shapes-picker  the shapes to add, above the dock
+#   shape-menu  a shape's right-click menu: fill, line, turn
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -89,6 +92,12 @@ for mode in light dark; do
   xdotool mousemove 640 420; shot select; key Escape
   xdotool mousemove 580 600 click --repeat 2 --delay 80 1; sleep 1.2
   xdotool type --delay 25 " Edited in place."; shot edit; key Escape
+  # Shapes: the picker above the dock, a turned shape selected with its
+  # handles, and its menu.
+  key ctrl+k; xdotool type --delay 20 "network"; key Return; sleep 0.8
+  key ctrl+shift+s; xdotool mousemove 640 420; shot shapes-picker; key Escape
+  xdotool mousemove 753 360 click 1; xdotool mousemove 900 600; shot shapes
+  xdotool mousemove 753 360 click 3; shot shape-menu; key Escape
   key ctrl+k; xdotool type --delay 20 "seed"; shot palette; key Escape
   key ctrl+comma; shot settings
   kill "$APP_PID"; APP_PID=""

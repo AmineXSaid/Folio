@@ -17,6 +17,7 @@ use resvg::{tiny_skia, usvg};
 
 use crate::markdown::{blocks, ruled_line, Block};
 use crate::model::*;
+use crate::shape::{SHAPE_TEXT, TEXT_PAD};
 use crate::theme::Theme;
 
 /// The room around what's on the sheet, in world units.
@@ -114,6 +115,12 @@ fn face(family: &str, weight: u16, italic: bool) -> &'static ttf_parser::Face<'s
         .min_by_key(|(_, f)| u32::from(f.2 != italic) * 1000 + (i32::from(f.1) - i32::from(weight)).unsigned_abs())
         .map_or(0, |(i, _)| i);
     &all[best]
+}
+
+/// The sans face at `weight`, for drawing words as outlines elsewhere
+/// (`glyphs.rs`).
+pub(crate) fn sans(weight: u16) -> &'static ttf_parser::Face<'static> {
+    face(SANS, weight, false)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1217,6 +1224,52 @@ fn draw_pin(out: &mut Svg, pin: Pin, w: f32, t: &Theme) {
 
 // ---------- The sheet ----------
 
+/// A shape as the board draws it: its paper, its outline, and its words
+/// turned with it.
+fn draw_shape(svg: &mut Svg, s: &Shape, t: &Theme) {
+    let path = |o: &crate::shape::Outline| {
+        let mut d = String::new();
+        for (i, p) in o.points.iter().enumerate() {
+            let _ = write!(d, "{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y));
+        }
+        if o.closed {
+            d.push('Z');
+        }
+        d
+    };
+    let outlines = s.outlines();
+    if let (Some(p), Some(o)) = (s.fill, outlines.first()) {
+        if o.closed {
+            svg.fill(&path(o), rgba(t.paper(p)));
+        }
+    }
+    let dash = if s.dashed { r#" stroke-dasharray="6 4.2""# } else { "" };
+    for o in &outlines {
+        let _ = writeln!(
+            svg.body,
+            r#"<path d="{}" fill="none" {} stroke-width="{}" stroke-linejoin="round" stroke-linecap="round"{dash}/>"#,
+            path(o),
+            rgba(t.ink(s.ink)).attr("stroke"),
+            n(s.line.units())
+        );
+    }
+    let text = s.text.trim();
+    if text.is_empty() {
+        return;
+    }
+    let font = Font::new(SANS, SHAPE_TEXT, crate::glyphs::WEIGHT);
+    let r = s.rect;
+    let lines = crate::glyphs::wrap(text, SHAPE_TEXT, (r.w - 2. * TEXT_PAD).max(SHAPE_TEXT));
+    let lh = SHAPE_TEXT * crate::glyphs::LEADING;
+    let top = r.y + (r.h - lh * lines.len() as f32) / 2.;
+    let c = s.center();
+    let _ = writeln!(svg.body, r#"<g transform="rotate({} {} {})">"#, n(s.rot), n(c.x), n(c.y));
+    for (i, line) in lines.iter().enumerate() {
+        svg.text(r.x + (r.w - font.width(line)) / 2., top + lh * i as f32 + font.baseline(lh), line, font, rgba(t.colors.text));
+    }
+    svg.close();
+}
+
 /// Where the sheet's name is written: as on the board, where a fresh
 /// sheet's camera shows it in the top-left corner.
 fn head_at(t: &Theme) -> Vec2 {
@@ -1235,6 +1288,7 @@ fn draw(sheet: &Category, t: &Theme, media: &Path, blur: bool) -> String {
     let mut stuff: Vec<Rect> = sheet.stickers.iter().zip(&laid).map(|(s, l)| rect_of(s, l)).collect();
     stuff.extend(sheet.frames.iter().map(|f| f.rect));
     stuff.extend(sheet.strokes.iter().map(|s| s.bounds()));
+    stuff.extend(sheet.shapes.iter().map(Shape::bounds));
 
     // Text on the sheet, set so its size is known.
     let mut labels = Svg::new(blur);
@@ -1373,6 +1427,11 @@ fn draw(sheet: &Category, t: &Theme, media: &Path, blur: bool) -> String {
         svg.rect(r.x + 14., r.y + 10. + (row - 8.) / 2., 8., 8., 4., c);
         let title = if f.title.is_empty() { "Untitled area" } else { f.title.as_str() };
         svg.text(r.x + 28., r.y + 10. + font.baseline(row), title, font, look.muted);
+    }
+
+    // Shapes, over the areas and the ink.
+    for s in &sheet.shapes {
+        draw_shape(&mut svg, s, t);
     }
 
     // The name, text on the sheet, then the notes, back to front.
@@ -1888,6 +1947,18 @@ mod tests {
             assert!(end <= 120.5, "{end}");
             assert!(!line.first().is_some_and(|p| p.text.starts_with(' ')));
         }
+    }
+
+    #[test]
+    fn shapes_are_drawn_with_their_words_turned() {
+        let b = crate::demo::board();
+        let net = b.categories.iter().find(|c| !c.shapes.is_empty()).expect("the shapes sheet");
+        let svg = draw(net, &Theme::light(), &std::env::temp_dir(), false);
+        assert!(svg.contains(r#"<g transform="rotate(15 "#), "the access point's words turn with it");
+        assert!(svg.contains(">Access point</text>"));
+        assert!(svg.contains(r#"stroke-dasharray="6 4.2""#));
+        let png = render(net, &Theme::dark(), &std::env::temp_dir(), Format::Png).expect("a png");
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     }
 
     #[test]

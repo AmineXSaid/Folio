@@ -23,6 +23,7 @@ and what is still to come.
 | Sticker styling | ✅ 12 papers, 3 sizes, 3 fonts (sans, handwritten, mono), grow-with-text or fixed height (with a "+N more lines" fade), lock, a faint paper sheen; four note types: Card (the default), Taped (squarer paper, clear tape, a curl at the foot), Cheat card (the title on a deeper band of the paper), Index card (a pin, a pink margin, blue rules the text sits on, one thing per line); the type from the edit bar, a note's menu, S on the sheet, or the sheet's menu for a new note; new notes follow the type and font of the note changed last; pins for every type (index cards come with one): 18 shapes in five families (Classic push pin, ball, tack; Tech chip, bug, terminal, rocket, code; Cute heart, flower, bow, butterfly; Stars star, sparkle, moon; Fun paw, smiley, bolt), sizes S/M/L and eight colours, from the edit bar's Pin button or the note menu, for the whole selection at once; a pinned taped note drops its tape | slight tilt: GPUI can't rotate elements, so it needs custom-drawn notes |
 | Editing | ✅ type straight on the note with a two-row edit bar. Writing: bold (Ctrl+B), italic (Ctrl+I), strikethrough (Ctrl+Shift+X), code (Ctrl+E), highlight (Ctrl+Shift+M), bullets (Ctrl+Shift+B), numbers (Ctrl+Shift+O), tasks (Ctrl+Shift+C), a table, a Remember box (Ctrl+Shift+R), Markdown (Ctrl+Shift+T), picture, reminder, more. Look: type, pin, paper (one swatch that opens the twelve, on the side away from the note), font, size, Done. The title and text are typed where and as large as they're drawn, so nothing jumps when a note opens. The bar (about 510 px) goes above or below the note, lined up with its left edge, right edge or middle or anywhere along that row, wherever it covers least of the other notes and never the note itself. Enter continues a list; Esc/Done keeps it | WYSIWYG rendering while typing |
 | Text on the sheet | ✅ the Text tool (T) writes Markdown straight on the sheet: **bold**, *italic*, strikethrough, highlights, bullets, numbers and tasks, with the same shortcuts as notes and Enter continuing a list; lines wrap (at 480 units, or a width set by dragging the selected text's right-hand handle); a bar above while writing with the marks, the five inks at hand and a palette button for all 17, three typefaces and a slanted toggle, and four sizes (S/M/L/XL); the right-click menu has the sizes, typefaces and inks too; measured as drawn, so clicks find the real box (`src/ui/label.rs`) | alignment; text inside areas |
+| Shapes | ✅ boxes, flowchart symbols, lines and arrows, from the dock's Shapes button (Ctrl+Shift+S): rectangle, rounded, ellipse, diamond, triangle, hexagon, parallelogram, cylinder, cloud, document; start/end, delay, manual input, off-page link, predefined process, manual operation; line, arrow, double arrow, elbow arrow. A click adds one in the middle of the view, selected; drag to move (alone or with notes, in a box selection), corner handles to resize, and a round handle above to **turn** it (snaps to every 15°; `[` and `]` turn by 15°; the menu's Turn row and Straighten). Words in a shape (double-click or Enter), centred and wrapped, turning with it: drawn as text upright, traced from the bundled sans into outlines once turned (`src/glyphs.rs`), since GPUI draws text upright only. Right-click: fill (any paper, or none), line ink, thin/regular/bold, dashed, duplicate, lock, delete. Undo, Drive merge (field by field, words merged as text), miniatures, the minimap, PNG/PDF and Markdown export all carry them (`src/shape.rs`, `src/ui/shapes.rs`). Notes, pictures and shadows never turn | the right-hand shapes panel with search and icon libraries (Tabler, Lucide); drag from the panel onto the sheet; connectors that join shapes; copy and paste of shapes |
 | Text into Markdown | ✅ `src/markdown.rs` turns plain text (pasted from Word, a PDF or a chat) into Markdown: `•`/`–`/`o` bullets, `1)`/`(a)` numbers, `☐`/`✔` boxes, `Term: meaning` with a bold term, `Tip:`/`Remember:` lines as a Remember box, tab-separated lines as a table, a short first line as the title. On the selection or the whole note (Ctrl+Shift+T, the edit bar's Markdown, a note's menu); Ctrl+Shift+V pastes as Markdown, on the sheet or in a note | rich-text (HTML) paste |
 | Remember boxes and tables | ✅ `>` lines draw as a Remember box, labelled by a first line such as `**Tip:**` or `[!NOTE]`; tables draw on the paper with small-caps headers and dashed rules | |
 | Tasks | ✅ `- [ ]` lines are real checkboxes you tick with a click, with a done/total chip; a Tasks page (drawer, palette) lists every task on every sheet grouped by sheet, Open / Done / All: tick one there (it's ticked in its note, one undo step) or click its words to go to the note (`Board::tasks`, `ui/tasks.rs`) | |
@@ -68,6 +69,7 @@ and what is still to come.
 | T | Text on the sheet | Ctrl+V | Paste text, picture or files |
 | C | Connect | Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
 | E | Eraser | Ctrl+0 or Shift+1 | Zoom to fit |
+| Ctrl+Shift+S | Shapes | [ / ] | Turn a shape by 15° |
 | Esc | Back to Select | Ctrl+= / Ctrl+- | Zoom |
 | Ctrl+F | Search | Ctrl+Shift+N | New sheet |
 | Ctrl+Tab | Next sheet | Ctrl+Shift+L | Light / dark |
@@ -103,8 +105,11 @@ are ISC and the fonts are OFL. Nothing is copied from Zed's GPL crates.
 ```
 src/
   main.rs        window, key bindings
-  model.rs       Board → Category (sheet) → Sticker, Stroke, Label, Link; Camera;
-                 geometry: hit tests, link curves, RDP simplify, fit  (no GPUI)
+  model.rs       Board → Category (sheet) → Sticker, Stroke, Label, Link, Shape;
+                 Camera; geometry: hit tests, link curves, RDP simplify, fit
+                 (no GPUI)
+  shape.rs       shapes: outlines fitted to a box, turning, hit tests  (no GPUI)
+  glyphs.rs      words traced into outlines, for a turned shape  (no GPUI)
   store.rs       data folder, atomic JSON save/load (fsync, then rename),
                  the background saver, undo steps on disk, media import
   history.rs     undo steps as changes: what an edit did, item by item,
@@ -122,6 +127,7 @@ src/
   ui/sidebar.rs  sheets list, theme switch
   ui/topbar.rs   breadcrumb, search, undo/redo, delete sheet, New note
   ui/toolbar.rs  floating tool dock + ink swatches, zoom control
+  ui/shapes.rs   painting shapes, their frame and handles, the picker
   ui/editor.rs   the note/label editor dialog
 ```
 
@@ -141,6 +147,8 @@ Sticker  { id, rect, paper, style /* Card, Taped, Cheat, Index */, title,
 Stroke   { id, ink, width, marker, points: Vec<Vec2> }   // world units
 Label    { id, at, text, ink }
 Link     { id, from: StickerId, to: StickerId, ink }
+Shape    { id, geom, rect /* upright */, rot /* degrees clockwise */,
+           fill: Option<Paper>, ink, line, dashed, text, locked }
 Camera   { pan, zoom }          // screen = world × zoom + pan
 ```
 
@@ -273,10 +281,13 @@ animated WebP (pre-rendered frames). It's lossy but simple.
 
 v0.1 has pen, marker and eraser, saved as world-space polylines simplified
 with Ramer–Douglas–Peucker (at a tolerance of about a third of a screen
-pixel). **Planned:** pressure from tablets (GPUI pointer events carry it on
-some platforms), shape tools (rectangle, ellipse, line, arrow) stored as
-`Shape { kind, rect, ink, fill }`, and a lasso to select, move and recolour
-ink.
+pixel). Shapes (v0.2) are outlines fitted to a box and turned about its
+centre (`Shape { geom, rect, rot, … }`): the board fills and strokes them
+as paths, so they turn freely, and the export writes the same outlines.
+**Planned:** pressure from tablets (GPUI pointer events carry it on some
+platforms), a draw.io-style shapes panel on the right with search and icon
+libraries, connectors between shapes, and a lasso to select, move and
+recolour ink.
 
 ---
 
@@ -428,8 +439,9 @@ Folio file.
 cached ink tessellation; picture mipmaps; reorder
 sheets by drag.
 
-**v0.4: richer content.** Coloured text; WYSIWYG while typing; shape
-tools; animated SVG player; image crop; custom reminder times and repeats.
+**v0.4: richer content.** Coloured text; WYSIWYG while typing; the
+shapes panel (search, icon libraries, drag onto the sheet) and connectors
+between shapes; animated SVG player; image crop; custom reminder times and repeats.
 
 **v1.0: ship.** Windows installer and signed build (with its own
 notification identity), export (PNG/PDF/Markdown), screen-reader labels,

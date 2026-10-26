@@ -18,6 +18,7 @@ pub mod popout;
 pub mod quick;
 mod selection;
 mod settings;
+mod shapes;
 mod tasks;
 mod sticker;
 mod sync;
@@ -87,6 +88,10 @@ gpui::actions!(
         ToolConnect,
         ToolFrame,
         ToolEraser,
+        // Shapes: the picker, and turning the selected ones.
+        ToggleShapes,
+        TurnLeft,
+        TurnRight,
         SaveNote,
         // Writing in a note: the edit bar's first row.
         Bold,

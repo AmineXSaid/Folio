@@ -17,10 +17,12 @@ use gpui::{
 use std::time::Instant;
 
 use super::app::{Folio, Format, Gesture, MenuKind, MenuPage, Selection, Tool};
+use super::shapes::ShapeGrip;
 use super::sticker::size_factor;
 use super::*;
 use crate::history::Before;
 use crate::model::*;
+use crate::shape::{handle_angle, rotate, MIN_SHAPE};
 use crate::theme::{theme, Theme};
 
 /// How close, in screen pixels, a press must be to an edge or corner to
@@ -203,6 +205,8 @@ impl Folio {
             })
             .collect();
 
+        let (shape_layer, shape_words) = self.render_shapes(view, &t);
+
         let labels: Vec<_> = sheet
             .labels
             .iter()
@@ -251,7 +255,12 @@ impl Folio {
                 .when(sheet.backdrop.soften, |d| d.child(div().absolute().inset_0().bg(paper.opacity(0.55))))
         });
 
-        let empty = sheet.stickers.is_empty() && sheet.strokes.is_empty() && sheet.labels.is_empty() && sheet.frames.is_empty();
+        let empty = sheet.stickers.is_empty()
+            && sheet.strokes.is_empty()
+            && sheet.labels.is_empty()
+            && sheet.frames.is_empty()
+            && sheet.shapes.is_empty();
+        let shape_grip = self.shape_grip_at(self.cursor);
         let cursor = match self.tool {
             _ if self.space => gpui::CursorStyle::OpenHand,
             Tool::Hand => gpui::CursorStyle::OpenHand,
@@ -261,7 +270,9 @@ impl Folio {
             }
             Tool::Text => gpui::CursorStyle::IBeam,
             Tool::Select => match (&self.gesture, self.hovered) {
-                (Gesture::Pan { .. }, _) => gpui::CursorStyle::ClosedHand,
+                (Gesture::Pan { .. } | Gesture::TurnShape { .. }, _) => gpui::CursorStyle::ClosedHand,
+                (Gesture::ResizeShape { was, grip, .. }, _) => self.shape_grip_cursor(was.id, ShapeGrip::Corner(*grip)),
+                (Gesture::None, _) if shape_grip.is_some() => shape_grip.map_or(gpui::CursorStyle::Arrow, |(id, g)| self.shape_grip_cursor(id, g)),
                 (Gesture::Resize { grip, .. } | Gesture::ResizeFrame { grip, .. }, _) => resize_cursor(*grip),
                 (Gesture::LabelWidth { .. }, _) => gpui::CursorStyle::ResizeLeftRight,
                 (Gesture::None, _) if self.label_grip_at(self.cursor).is_some() => gpui::CursorStyle::ResizeLeftRight,
@@ -293,13 +304,21 @@ impl Folio {
                     .iter()
                     .map(|s| Selection::Sticker(s.id))
                     .chain(c.labels.iter().map(|l| Selection::Label(l.id)))
+                    .chain(c.shapes.iter().map(|s| Selection::Shape(s.id)))
                     .collect();
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &ToggleShapes, _, cx| {
+                this.shape_picker = !this.shape_picker;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &TurnLeft, _, cx| this.turn_shapes(&this.selected_shapes(), -15., cx)))
+            .on_action(cx.listener(|this, _: &TurnRight, _, cx| this.turn_shapes(&this.selected_shapes(), 15., cx)))
             .on_action(cx.listener(|this, _: &EditSelection, window, cx| match this.selection.first().copied() {
                 Some(Selection::Sticker(id)) => this.begin_edit(id, false, window, cx),
                 Some(Selection::Label(id)) => this.edit_label(id, false, window, cx),
                 Some(Selection::Frame(id)) => this.rename_frame(id, window, cx),
+                Some(Selection::Shape(id)) => this.edit_shape_text(id, window, cx),
                 None => {}
             }))
             .on_action(cx.listener(|this, _: &Paste, _, cx| this.paste(false, cx)))
@@ -315,7 +334,7 @@ impl Folio {
             .on_action(cx.listener(|this, _: &CycleStyle, _, cx| this.cycle_style(cx)))
             .on_action(cx.listener(|this, _: &Escape, _, cx| {
                 // An open menu or the drawer goes first.
-                if this.menu.take().is_some() || std::mem::take(&mut this.drawer) {
+                if this.menu.take().is_some() || std::mem::take(&mut this.drawer) || std::mem::take(&mut this.shape_picker) {
                     cx.notify();
                     return;
                 }
@@ -378,6 +397,8 @@ impl Folio {
             .children(picture)
             .child(underlay)
             .children(frames)
+            .child(shape_layer)
+            .children(shape_words)
             // Written on the sheet: under the notes, moving with them.
             .child(self.render_sheet_head(&t))
             .children(labels)
@@ -942,7 +963,17 @@ impl Folio {
         let view = sheet.camera.visible(vw, vh);
         let rects: Vec<(Rect, Hsla)> = sheet.stickers.iter().map(|s| (self.note_rect(s), t.paper(s.paper))).collect();
         let frames: Vec<(Rect, Hsla)> = sheet.frames.iter().map(|f| (f.rect, t.accent(f.accent))).collect();
-        let world = rects.iter().map(|r| r.0).chain(frames.iter().map(|f| f.0)).fold(view, |a, b| a.union(&b));
+        let shapes: Vec<(Rect, Hsla, Hsla)> = sheet
+            .shapes
+            .iter()
+            .map(|s| (s.bounds(), s.fill.map_or(gpui::transparent_black(), |p| t.paper(p)), t.ink(s.ink)))
+            .collect();
+        let world = rects
+            .iter()
+            .map(|r| r.0)
+            .chain(frames.iter().map(|f| f.0))
+            .chain(shapes.iter().map(|s| s.0))
+            .fold(view, |a, b| a.union(&b));
         let pad = 8.;
         let k = ((w - 2. * pad) / world.w).min((h - 2. * pad) / world.h);
         let ox = (w - world.w * k) / 2. - world.x * k;
@@ -978,6 +1009,9 @@ impl Folio {
                         };
                         for (r, c) in &frames {
                             window.paint_quad(gpui::fill(quad(r), c.opacity(0.12)).corner_radii(px(3.)));
+                        }
+                        for (r, fill, ink) in &shapes {
+                            window.paint_quad(gpui::fill(quad(r), *fill).corner_radii(px(2.)).border_widths(px(0.5)).border_color(ink.opacity(0.6)));
                         }
                         for (r, c) in &rects {
                             window.paint_quad(gpui::fill(quad(r), *c).corner_radii(px(2.)).border_widths(px(0.5)).border_color(edge));
@@ -1030,6 +1064,11 @@ impl Folio {
         } else if let Some(id) = self.label_at(world) {
             self.select(Selection::Label(id));
             MenuKind::Label(id)
+        } else if let Some(id) = self.shape_at(world) {
+            if !self.is_selected(Selection::Shape(id)) {
+                self.select(Selection::Shape(id));
+            }
+            MenuKind::Shape(id)
         } else if let Some(id) = self.frame_bar_at(world).or_else(|| self.sheet().frame_at(world)) {
             self.select(Selection::Frame(id));
             MenuKind::Frame(id)
@@ -1069,6 +1108,11 @@ impl Folio {
                 Selection::Label(id) => {
                     if let Some(l) = c.labels.iter().find(|l| l.id == id) {
                         add(*sel, l.at, &mut out);
+                    }
+                }
+                Selection::Shape(id) => {
+                    if let Some(s) = c.shapes.iter().find(|s| s.id == id && !s.locked) {
+                        add(*sel, v2(s.rect.x, s.rect.y), &mut out);
                     }
                 }
                 Selection::Frame(id) => {
@@ -1127,7 +1171,12 @@ impl Folio {
                 self.gesture = Gesture::LabelWidth { id, start: world.x, w };
             }
             Tool::Select => {
-                if let Some((id, grip)) = self.grip_at(at) {
+                if let Some((id, g)) = self.shape_grip_at(at) {
+                    self.gesture = match (g, self.sheet().shapes.iter().find(|s| s.id == id).cloned()) {
+                        (ShapeGrip::Corner(grip), Some(was)) => Gesture::ResizeShape { start: world, was, grip },
+                        _ => Gesture::TurnShape { id },
+                    };
+                } else if let Some((id, grip)) = self.grip_at(at) {
                     let rect = self.sheet().sticker(id).map(|s| self.note_rect(s)).unwrap();
                     self.select(Selection::Sticker(id));
                     self.gesture = Gesture::Resize { id, start: world, rect, grip };
@@ -1175,6 +1224,28 @@ impl Folio {
                         }
                     } else if !self.is_selected(sel) {
                         self.select(sel);
+                    }
+                    self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
+                } else if let Some(id) = self.shape_at(world) {
+                    let sel = Selection::Shape(id);
+                    if double {
+                        self.gesture = Gesture::None;
+                        self.edit_shape_text(id, window, cx);
+                        return;
+                    }
+                    if shift {
+                        if !self.toggle_selected(sel) {
+                            self.gesture = Gesture::None;
+                            cx.notify();
+                            return;
+                        }
+                    } else if !self.is_selected(sel) {
+                        self.select(sel);
+                    }
+                    let shapes = &mut self.board.sheet_mut().shapes;
+                    if let Some(i) = shapes.iter().position(|s| s.id == id) {
+                        let s = shapes.remove(i);
+                        shapes.push(s);
                     }
                     self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
                 } else if let Some(id) = self.frame_bar_at(world) {
@@ -1251,10 +1322,12 @@ impl Folio {
                 // again whenever what's under it changes, edge included.
                 let grip = self.grip_at(at).or_else(|| self.frame_grip_at(at)).map(|(_, g)| g);
                 let label_grip = self.label_grip_at(at).is_some();
-                if hovered != self.hovered || grip != self.hover_grip || label_grip != self.hover_label_grip {
+                let shape_grip = self.shape_grip_at(at).map(|(_, g)| g);
+                if hovered != self.hovered || grip != self.hover_grip || label_grip != self.hover_label_grip || shape_grip != self.hover_shape_grip {
                     self.hovered = hovered;
                     self.hover_grip = grip;
                     self.hover_label_grip = label_grip;
+                    self.hover_shape_grip = shape_grip;
                     cx.notify();
                 }
                 return;
@@ -1298,6 +1371,12 @@ impl Folio {
                                 f.rect.y = p.y;
                             }
                         }
+                        Selection::Shape(id) => {
+                            if let Some(s) = sheet.shapes.iter_mut().find(|s| s.id == id) {
+                                s.rect.x = p.x;
+                                s.rect.y = p.y;
+                            }
+                        }
                     }
                 }
             }
@@ -1309,6 +1388,27 @@ impl Folio {
                 let r = rect.resized(grip, world.x - start.x, world.y - start.y, MIN_STICKER.0, (MIN_STICKER.1 * 0.6).max(text_h));
                 if let Some(s) = self.board.sheet_mut().sticker_mut(id) {
                     s.rect = r;
+                }
+            }
+            Gesture::ResizeShape { start, was, grip } => {
+                // The pull, in the upright box's terms; the opposite corner
+                // stays where it is on the sheet.
+                let d = rotate(world.sub(*start), v2(0., 0.), -was.rot);
+                let min_h = if was.geom.is_line() { 8. } else { MIN_SHAPE };
+                let mut r = was.rect.resized(*grip, d.x, d.y, MIN_SHAPE, min_h);
+                let shift = rotate(r.center().sub(was.rect.center()), v2(0., 0.), was.rot);
+                let c = was.rect.center().add(shift);
+                r.x = c.x - r.w / 2.;
+                r.y = c.y - r.h / 2.;
+                let id = was.id;
+                if let Some(s) = self.board.sheet_mut().shapes.iter_mut().find(|s| s.id == id) {
+                    s.rect = r;
+                }
+            }
+            Gesture::TurnShape { id } => {
+                let id = *id;
+                if let Some(s) = self.board.sheet_mut().shapes.iter_mut().find(|s| s.id == id) {
+                    s.rot = handle_angle(s.center(), world, 4.);
                 }
             }
             Gesture::LabelWidth { id, start, w } => {
@@ -1336,6 +1436,7 @@ impl Folio {
                     .map(|s| Selection::Sticker(s.id))
                     .chain(c.labels.iter().filter(|l| r.intersects(&self.label_box(l))).map(|l| Selection::Label(l.id)))
                     .chain(c.frames.iter().filter(|f| contains(&r, &f.rect)).map(|f| Selection::Frame(f.id)))
+                    .chain(c.shapes.iter().filter(|s| r.intersects(&s.bounds())).map(|s| Selection::Shape(s.id)))
                     .collect();
                 if additive {
                     for s in std::mem::take(&mut self.selection) {

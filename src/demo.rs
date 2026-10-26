@@ -236,8 +236,48 @@ pub fn board() -> Board {
     // keep their ids.
     let cheat = b.categories.pop().expect("the cheatsheet");
     b.categories.insert(0, cheat);
+    network(&mut b, now);
     b.active = 0;
     b
+}
+
+/// A sheet of shapes: a home network drawn with boxes, symbols and
+/// arrows, two of them turned.
+fn network(b: &mut Board, now: u64) {
+    b.add_sheet("Home network");
+    let shape = |b: &mut Board, geom: Geom, r: (f32, f32, f32, f32), text: &str, f: &dyn Fn(&mut Shape)| {
+        let mut s = Shape::new(b.fresh_id(), geom, v2(0., 0.));
+        s.rect = Rect { x: r.0, y: r.1, w: r.2, h: r.3 };
+        s.text = text.into();
+        f(&mut s);
+        s
+    };
+    let plain = |_: &mut Shape| {};
+    let shapes = vec![
+        shape(b, Geom::Cloud, (0., 40., 190., 120.), "Internet", &|s| s.fill = Some(Paper::Sky)),
+        shape(b, Geom::Arrow, (200., 88., 110., 24.), "", &plain),
+        shape(b, Geom::Rounded, (320., 60., 170., 80.), "Router", &|s| s.ink = Ink::Cobalt),
+        shape(b, Geom::Elbow, (490., 100., 130., 90.), "", &plain),
+        shape(b, Geom::Hexagon, (620., 150., 170., 100.), "Access point", &|s| {
+            s.rot = 15.;
+            s.fill = Some(Paper::Mint);
+        }),
+        shape(b, Geom::Diamond, (320., 220., 170., 120.), "Online?", &|s| s.fill = Some(Paper::Butter)),
+        shape(b, Geom::Cylinder, (60., 230., 120., 130.), "NAS", &|s| s.ink = Ink::Forest),
+        shape(b, Geom::DoubleArrow, (190., 290., 120., 24.), "", &|s| s.dashed = true),
+        shape(b, Geom::Document, (620., 330., 180., 110.), "Wi-Fi password in the drawer", &|s| {
+            s.rot = 352.;
+            s.fill = Some(Paper::Blush);
+        }),
+        shape(b, Geom::Terminator, (330., 400., 150., 56.), "Done", &|s| s.fill = Some(Paper::Sage)),
+    ];
+    let mut tip = note(b, (860., 40., 230., 150.), Paper::Butter, "Shapes", "Pick one from the dock. Drag the round handle to turn it; **[** and **]** turn by 15°.");
+    tip.edited = now;
+    let sheet = b.sheet_mut();
+    sheet.icon = "🛜".into();
+    sheet.edited = now;
+    sheet.shapes = shapes;
+    sheet.stickers = vec![tip];
 }
 
 /// Removes the sample sheets an older Folio started with, if they're as

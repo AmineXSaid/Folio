@@ -9,6 +9,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::shape::{Geom, LineWidth, Shape};
+
 pub type Id = u64;
 
 pub const FORMAT_VERSION: u32 = 3;
@@ -1106,6 +1108,9 @@ pub struct Category {
     pub links: Vec<Link>,
     #[serde(default)]
     pub frames: Vec<Frame>,
+    /// Boxes, symbols and arrows drawn on the sheet, back to front.
+    #[serde(default)]
+    pub shapes: Vec<Shape>,
     /// The Inbox: where quick notes land.
     #[serde(default)]
     pub inbox: bool,
@@ -1138,6 +1143,7 @@ impl Category {
             labels: Vec::new(),
             links: Vec::new(),
             frames: Vec::new(),
+            shapes: Vec::new(),
             inbox: false,
             pinned: false,
             icon: String::new(),
@@ -1204,7 +1210,8 @@ impl Category {
             .map(|s| s.rect)
             .chain(self.strokes.iter().map(Stroke::bounds))
             .chain(self.labels.iter().map(label_rect))
-            .chain(self.frames.iter().map(|f| f.rect));
+            .chain(self.frames.iter().map(|f| f.rect))
+            .chain(self.shapes.iter().map(Shape::bounds));
         rects.reduce(|a, b| a.union(&b))
     }
 
@@ -1632,6 +1639,7 @@ impl Board {
                     .chain(c.labels.iter().map(|s| s.id))
                     .chain(c.links.iter().map(|s| s.id))
                     .chain(c.frames.iter().map(|s| s.id))
+                    .chain(c.shapes.iter().map(|s| s.id))
             })
             .chain(self.bin.iter().map(|b| b.id))
             .max()

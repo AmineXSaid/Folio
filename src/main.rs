@@ -6,6 +6,7 @@ mod cloud;
 mod demo;
 mod export;
 mod fonts;
+mod glyphs;
 mod greeting;
 mod history;
 mod desktop;
@@ -14,6 +15,7 @@ mod markdown;
 mod merge;
 mod model;
 mod picture;
+mod shape;
 mod store;
 mod theme;
 mod time;
@@ -78,6 +80,9 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("f", ToolFrame, Some("Board")),
         KeyBinding::new("e", ToolEraser, Some("Board")),
         KeyBinding::new("s", CycleStyle, Some("Board")),
+        KeyBinding::new("secondary-shift-s", ToggleShapes, Some("Board")),
+        KeyBinding::new("[", TurnLeft, Some("Board")),
+        KeyBinding::new("]", TurnRight, Some("Board")),
         KeyBinding::new("secondary-shift-t", ToMarkdown, Some("Board")),
         KeyBinding::new("secondary-shift-v", PasteMarkdown, Some("Board")),
         // Typing into a note, a dialog, the palette: ahead of the text

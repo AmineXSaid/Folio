@@ -232,6 +232,7 @@ pub enum Selection {
     Sticker(Id),
     Label(Id),
     Frame(Id),
+    Shape(Id),
 }
 
 /// The opening, playing (every launch).
@@ -294,6 +295,10 @@ pub enum Gesture {
     /// Setting where text on the sheet wraps, from its right edge: the
     /// pointer's x and the width at the press (world units).
     LabelWidth { id: Id, start: f32, w: f32 },
+    /// Resizing a shape from `grip`'s corner; `was` as it was at the press.
+    ResizeShape { start: Vec2, was: Shape, grip: Grip },
+    /// Turning a shape by its handle.
+    TurnShape { id: Id },
 }
 
 /// The note being typed into, on the sheet.
@@ -313,6 +318,7 @@ pub enum MenuKind {
     Card(usize),
     Frame(Id),
     Label(Id),
+    Shape(Id),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -358,6 +364,8 @@ pub enum Dialog {
     NewSheet { icon: &'static str, template: Template },
     RenameSheet(Id),
     RenameFrame(Id),
+    /// The words in a shape.
+    ShapeText(Id),
     /// The first sync, and both sides have notes: merge, or keep one.
     DriveChoice(super::sync::Pick),
     /// Setting up Google sign-in: the app's client id and secret.
@@ -423,6 +431,10 @@ pub struct Folio {
     pub hover_grip: Option<crate::model::Grip>,
     /// The pointer is on a selected text's width handle.
     pub hover_label_grip: bool,
+    /// The pointer is on a selected shape's corner or turning handle.
+    pub hover_shape_grip: Option<super::shapes::ShapeGrip>,
+    /// The shapes to pick from are open above the dock.
+    pub shape_picker: bool,
     /// Space is held: drag pans.
     pub space: bool,
     /// The last pointer position over the sheet, in sheet-local pixels.
@@ -664,6 +676,8 @@ impl Folio {
             hovered: None,
             hover_grip: None,
             hover_label_grip: false,
+            hover_shape_grip: None,
+            shape_picker: false,
             space: false,
             cursor: v2(0., 0.),
             viewport: Rc::new(Cell::new(Bounds::default())),
@@ -789,6 +803,16 @@ impl Folio {
             .iter()
             .filter_map(|s| match s {
                 Selection::Sticker(id) => Some(*id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn selected_shapes(&self) -> Vec<Id> {
+        self.selection
+            .iter()
+            .filter_map(|s| match s {
+                Selection::Shape(id) => Some(*id),
                 _ => None,
             })
             .collect()
@@ -1366,6 +1390,7 @@ impl Folio {
                     }
                 });
             }
+            Dialog::ShapeText(id) => self.change_shapes(&[id], cx, |s| s.text = name.clone()),
             // Its own buttons decide; Ctrl+Enter doesn't pick for you.
             Dialog::GoogleSetup => {
                 let id = self.client_input.read(cx).value().trim().to_string();
@@ -1733,6 +1758,7 @@ impl Folio {
                     }
                     Selection::Label(id) => b.sheet_mut().labels.retain(|l| l.id != id),
                     Selection::Frame(id) => b.sheet_mut().frames.retain(|f| f.id != id),
+                    Selection::Shape(id) => b.sheet_mut().shapes.retain(|s| s.id != id),
                 }
             }
         });
@@ -1795,12 +1821,24 @@ impl Folio {
 
     pub fn duplicate_selection(&mut self, cx: &mut Context<Self>) {
         let ids = self.selected_notes();
-        if ids.is_empty() {
+        let shapes = self.selected_shapes();
+        if ids.is_empty() && shapes.is_empty() {
             return;
         }
         let mut new = Vec::new();
         let t = now();
         self.change(cx, |b| {
+            for id in shapes {
+                let nid = b.fresh_id();
+                let sheet = b.sheet_mut();
+                if let Some(mut s) = sheet.shapes.iter().find(|s| s.id == id).cloned() {
+                    s.id = nid;
+                    s.rect.x += 24.;
+                    s.rect.y += 24.;
+                    sheet.shapes.push(s);
+                    new.push(Selection::Shape(nid));
+                }
+            }
             for id in ids {
                 let nid = b.fresh_id();
                 let sheet = b.sheet_mut();

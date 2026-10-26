@@ -1,5 +1,5 @@
 //! Right-click menus: for a note, the empty sheet, a sheet's card, an
-//! area, a label. Sub-pages (Move to, Remind me, Icon, Colour) open in
+//! area, a label, a shape. Sub-pages (Move to, Remind me, Icon, Colour) open in
 //! place with a way back.
 
 use gpui::{anchored, canvas, deferred, div, prelude::*, px, Context, MouseButton, SharedString, Stateful, Div, Window};
@@ -959,6 +959,175 @@ impl Folio {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.menu = None;
                             this.change(cx, |b| b.sheet_mut().labels.retain(|l| l.id != id));
+                        }))
+                        .into_any_element(),
+                );
+            }
+            (MenuKind::Shape(id), _) => {
+                let Some(shape) = self.sheet().shapes.iter().find(|s| s.id == id).cloned() else { return None };
+                let ids = self.shape_targets(id);
+                items.push(
+                    row("m-shape-text", "icons/type.svg", if shape.text.is_empty() { "Add words…" } else { "Edit words…" }, Some("Enter".into()), &t)
+                        .on_click(cx.listener(move |this, _, window, cx| this.edit_shape_text(id, window, cx)))
+                        .into_any_element(),
+                );
+                let swatch = |id: gpui::ElementId, color: gpui::Hsla, on: bool, round: bool| {
+                    div()
+                        .id(id)
+                        .size(px(20.))
+                        .rounded(if round { t.radius.full } else { px(5.) })
+                        .bg(color)
+                        .border_1()
+                        .border_color(if on { t.colors.brand } else { t.colors.border })
+                        .when(on, |d| d.border_2())
+                        .cursor_pointer()
+                };
+                if !shape.geom.is_line() {
+                    items.push(caption("Fill", &t).into_any_element());
+                    let none = {
+                        let ids = ids.clone();
+                        swatch("m-fill-none".into(), t.colors.surface, shape.fill.is_none(), false)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon("icons/x.svg", px(12.), t.colors.text_subtle))
+                            .on_click(cx.listener(move |this, _, _, cx| this.change_shapes(&ids, cx, |s| s.fill = None)))
+                    };
+                    items.push(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(5.))
+                            .px(t.space.sm)
+                            .py(px(4.))
+                            .max_w(px(260.))
+                            .child(none)
+                            .children(Paper::ALL.iter().map(|&p| {
+                                let ids = ids.clone();
+                                swatch(("m-fill", p as usize).into(), t.paper(p), shape.fill == Some(p), false)
+                                    .on_click(cx.listener(move |this, _, _, cx| this.change_shapes(&ids, cx, |s| s.fill = Some(p))))
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                items.push(caption("Line", &t).into_any_element());
+                items.push(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(5.))
+                        .px(t.space.sm)
+                        .py(px(4.))
+                        .max_w(px(260.))
+                        .children(Ink::ALL.iter().map(|&ink| {
+                            let ids = ids.clone();
+                            swatch(("m-shape-ink", ink as usize).into(), t.ink(ink), shape.ink == ink, true)
+                                .on_click(cx.listener(move |this, _, _, cx| this.change_shapes(&ids, cx, |s| s.ink = ink)))
+                        }))
+                        .into_any_element(),
+                );
+                let chip = |id: gpui::ElementId, on: bool| {
+                    div()
+                        .id(id)
+                        .h(px(24.))
+                        .px(px(7.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.small)
+                        .text_size(t.text.caption)
+                        .cursor_pointer()
+                        .when(on, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint))
+                        .when(!on, |d| d.text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
+                };
+                items.push(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(2.))
+                        .px(t.space.sm)
+                        .py(px(2.))
+                        .children(LineWidth::ALL.iter().map(|&w| {
+                            let ids = ids.clone();
+                            chip(("m-shape-line", w as usize).into(), shape.line == w)
+                                .child(w.label())
+                                .on_click(cx.listener(move |this, _, _, cx| this.change_shapes(&ids, cx, |s| s.line = w)))
+                        }))
+                        .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(t.colors.border))
+                        .child({
+                            let ids = ids.clone();
+                            let dashed = !shape.dashed;
+                            chip("m-shape-dash".into(), shape.dashed)
+                                .child("Dashed")
+                                .on_click(cx.listener(move |this, _, _, cx| this.change_shapes(&ids, cx, |s| s.dashed = dashed)))
+                        })
+                        .into_any_element(),
+                );
+                items.push(sep(&t).into_any_element());
+                items.push(caption("Turn", &t).into_any_element());
+                let turn_ids = ids.clone();
+                items.push(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(2.))
+                        .px(t.space.sm)
+                        .py(px(2.))
+                        .child({
+                            let ids = turn_ids.clone();
+                            chip("m-turn-left".into(), false)
+                                .gap(px(4.))
+                                .child(icon("icons/rotate-ccw.svg", px(13.), t.colors.text_muted))
+                                .child("15°")
+                                .on_click(cx.listener(move |this, _, _, cx| this.turn_shapes(&ids, -15., cx)))
+                        })
+                        .child({
+                            let ids = turn_ids.clone();
+                            chip("m-turn-right".into(), false)
+                                .gap(px(4.))
+                                .child(icon("icons/rotate-cw.svg", px(13.), t.colors.text_muted))
+                                .child("15°")
+                                .on_click(cx.listener(move |this, _, _, cx| this.turn_shapes(&ids, 15., cx)))
+                        })
+                        .child({
+                            let ids = turn_ids.clone();
+                            chip("m-turn-straight".into(), false)
+                                .child("Straighten")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.menu = None;
+                                    this.change_shapes(&ids, cx, |s| s.rot = 0.)
+                                }))
+                        })
+                        .child(div().flex_1())
+                        .child(div().text_size(t.text.micro).text_color(t.colors.text_subtle).child(format!("{}°  [ ]", shape.rot.round() as i32)))
+                        .into_any_element(),
+                );
+                items.push(sep(&t).into_any_element());
+                items.push(
+                    row("m-shape-dup", "icons/copy.svg", "Duplicate", Some(shortcut("D")), &t)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.duplicate_selection(cx)
+                        }))
+                        .into_any_element(),
+                );
+                let lock_ids = ids.clone();
+                let locked = shape.locked;
+                items.push(
+                    row("m-shape-lock", if locked { "icons/lock-open.svg" } else { "icons/lock.svg" }, if locked { "Unlock" } else { "Lock" }, None, &t)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.change_shapes(&lock_ids, cx, |s| s.locked = !locked)
+                        }))
+                        .into_any_element(),
+                );
+                items.push(
+                    row("m-shape-del", "icons/trash.svg", "Delete", Some("Del".into()), &t)
+                        .text_color(t.colors.danger)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.change(cx, |b| b.sheet_mut().shapes.retain(|s| !ids.contains(&s.id)));
+                            this.selection.retain(|s| !matches!(s, super::app::Selection::Shape(_)));
                         }))
                         .into_any_element(),
                 );

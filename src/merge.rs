@@ -1,6 +1,6 @@
 //! Merging two versions of the board: this computer's and Google Drive's,
 //! from the last one they shared (the base). Each sheet, note, drawing,
-//! text, connector, area and Trash item is matched by id and merged on its
+//! text, connector, area, shape and Trash item is matched by id and merged on its
 //! own:
 //!
 //! - changed on one side only: that side's change wins;
@@ -134,6 +134,30 @@ impl Piece for Label {
             size: field(base.map(|b| &b.size), size, &r.size, false),
             width: field(base.map(|b| &b.width), width, &r.width, false),
             italic: field(base.map(|b| &b.italic), italic, &r.italic, false),
+        }
+    }
+}
+
+/// A shape: its words merged as text on the sheet is; its place, turn,
+/// colours and the rest as each side changed them, this computer's where
+/// both did.
+impl Piece for Shape {
+    fn id(&self) -> Id {
+        self.id
+    }
+    fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
+        let Shape { id, geom, rect, rot, fill, ink, line, dashed, text, locked } = l;
+        Shape {
+            id: *id,
+            geom: field(base.map(|b| &b.geom), geom, &r.geom, false),
+            rect: field(base.map(|b| &b.rect), rect, &r.rect, false),
+            rot: field(base.map(|b| &b.rot), rot, &r.rot, false),
+            fill: field(base.map(|b| &b.fill), fill, &r.fill, false),
+            ink: field(base.map(|b| &b.ink), ink, &r.ink, false),
+            line: field(base.map(|b| &b.line), line, &r.line, false),
+            dashed: field(base.map(|b| &b.dashed), dashed, &r.dashed, false),
+            text: merge_text(base.map(|b| b.text.as_str()), text, &r.text, false),
+            locked: field(base.map(|b| &b.locked), locked, &r.locked, false),
         }
     }
 }
@@ -425,6 +449,7 @@ fn header(c: &Category) -> Category {
         labels: Vec::new(),
         links: Vec::new(),
         frames: Vec::new(),
+        shapes: Vec::new(),
         camera: Camera::default(),
         opened: 0,
         edited: 0,
@@ -439,6 +464,7 @@ fn same_sheet(a: &Category, b: &Category) -> bool {
         && a.labels == b.labels
         && a.links == b.links
         && a.frames == b.frames
+        && a.shapes == b.shapes
         && a.stickers.len() == b.stickers.len()
         && a.stickers.iter().zip(&b.stickers).all(|(x, y)| x.same(y))
 }
@@ -472,6 +498,7 @@ fn merge_sheet(base: Option<&Category>, l: &Category, r: &Category, rep: &mut Re
     c.labels = merge_list(base.map(|b| b.labels.as_slice()), &l.labels, &r.labels, rep);
     c.links = merge_list(base.map(|b| b.links.as_slice()), &l.links, &r.links, rep);
     c.frames = merge_list(base.map(|b| b.frames.as_slice()), &l.frames, &r.frames, rep);
+    c.shapes = merge_list(base.map(|b| b.shapes.as_slice()), &l.shapes, &r.shapes, rep);
     c.camera = l.camera;
     c.opened = l.opened.max(r.opened);
     c.edited = l.edited.max(r.edited);
@@ -500,6 +527,9 @@ fn things(b: &Board) -> HashMap<Id, (u8, String)> {
         }
         for x in &c.frames {
             m.insert(x.id, (5, x.title.clone()));
+        }
+        for x in &c.shapes {
+            m.insert(x.id, (7, json(x)));
         }
     }
     for x in &b.bin {
@@ -563,6 +593,7 @@ fn renumber_sheet(c: &mut Category, map: &HashMap<Id, Id>) {
     c.strokes.iter_mut().for_each(|x| m(&mut x.id));
     c.labels.iter_mut().for_each(|x| m(&mut x.id));
     c.frames.iter_mut().for_each(|x| m(&mut x.id));
+    c.shapes.iter_mut().for_each(|x| m(&mut x.id));
     for l in &mut c.links {
         m(&mut l.id);
         m(&mut l.from);
@@ -675,6 +706,39 @@ mod tests {
         let n2 = b.fresh_id();
         b.categories[0].stickers = vec![note(n1, "Plan", 10), note(n2, "Draft", 10)];
         b
+    }
+
+    #[test]
+    fn shapes_merge_by_id_and_by_field() {
+        let mut base = base();
+        let id = base.fresh_id();
+        base.categories[0].shapes.push(Shape::new(id, Geom::Rect, v2(0., 0.)));
+        let mut here = base.clone();
+        here.categories[0].shapes[0].rot = 30.;
+        let mut there = base.clone();
+        there.categories[0].shapes[0].text = "Router".into();
+        let added = there.fresh_id();
+        there.categories[0].shapes.push(Shape::new(added, Geom::Arrow, v2(50., 0.)));
+
+        let (m, _) = merge(Some(&base), &here, &there);
+        let shapes = &m.categories[0].shapes;
+        assert_eq!(shapes.len(), 2);
+        // Both sides changed the same shape, different parts: both land.
+        assert_eq!((shapes[0].rot, shapes[0].text.as_str()), (30., "Router"));
+        assert!(shapes.iter().any(|s| s.id == added && s.geom == Geom::Arrow));
+
+        // The same id added on each side for different shapes: Drive's is
+        // renumbered, so both stay.
+        let mut here = base.clone();
+        let mut there = base.clone();
+        let a = here.fresh_id();
+        here.categories[0].shapes.push(Shape::new(a, Geom::Ellipse, v2(0., 0.)));
+        let b = there.fresh_id();
+        assert_eq!(a, b);
+        there.categories[0].shapes.push(Shape::new(b, Geom::Cloud, v2(0., 0.)));
+        let (m, _) = merge(Some(&base), &here, &there);
+        let geoms: Vec<Geom> = m.categories[0].shapes.iter().map(|s| s.geom).collect();
+        assert!(geoms.contains(&Geom::Ellipse) && geoms.contains(&Geom::Cloud), "{geoms:?}");
     }
 
     #[test]
