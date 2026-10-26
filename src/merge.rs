@@ -471,28 +471,7 @@ fn same_sheet(a: &Category, b: &Category) -> bool {
 
 fn merge_sheet(base: Option<&Category>, l: &Category, r: &Category, rep: &mut Report) -> Category {
     let (hb, hl, hr) = (base.map(header), header(l), header(r));
-    let mut c = if hl == hr {
-        hl
-    } else {
-        match &hb {
-            Some(b) if *b == hl => {
-                rep.from_drive += 1;
-                hr
-            }
-            Some(b) if *b == hr => {
-                rep.from_here += 1;
-                hl
-            }
-            _ => {
-                rep.clashes += 1;
-                if r.edited > l.edited {
-                    hr
-                } else {
-                    hl
-                }
-            }
-        }
-    };
+    let mut c = if hl == hr { hl } else { merge_header(hb.as_ref(), &hl, &hr, r.edited > l.edited, rep) };
     c.stickers = merge_list(base.map(|b| b.stickers.as_slice()), &l.stickers, &r.stickers, rep);
     c.strokes = merge_list(base.map(|b| b.strokes.as_slice()), &l.strokes, &r.strokes, rep);
     c.labels = merge_list(base.map(|b| b.labels.as_slice()), &l.labels, &r.labels, rep);
@@ -503,6 +482,52 @@ fn merge_sheet(base: Option<&Category>, l: &Category, r: &Category, rep: &mut Re
     c.opened = l.opened.max(r.opened);
     c.edited = l.edited.max(r.edited);
     c
+}
+
+/// Two sheet headers that differ, field by field: a field changed on one
+/// side only takes that side; changed on both, the name merges like a title
+/// and anything else takes the later side. So a sheet renamed here and
+/// recoloured there keeps both changes.
+fn merge_header(base: Option<&Category>, l: &Category, r: &Category, later: bool, rep: &mut Report) -> Category {
+    use serde_json::{Map, Value};
+    let obj = |c: &Category| match serde_json::to_value(c) {
+        Ok(Value::Object(m)) => m,
+        _ => Map::new(),
+    };
+    let (lo, ro) = (obj(l), obj(r));
+    let bo = base.map(obj);
+    let (mut here, mut there, mut clash) = (false, false, false);
+    let mut out = Map::new();
+    for key in lo.keys().chain(ro.keys().filter(|k| !lo.contains_key(*k))) {
+        let (a, b) = (lo.get(key).cloned().unwrap_or(Value::Null), ro.get(key).cloned().unwrap_or(Value::Null));
+        let was = bo.as_ref().map(|m| m.get(key).cloned().unwrap_or(Value::Null));
+        let v = if a == b {
+            a
+        } else if was.as_ref() == Some(&a) {
+            there = true;
+            b
+        } else if was.as_ref() == Some(&b) {
+            here = true;
+            a
+        } else {
+            clash = true;
+            if key == "name" {
+                Value::String(merge_title(base.map(|c| c.name.as_str()), &l.name, &r.name, later))
+            } else if later {
+                b
+            } else {
+                a
+            }
+        };
+        out.insert(key.clone(), v);
+    }
+    if clash {
+        rep.clashes += 1;
+    } else {
+        rep.from_drive += there as usize;
+        rep.from_here += here as usize;
+    }
+    serde_json::from_value(Value::Object(out)).unwrap_or_else(|_| if later { r.clone() } else { l.clone() })
 }
 
 // ---------- Ids that mean different things on each side ----------
@@ -776,6 +801,31 @@ mod tests {
         there.categories[0].stickers[0].title = "Big Plan".into();
         let (m, _) = merge(Some(&base), &here, &there);
         assert_eq!(titles(&m, 0)[0], "Big Plan v2");
+    }
+
+    #[test]
+    fn a_sheet_renamed_here_and_recoloured_there_keeps_both() {
+        let base = base();
+        let mut here = base.clone();
+        here.categories[0].name = "Work".into();
+        here.categories[0].edited = 50;
+        let mut there = base.clone();
+        there.categories[0].icon = "🚗".into();
+        there.categories[0].edited = 60;
+        let (m, rep) = merge(Some(&base), &here, &there);
+        assert_eq!((m.categories[0].name.as_str(), m.categories[0].icon.as_str()), ("Work", "🚗"));
+        assert_eq!(rep.clashes, 0);
+
+        // Renamed on both: the later name wins.
+        let mut here = base.clone();
+        here.categories[0].name = "Mine".into();
+        here.categories[0].edited = 50;
+        let mut there = base.clone();
+        there.categories[0].name = "Theirs".into();
+        there.categories[0].edited = 60;
+        let (m, rep) = merge(Some(&base), &here, &there);
+        assert_eq!(m.categories[0].name, "Theirs");
+        assert_eq!(rep.clashes, 1);
     }
 
     /// The first note's body, written on the base, here and in Drive.
