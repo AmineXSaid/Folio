@@ -806,8 +806,7 @@ impl Folio {
             .children(sizes)
             .child(div().flex_1())
             .child(
-                div()
-                    .id("e-done")
+                super::primary_face(div().id("e-done"), &t)
                     .h(px(28.))
                     .ml(px(6.))
                     .px(px(10.))
@@ -815,8 +814,6 @@ impl Folio {
                     .items_center()
                     .gap(px(4.))
                     .rounded(t.radius.small)
-                    .bg(t.colors.brand)
-                    .text_color(t.colors.primary_fg)
                     .text_size(t.text.caption)
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .cursor_pointer()

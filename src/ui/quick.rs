@@ -189,21 +189,16 @@ impl Render for QuickNoteWindow {
                 }))
         });
 
-        let save = div()
-            .id("quick-save")
+        let save = super::primary_face(div().id("quick-save"), &t)
             .h(px(32.))
             .px(t.space.md)
             .flex()
             .items_center()
             .gap(t.space.sm)
             .rounded(t.radius.full)
-            .bg(t.colors.primary)
-            .hover(|d| d.bg(t.colors.primary_hover))
-            .text_color(t.colors.primary_fg)
             .text_size(t.text.body)
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .cursor_pointer()
-            .shadow(t.shadow_primary())
             .child("Save")
             .child(icon("icons/corner-down-left.svg", t.size.icon_sm, t.colors.primary_fg))
             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx)));

@@ -25,6 +25,9 @@ pub struct Colors {
     pub primary: Hsla,
     pub primary_hover: Hsla,
     pub primary_fg: Hsla,
+    /// The main action's lit top and its darker rim.
+    pub primary_top: Hsla,
+    pub primary_edge: Hsla,
     /// The active row and tool: a wash of the primary.
     pub primary_tint: Hsla,
     pub selection: Hsla,
@@ -291,6 +294,8 @@ impl Theme {
                 primary: c(0xf30d6a),
                 primary_hover: c(0xd9085c),
                 primary_fg: c(0xffffff),
+                primary_top: c(0xff4d8f),
+                primary_edge: c(0xc8085a),
                 primary_tint: c(0xfee6ef),
                 selection: c(0xf30d6a),
                 text_selection: ca(0xf30d6a47),
@@ -344,6 +349,8 @@ impl Theme {
                 primary: c(0xf30d6a),
                 primary_hover: c(0xff3d86),
                 primary_fg: c(0xffffff),
+                primary_top: c(0xff5c98),
+                primary_edge: c(0xb30a52),
                 primary_tint: c(0x3d1424),
                 selection: c(0xff3d86),
                 text_selection: ca(0xff3d8666),
@@ -570,6 +577,38 @@ impl Theme {
         vec![
             BoxShadow { color: hsla(150. / 360., 0.18, 0.08, a), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false },
             BoxShadow { color: hsla(150. / 360., 0.18, 0.08, a * 0.6), offset: point(px(0.), px(2.)), blur_radius: px(6.), spread_radius: px(-2.), inset: false },
+        ]
+    }
+
+    /// The main action's face: lit from above, deepening to its colour.
+    pub fn primary_fill(&self) -> gpui::Background {
+        gpui::linear_gradient(180., gpui::linear_color_stop(self.colors.primary_top, 0.), gpui::linear_color_stop(self.colors.primary, 1.))
+    }
+
+    /// The main action under the pointer: brighter all through.
+    pub fn primary_fill_hover(&self) -> gpui::Background {
+        let top = Hsla { l: (self.colors.primary_top.l + 0.04).min(1.), ..self.colors.primary_top };
+        let bottom = Hsla { l: (self.colors.primary.l + 0.05).min(1.), ..self.colors.primary };
+        gpui::linear_gradient(180., gpui::linear_color_stop(top, 0.), gpui::linear_color_stop(bottom, 1.))
+    }
+
+    /// Pressed: the light falls from below, as if pushed in.
+    pub fn primary_fill_pressed(&self) -> gpui::Background {
+        gpui::linear_gradient(180., gpui::linear_color_stop(self.colors.primary_hover, 0.), gpui::linear_color_stop(self.colors.primary, 1.))
+    }
+
+    /// A quiet button's face: the surface, a shade deeper at its foot.
+    pub fn raised_fill(&self) -> gpui::Background {
+        gpui::linear_gradient(180., gpui::linear_color_stop(self.colors.surface, 0.), gpui::linear_color_stop(self.colors.surface_sunk, 1.))
+    }
+
+    /// The main action under the pointer: its glow spreads further.
+    pub fn shadow_primary_hover(&self) -> Vec<BoxShadow> {
+        let glow = self.colors.primary;
+        vec![
+            BoxShadow { color: hsla(0., 0., 1., if self.is_dark { 0.2 } else { 0.3 }), offset: point(px(0.), px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: true },
+            BoxShadow { color: Hsla { a: 0.32, ..glow }, offset: point(px(0.), px(2.)), blur_radius: px(4.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: Hsla { a: 0.3, ..glow }, offset: point(px(0.), px(8.)), blur_radius: px(18.), spread_radius: px(-4.), inset: false },
         ]
     }
 

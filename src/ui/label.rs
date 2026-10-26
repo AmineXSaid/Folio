@@ -204,8 +204,7 @@ impl Folio {
                 .child(s.label())
                 .on_click(cx.listener(move |this, _, _, cx| this.set_label(id, cx, |l| l.size = s)))
         });
-        let done = div()
-            .id("l-done")
+        let done = super::primary_face(div().id("l-done"), &t)
             .h(px(28.))
             .ml(px(6.))
             .px(px(10.))
@@ -213,8 +212,6 @@ impl Folio {
             .items_center()
             .gap(px(4.))
             .rounded(t.radius.small)
-            .bg(t.colors.brand)
-            .text_color(t.colors.primary_fg)
             .text_size(t.text.caption)
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .cursor_pointer()
