@@ -1237,7 +1237,20 @@ fn draw_shape(svg: &mut Svg, s: &Shape, t: &Theme) {
         }
         d
     };
-    let outlines = s.outlines();
+    // A logo goes in whole, as its own SVG, fitted to the box and turned;
+    // on dark paper, on a pale card.
+    if let (Some(plate), true) = (s.logo_plate(), t.is_dark) {
+        let d: String = plate.iter().enumerate().map(|(i, p)| format!("{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y))).collect();
+        svg.fill(&(d + "Z"), rgba(t.colors.logo_plate));
+    }
+    let outlines = if let Geom::Logo(id) = s.geom {
+        let (r, c) = (s.rect, s.center());
+        let doc = id.svg().replacen("<svg ", &format!(r#"<svg x="{}" y="{}" width="{}" height="{}" "#, n(r.x), n(r.y), n(r.w), n(r.h)), 1);
+        let _ = writeln!(svg.body, r#"<g transform="rotate({} {} {})">{doc}</g>"#, n(s.rot), n(c.x), n(c.y));
+        Vec::new()
+    } else {
+        s.outlines()
+    };
     if let (Some(p), Some(o)) = (s.fill.filter(|_| s.geom.fills()), outlines.first()) {
         if o.closed {
             svg.fill(&path(o), rgba(t.paper(p)));
@@ -1958,6 +1971,8 @@ mod tests {
         assert!(svg.contains(r#"<g transform="rotate(15 "#), "the access point's words turn with it");
         assert!(svg.contains(">Access point</text>"));
         assert!(svg.contains(r#"stroke-dasharray="6 4.2""#));
+        // Logos go in whole, in their own colours.
+        assert!(svg.contains(r##"fill="#252f3e""##), "the AWS logo's ink");
         let png = render(net, &Theme::dark(), &std::env::temp_dir(), Format::Png).expect("a png");
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     }

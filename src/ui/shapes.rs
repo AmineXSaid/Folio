@@ -60,7 +60,7 @@ impl Render for ShapeGhost {
                 |_, _, _| {},
                 move |b, _, window, _| {
                     let r = Rect { x: f32::from(b.origin.x) + 2., y: f32::from(b.origin.y) + 2., w: w - 4., h: h - 4. };
-                    paint_outlines(window, &geom.outlines(r), geom.fills().then_some(fill), ink, 1.75, None);
+                    paint_geom(window, geom, r, ink, Some(fill), 1.75);
                 },
             )
             .size_full(),
@@ -171,6 +171,32 @@ fn paint_outlines(window: &mut Window, lines: &[crate::shape::Outline], fill: Op
     }
 }
 
+/// A logo's regions, each filled in its own colour (`o`: the canvas's
+/// origin, `alpha`: how far it has faded in).
+fn paint_regions(window: &mut Window, regions: &[(Vec<Vec<Vec2>>, bool, [f32; 4])], o: Vec2, alpha: f32) {
+    for (rings, even_odd, c) in regions {
+        let rule = if *even_odd { gpui::FillRule::EvenOdd } else { gpui::FillRule::NonZero };
+        let mut b = PathBuilder::fill().with_style(gpui::PathStyle::Fill(gpui::FillOptions::default().with_fill_rule(rule)));
+        for ring in rings {
+            b.add_polygon(&ring.iter().map(|p| pt(v2(p.x + o.x, p.y + o.y))).collect::<Vec<_>>(), true);
+        }
+        if let Ok(path) = b.build() {
+            window.paint_path(path, Hsla::from(gpui::Rgba { r: c[0], g: c[1], b: c[2], a: c[3] * alpha }));
+        }
+    }
+}
+
+/// A shape drawn small and upright in `r` (screen px): a logo in its
+/// colours, anything else as lines in `ink`, filled with `fill`.
+fn paint_geom(window: &mut Window, geom: Geom, r: Rect, ink: Hsla, fill: Option<Hsla>, width: f32) {
+    if let Geom::Logo(_) = geom {
+        let s = Shape { rect: r, ..Shape::new(0, geom, v2(0., 0.)) };
+        paint_regions(window, &s.logo_regions(), v2(0., 0.), 1.);
+    } else {
+        paint_outlines(window, &geom.outlines(r), fill.filter(|_| geom.fills()), ink, width, None);
+    }
+}
+
 /// The turning sign: three quarters of a ring with an arrowhead, round `c`.
 fn paint_turn_sign(window: &mut Window, c: gpui::Point<Pixels>, r: f32, color: Hsla) {
     let (cx, cy) = (f32::from(c.x), f32::from(c.y));
@@ -220,6 +246,11 @@ struct Paint {
     chrome: Option<([Vec2; 4], Vec2, Vec2, bool)>,
     /// Under the pointer, not selected: a faint frame.
     hover: Option<[Vec2; 4]>,
+    /// A logo's coloured regions, and how far it has faded in; on a dark
+    /// sheet, the pale card behind it.
+    logo: Vec<(Vec<Vec<Vec2>>, bool, [f32; 4])>,
+    plate: Option<Vec<Vec2>>,
+    alpha: f32,
 }
 
 impl Folio {
@@ -390,8 +421,12 @@ impl Folio {
                 s.rect = Rect { x: c.x - s.rect.w * f / 2., y: c.y - s.rect.h * f / 2., w: s.rect.w * f, h: s.rect.h * f };
             }
             let alpha = arriving.map_or(1., |k| (k * 2.5).min(1.));
-            let lines = s
-                .outlines()
+            let logo: Vec<_> = s
+                .logo_regions()
+                .into_iter()
+                .map(|(rings, eo, c)| (rings.into_iter().map(|r| r.into_iter().map(|p| cam.to_screen(p)).collect()).collect(), eo, c))
+                .collect();
+            let lines = if logo.is_empty() { s.outlines() } else { Vec::new() }
                 .into_iter()
                 .map(|mut o| {
                     o.points.iter_mut().for_each(|p| *p = cam.to_screen(*p));
@@ -448,6 +483,9 @@ impl Folio {
                     (c, top, knob, hot(s.id))
                 }),
                 hover: (!selected && self.hover_shape == Some(s.id)).then(|| frame(&s, cam).0),
+                logo,
+                plate: s.logo_plate().filter(|_| t.is_dark).map(|p| p.into_iter().map(|q| cam.to_screen(q)).collect()),
+                alpha,
             });
             // The angle, by the knob, while it turns.
             if turning == Some(s.id) {
@@ -478,6 +516,7 @@ impl Folio {
             (c, frame(s, cam).2.sub(c).len())
         });
         let (brand, surface, on_brand) = (t.colors.brand, t.colors.surface, t.colors.primary_fg);
+        let logo_plate = t.colors.logo_plate;
         let layer = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
@@ -485,6 +524,14 @@ impl Folio {
                 let shift = |p: Vec2| v2(p.x + f32::from(o.x), p.y + f32::from(o.y));
                 let at = |p: Vec2| pt(shift(p));
                 for p in &paints {
+                    if let Some(plate) = &p.plate {
+                        let mut b = PathBuilder::fill();
+                        b.add_polygon(&plate.iter().map(|q| at(*q)).collect::<Vec<_>>(), true);
+                        if let Ok(path) = b.build() {
+                            window.paint_path(path, logo_plate.opacity(p.alpha));
+                        }
+                    }
+                    paint_regions(window, &p.logo, v2(f32::from(o.x), f32::from(o.y)), p.alpha);
                     let lines: Vec<crate::shape::Outline> = p
                         .lines
                         .iter()
@@ -806,6 +853,8 @@ impl Folio {
             .rounded(t.radius.button)
             .border_1()
             .border_color(gpui::transparent_black())
+            // A logo on a dark panel sits on a pale card, as on the sheet.
+            .when(t.is_dark && matches!(geom, Geom::Logo(_)), |d| d.bg(t.colors.logo_plate))
             .cursor_pointer()
             .hover(|d| d.bg(t.colors.hover).border_color(t.colors.border))
             .active(|d| d.bg(t.colors.brand_tint).border_color(t.colors.brand))
@@ -827,7 +876,7 @@ impl Folio {
                         let k = (room / dw).min((bh - 18.) / dh).min(if geom.is_figure() { 26. / dw.max(dh) } else { f32::MAX });
                         let (w, h) = ((dw * k).max(6.), (dh * k).max(6.));
                         let r = Rect { x: f32::from(b.origin.x) + (bw - w) / 2., y: f32::from(b.origin.y) + (bh - h) / 2., w, h };
-                        paint_outlines(window, &geom.outlines(r), None, ink, 1.4, None);
+                        paint_geom(window, geom, r, ink, None, 1.4);
                     },
                 )
                 .size_full(),

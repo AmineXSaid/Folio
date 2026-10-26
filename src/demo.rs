@@ -275,6 +275,15 @@ fn network(b: &mut Board, now: u64) {
         shape(b, Geom::Icon(Icon::Phone), (1010., 240., 64., 64.), "Phone", &|s| s.ink = Ink::Cobalt),
         shape(b, Geom::Icon(Icon::Wifi), (945., 360., 64., 64.), "Office Wi-Fi", &|s| s.ink = Ink::Forest),
     ];
+    // Where the backups go: product logos, in their own colours.
+    let mut shapes = shapes;
+    for (name, x, text) in [("aws", 520., "Backups"), ("microsoft-azure", 650., "Mail")] {
+        if let Some(l) = crate::logos::LogoId::by_name(name) {
+            let (w, h) = Geom::Logo(l).default_size();
+            let at = v2(x + 40., 520.);
+            shapes.push(shape(b, Geom::Logo(l), (at.x - w / 2., at.y - h / 2., w, h), text, &plain));
+        }
+    }
     let mut tip = note(b, (860., 40., 230., 150.), Paper::Butter, "Shapes", "Open the shapes panel from the dock (Ctrl+Shift+S). Drag the round handle, or just outside a corner, to turn; [ and ] turn it by 15 degrees.");
     tip.edited = now;
     let sheet = b.sheet_mut();

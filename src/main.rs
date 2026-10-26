@@ -12,6 +12,7 @@ mod history;
 mod icons;
 mod desktop;
 mod links;
+mod logos;
 mod markdown;
 mod merge;
 mod model;

@@ -128,7 +128,17 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &T
         .iter()
         .map(|s| {
             let lines = s.outlines().into_iter().map(|o| (o.points.iter().map(|p| (ox + p.x * k, oy + p.y * k)).collect(), o.closed)).collect();
-            (s.fill.filter(|_| s.geom.fills()).map(|p| t.paper(p)), t.ink(s.ink), lines)
+            (s.fill.filter(|_| s.geom.fills()).map(|p| t.paper(p)), t.ink(s.ink), if matches!(s.geom, Geom::Logo(_)) { Vec::new() } else { lines })
+        })
+        .collect();
+    // Logos in their own colours.
+    let logos: Vec<(Vec<Vec<(f32, f32)>>, bool, gpui::Hsla)> = c
+        .shapes
+        .iter()
+        .flat_map(|s| s.logo_regions())
+        .map(|(rings, eo, c)| {
+            let rings = rings.into_iter().map(|r| r.into_iter().map(|p| (ox + p.x * k, oy + p.y * k)).collect()).collect();
+            (rings, eo, gpui::Rgba { r: c[0], g: c[1], b: c[2], a: c[3] }.into())
         })
         .collect();
     base.child(pattern(Camera { pan: v2(ox, oy), zoom: k })).child(
@@ -136,6 +146,16 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &T
             |_, _, _| {},
             move |bounds, _, window, _| {
                 let o = bounds.origin;
+                for (rings, eo, color) in &logos {
+                    let rule = if *eo { gpui::FillRule::EvenOdd } else { gpui::FillRule::NonZero };
+                    let mut b = PathBuilder::fill().with_style(gpui::PathStyle::Fill(gpui::FillOptions::default().with_fill_rule(rule)));
+                    for r in rings {
+                        b.add_polygon(&r.iter().map(|(x, y)| point(o.x + px(*x), o.y + px(*y))).collect::<Vec<_>>(), true);
+                    }
+                    if let Ok(path) = b.build() {
+                        window.paint_path(path, *color);
+                    }
+                }
                 for (fill, ink, lines) in &shapes {
                     for (i, (pts, closed)) in lines.iter().enumerate() {
                         let pts: Vec<_> = pts.iter().map(|(x, y)| point(o.x + px(*x), o.y + px(*y))).collect();

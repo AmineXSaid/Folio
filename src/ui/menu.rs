@@ -1010,6 +1010,22 @@ impl Folio {
                             .into_any_element(),
                     );
                 }
+                let chip = |id: gpui::ElementId, on: bool| {
+                    div()
+                        .id(id)
+                        .h(px(24.))
+                        .px(px(7.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.small)
+                        .text_size(t.text.caption)
+                        .cursor_pointer()
+                        .when(on, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint))
+                        .when(!on, |d| d.text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
+                };
+                let logo = matches!(shape.geom, Geom::Logo(_));
+                if !logo {
                 items.push(caption("Line", &t).into_any_element());
                 items.push(
                     div()
@@ -1026,20 +1042,6 @@ impl Folio {
                         }))
                         .into_any_element(),
                 );
-                let chip = |id: gpui::ElementId, on: bool| {
-                    div()
-                        .id(id)
-                        .h(px(24.))
-                        .px(px(7.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(t.radius.small)
-                        .text_size(t.text.caption)
-                        .cursor_pointer()
-                        .when(on, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint))
-                        .when(!on, |d| d.text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
-                };
                 items.push(
                     div()
                         .flex()
@@ -1063,6 +1065,7 @@ impl Folio {
                         })
                         .into_any_element(),
                 );
+                }
                 items.push(sep(&t).into_any_element());
                 items.push(caption("Turn", &t).into_any_element());
                 let turn_ids = ids.clone();

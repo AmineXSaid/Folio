@@ -1,5 +1,5 @@
 //! Shapes drawn on a sheet: boxes, flowchart and UML symbols, lines,
-//! arrows and line icons.
+//! arrows, line icons and product logos.
 //! Each is a kind of outline fitted to a box, turned about the box's
 //! centre. Plain geometry only; nothing here knows about GPUI. The board
 //! paints these outlines and the PNG/PDF export writes them, so both draw
@@ -10,6 +10,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use serde::{Deserialize, Serialize};
 
 use crate::icons::{self, Icon, IconLibrary, GRID};
+use crate::logos::{self, LogoId};
 use crate::model::{segment_distance, v2, Id, Ink, Paper, Rect, Vec2};
 
 /// The smallest a shape's box can be made, in world units.
@@ -80,6 +81,8 @@ pub enum Geom {
     Component,
     /// A line icon (network, devices, people...).
     Icon(Icon),
+    /// A product logo, in its own colours.
+    Logo(LogoId),
 }
 
 /// One thing to pick in the shapes panel: a shape under the name its
@@ -185,6 +188,11 @@ pub fn libraries() -> Vec<Library> {
         Library { id: "devices", name: "Devices", entries: icons(IconLibrary::Devices) },
         Library { id: "people", name: "People & office", entries: icons(IconLibrary::People) },
         Library { id: "software", name: "Software", entries: icons(IconLibrary::Software) },
+        Library {
+            id: "logos",
+            name: "Product logos",
+            entries: logos::FEATURED.iter().filter_map(|n| LogoId::by_name(n)).map(|l| e(G::Logo(l), l.title(), l.keywords())).collect(),
+        },
     ]
 }
 
@@ -213,14 +221,23 @@ pub fn search(q: &str) -> Vec<(Entry, &'static str)> {
             hits.push((rank, *en, lib.name));
         }
     }
+    // Then every logo in the set, not only the featured ones.
+    for l in logos::search(q, 120) {
+        if !hits.iter().any(|h| h.1.geom == Geom::Logo(l)) {
+            let rank = 2 + u8::from(!l.name().starts_with(words[0].as_str()));
+            hits.push((rank, e(Geom::Logo(l), l.title(), l.keywords()), "Product logos"));
+        }
+    }
     hits.sort_by_key(|h| h.0);
     hits.into_iter().map(|h| (h.1, h.2)).collect()
 }
 
 impl Geom {
     pub fn name(self) -> &'static str {
-        if let Geom::Icon(i) = self {
-            return i.name();
+        match self {
+            Geom::Icon(i) => return i.name(),
+            Geom::Logo(l) => return l.title(),
+            _ => {}
         }
         libraries().into_iter().flat_map(|l| l.entries).find(|e| e.geom == self).map_or("Shape", |e| e.name)
     }
@@ -233,7 +250,7 @@ impl Geom {
     /// Lines drawn in a box, with no body to fill (icons, the actor): caught
     /// anywhere in the box, their words written under it.
     pub fn is_figure(self) -> bool {
-        matches!(self, Geom::Icon(_) | Geom::Actor)
+        matches!(self, Geom::Icon(_) | Geom::Actor | Geom::Logo(_))
     }
 
     /// Has a body that takes a fill.
@@ -255,6 +272,15 @@ impl Geom {
             Geom::Note | Geom::Cube | Geom::Class | Geom::Callout => (160., 120.),
             Geom::Actor => (40., 80.),
             Geom::Icon(_) => (64., 64.),
+            // The longer side 80, keeping its proportions.
+            Geom::Logo(l) => {
+                let a = l.aspect().clamp(0.2, 5.);
+                if a >= 1. {
+                    (80., 80. / a)
+                } else {
+                    (80. * a, 80.)
+                }
+            }
             _ => (160., 96.),
         }
     }
@@ -479,6 +505,8 @@ impl Geom {
                 let (ox, oy) = (cx - GRID * k / 2., cy - GRID * k / 2.);
                 icons::lines(i).iter().map(|(pts, c)| Outline { points: pts.iter().map(|p| v2(ox + p.x * k, oy + p.y * k)).collect(), closed: *c }).collect()
             }
+            // Its box: what it's caught and framed by; drawn by `logo_regions`.
+            Geom::Logo(_) => vec![poly(&[(0., 0.), (1., 0.), (1., 1.), (0., 1.)])],
             Geom::Line => vec![open(vec![v2(x, cy), v2(x + w, cy)])],
             Geom::Arrow => vec![open(vec![v2(x, cy), v2(x + w, cy)]), head(v2(x + w, cy), 1., 0.)],
             Geom::DoubleArrow => vec![open(vec![v2(x, cy), v2(x + w, cy)]), head(v2(x + w, cy), 1., 0.), head(v2(x, cy), -1., 0.)],
@@ -617,6 +645,33 @@ impl Shape {
             }
         }
         out
+    }
+
+    /// A logo's coloured regions as they lie on the sheet: fitted to the
+    /// box (keeping its proportions, centred) and turned. Each is rings,
+    /// filled even-odd or not, in red, green, blue, alpha.
+    pub fn logo_regions(&self) -> Vec<(Vec<Vec<Vec2>>, bool, [f32; 4])> {
+        let Geom::Logo(id) = self.geom else { return Vec::new() };
+        let (lw, lh) = id.size();
+        let r = self.rect;
+        let k = (r.w / lw).min(r.h / lh);
+        let (ox, oy) = (r.x + (r.w - lw * k) / 2., r.y + (r.h - lh * k) / 2.);
+        logos::regions(id)
+            .iter()
+            .map(|g| {
+                let rings = g.rings.iter().map(|ring| ring.iter().map(|p| self.turn(v2(ox + p.x * k, oy + p.y * k))).collect()).collect();
+                (rings, g.even_odd, g.rgba)
+            })
+            .collect()
+    }
+
+    /// A logo's backing on a dark sheet: a pale rounded card a little
+    /// bigger than its box, turned with it, so dark marks stay readable.
+    pub fn logo_plate(&self) -> Option<Vec<Vec2>> {
+        let Geom::Logo(_) = self.geom else { return None };
+        let g = 8.;
+        let r = Rect { x: self.rect.x - g, y: self.rect.y - g, w: self.rect.w + 2. * g, h: self.rect.h + 2. * g };
+        Geom::Rounded.outlines(r).into_iter().next().map(|o| o.points.into_iter().map(|p| self.turn(p)).collect())
     }
 
     /// Where its words go, upright: inside it, or under an icon or actor,

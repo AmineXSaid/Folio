@@ -23,7 +23,7 @@
 #   shapes  the Home network sheet: shapes and icons, two turned, one
 #           selected with the pointer on its turning knob
 #   shapes-panel  the shapes panel, open on the right
-#   shapes-search  the panel searching "wifi"
+#   shapes-search  the panel searching "aws": logos and AWS service icons
 #   shape-menu  a shape's right-click menu: fill, line, turn
 
 set -euo pipefail
@@ -98,7 +98,7 @@ for mode in light dark; do
   # handles, and its menu.
   key ctrl+k; xdotool type --delay 20 "network"; key Return; sleep 0.8
   key ctrl+shift+s; xdotool mousemove 640 420; shot shapes-panel
-  xdotool type --delay 30 "wifi"; shot shapes-search
+  xdotool type --delay 30 "aws"; shot shapes-search
   xdotool mousemove 1250 70 click 1; sleep 0.6
   xdotool mousemove 753 360 click 1; xdotool mousemove 773 280; shot shapes
   xdotool mousemove 753 360 click 3; shot shape-menu; key Escape

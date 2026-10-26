@@ -53,6 +53,8 @@ pub struct Colors {
     pub margin: Hsla,
     pub head_rule: Hsla,
     pub curl: Hsla,
+    /// Behind a product logo on a dark sheet, so dark marks stay readable.
+    pub logo_plate: Hsla,
     /// Google's four colours, for its "G" on the sign-in button (blue,
     /// green, yellow, red), as its brand rules ask: never recoloured.
     pub google: [Hsla; 4],
@@ -306,6 +308,7 @@ impl Theme {
                 margin: ca(0xf30d6a5c),
                 head_rule: ca(0xf30d6a94),
                 curl: ca(0x18251f0d),
+                logo_plate: c(0xffffff),
                 google: [c(0x4285f4), c(0x34a853), c(0xfbbc05), c(0xea4335)],
             },
             text: TEXT,
@@ -357,6 +360,7 @@ impl Theme {
                 margin: ca(0xff3d8657),
                 head_rule: ca(0xff3d8699),
                 curl: ca(0x00000029),
+                logo_plate: c(0xe9ede9),
                 google: [c(0x4285f4), c(0x34a853), c(0xfbbc05), c(0xea4335)],
             },
             text: TEXT,
