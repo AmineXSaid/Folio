@@ -475,7 +475,7 @@ pub fn sync_component_theme(cx: &mut App) {
         c.input = t.colors.border;
         c.ring = t.colors.primary_tint;
         c.caret = t.colors.primary;
-        c.selection = t.colors.primary_tint;
+        c.selection = t.colors.text_selection;
         c.primary = t.colors.primary;
         c.primary_hover = t.colors.primary_hover;
         c.primary_foreground = t.colors.primary_fg;

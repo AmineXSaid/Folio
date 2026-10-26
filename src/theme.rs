@@ -28,6 +28,9 @@ pub struct Colors {
     /// The active row and tool: a wash of the primary.
     pub primary_tint: Hsla,
     pub selection: Hsla,
+    /// Words picked out while typing: see-through, so it shows on every
+    /// paper and the words stay readable under it.
+    pub text_selection: Hsla,
     pub scrim: Hsla,
     pub toast: Hsla,
     pub toast_fg: Hsla,
@@ -290,6 +293,7 @@ impl Theme {
                 primary_fg: c(0xffffff),
                 primary_tint: c(0xfee6ef),
                 selection: c(0xf30d6a),
+                text_selection: ca(0xf30d6a47),
                 scrim: ca(0x18211f55),
                 toast: c(0x22392f),
                 toast_fg: c(0xffffff),
@@ -342,6 +346,7 @@ impl Theme {
                 primary_fg: c(0xffffff),
                 primary_tint: c(0x3d1424),
                 selection: c(0xff3d86),
+                text_selection: ca(0xff3d8666),
                 scrim: ca(0x00000088),
                 toast: c(0xe6efe9),
                 toast_fg: c(0x16201b),
