@@ -444,8 +444,9 @@ sheets by drag.
 **v0.4: richer content.** Coloured text; WYSIWYG while typing; connectors between shapes; animated SVG player; image crop; custom reminder times and repeats.
 
 **v1.0: ship.** Windows installer and signed build (with its own
-notification identity), export (PNG/PDF/Markdown), screen-reader labels,
-crash log.
+notification identity), export (PNG/PDF/Markdown), screen-reader labels.
+Done: a crash log (`crash.log` in the data folder, newest 64 KB, written
+by a panic hook with the message, place and stack).
 
 ---
 

@@ -514,3 +514,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// Where a crash is written down: `crash.log` beside the board.
+pub fn crash_file(dir: &Path) -> PathBuf {
+    dir.join("crash.log")
+}
+
+/// One crash entry: when, where, what, and the stack if Rust kept one.
+pub fn crash_entry(when: &str, location: &str, message: &str, stack: &str) -> String {
+    let mut s = format!("--- {when} · Folio {}\n{message}\nat {location}\n", env!("CARGO_PKG_VERSION"));
+    if !stack.trim().is_empty() {
+        s.push_str(stack.trim_end());
+        s.push('\n');
+    }
+    s
+}
+
+/// Adds an entry to the crash log, keeping only the newest 64 KB so the file
+/// never grows without bound.
+pub fn log_crash(dir: &Path, entry: &str) -> std::io::Result<()> {
+    const KEEP: usize = 64 * 1024;
+    std::fs::create_dir_all(dir)?;
+    let path = crash_file(dir);
+    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    text.push_str(entry);
+    if text.len() > KEEP {
+        let mut cut = text.len() - KEEP;
+        while !text.is_char_boundary(cut) {
+            cut += 1;
+        }
+        // Start at a whole entry.
+        let from = text[cut..].find("--- ").map_or(cut, |i| cut + i);
+        text = text[from..].to_string();
+    }
+    std::fs::write(path, text)
+}
+
+#[cfg(test)]
+mod crash_tests {
+    use super::*;
+
+    #[test]
+    fn crash_log_keeps_whole_recent_entries() {
+        let dir = std::env::temp_dir().join(format!("folio-crash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let entry = crash_entry("2026-10-26 12:00", "src/x.rs:1:1", "boom", "");
+        assert!(entry.starts_with("--- 2026-10-26 12:00 · Folio "));
+        assert!(entry.contains("boom\nat src/x.rs:1:1\n"));
+        for _ in 0..2000 {
+            log_crash(&dir, &entry).unwrap();
+        }
+        let text = std::fs::read_to_string(crash_file(&dir)).unwrap();
+        assert!(text.len() <= 64 * 1024);
+        assert!(text.starts_with("--- "));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

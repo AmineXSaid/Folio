@@ -135,7 +135,27 @@ fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// A panic writes `crash.log` in the data folder before the usual report,
+/// so a crash on a release build (no console on Windows) leaves a trace.
+fn log_crashes() {
+    let report = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic".into());
+        let location = info.location().map(|l| l.to_string()).unwrap_or_default();
+        let stack = std::backtrace::Backtrace::force_capture().to_string();
+        let entry = store::crash_entry(&time::date_time(time::now()), &location, &message, &stack);
+        let _ = store::log_crash(&store::data_dir(), &entry);
+        report(info);
+    }));
+}
+
 fn main() {
+    log_crashes();
     // Started with Windows: open, then tuck the window away.
     let background = std::env::args().any(|a| a == "--background");
     gpui::application().with_assets(assets::Assets).run(move |cx: &mut App| {
