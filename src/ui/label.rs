@@ -136,6 +136,9 @@ impl Folio {
             .left(px(at.x - EDIT_PAD_X))
             .top(px(at.y - EDIT_PAD_Y))
             .w(px(l.width.unwrap_or(LABEL_WRAP) * z + 2. * EDIT_PAD_X + EDIT_MARGIN))
+            // A press here is the text field's (to place the caret or pick
+            // words out), not the sheet's.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             // The text area's text is 0.875rem: a rem that gives the label's size.
             .child(rem_scaled(px(l.size.units() * z / 0.875), Textarea::new(&self.label_input).appearance(false)));
         let field = on_format(field, move |f, window, cx| me.update(cx, |this, cx| this.format_label(f, window, cx)));
@@ -215,7 +218,7 @@ impl Folio {
             .text_size(t.text.caption)
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .cursor_pointer()
-            .child(icon("icons/check.svg", px(13.), t.colors.primary_fg))
+            .child(icon("icons/check.svg", px(13.), t.colors.accent_ink))
             .child("Done")
             .tooltip(tip(format!("Done  Esc or {}", shortcut("Enter"))))
             .on_click(cx.listener(|this, _, window, cx| {
