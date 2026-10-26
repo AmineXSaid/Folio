@@ -62,9 +62,9 @@ for mode in light dark; do
   for _ in $(seq 1 40); do WID="$(xdotool search --pid "$APP_PID" 2>/dev/null | tail -1 || true)"; [ -n "$WID" ] && break; sleep 0.25; done
   xdotool windowmove "$WID" 0 0 windowsize "$WID" 1280 800
   xdotool windowfocus --sync "$WID" 2>/dev/null || true
-  sleep 1.6; import -window root "$OUT/intro-$mode.png"
-  sleep 1.2; import -window root "$OUT/intro-late-$mode.png"
-  sleep 3.3
+  sleep 0.9; import -window root "$OUT/intro-$mode.png"
+  sleep 0.6; import -window root "$OUT/intro-late-$mode.png"
+  sleep 1.7
   # The first run asks your name, then your look: "Start writing".
   [ "$mode" = dark ] && key ctrl+shift+l
   xdotool type --delay 30 "Sam"; shot welcome

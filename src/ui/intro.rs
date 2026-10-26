@@ -31,10 +31,14 @@ const FADE: f32 = 0.6;
 const WORD: f32 = 58.;
 const MARK: f32 = 15.;
 
+/// How much faster than its drawn timings the opening plays: the steps
+/// below are written for 4.2 s; at 2× it's over in about 2.1 s.
+const SPEED: f32 = 2.;
+
 impl Intro {
     fn elapsed(&self) -> f32 {
         // FOLIO_SLOW_MOTION slows it too, to look at one moment of it.
-        self.start.elapsed().as_secs_f32() / super::motion::slow() as f32
+        self.start.elapsed().as_secs_f32() * SPEED / super::motion::slow() as f32
     }
     /// Leaving: what comes next shows through.
     pub fn revealing(&self) -> bool {

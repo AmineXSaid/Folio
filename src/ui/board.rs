@@ -507,15 +507,16 @@ impl Folio {
             .when(self.board.settings.minimap && !empty, |d| d.child(self.render_minimap(&t, cx)))
     }
 
-    /// The sheet's name, blurb, note count and save state, written at the
-    /// sheet's top-left: it pans and zooms with the sheet and notes go over
-    /// it, so nothing slides under it. A click on the name renames it in
+    /// The sheet's name, blurb, note count and save state, pinned to the
+    /// window's top-left (it stays put as the sheet pans and zooms; notes
+    /// pass under nothing, they go over it). A click on the name renames it in
     /// place (`press`, `render_name_field`).
     fn render_sheet_head(&self, t: &Theme) -> impl IntoElement {
         let sheet = self.sheet();
-        let cam = sheet.camera;
-        let z = cam.zoom;
-        let at = cam.to_screen(head_at(t));
+        // Pinned to the window's top-left, whatever the sheet's pan and
+        // zoom: the sheet's name is always where you look for it.
+        let z = 1.;
+        let at = v2(f32::from(t.space.xxl), f32::from(t.space.xl));
         let n = sheet.stickers.len();
         let meta = format!(
             "{}{} note{} · {}",
@@ -565,7 +566,7 @@ impl Folio {
         if !self.naming {
             return None;
         }
-        let z = self.sheet().camera.zoom;
+        let z = 1.;
         let b = self.head_name.get()?;
         let o = self.viewport.get().origin;
         Some(
@@ -1995,13 +1996,6 @@ fn empty_state(t: &Theme) -> impl IntoElement {
                 .text_color(t.colors.text_subtle)
                 .child("Double-click anywhere for a note, drop a picture, or right-click for more"),
         )
-}
-
-/// Where the sheet's name is written (world): where a fresh sheet's camera
-/// shows it in the top-left corner.
-fn head_at(t: &Theme) -> Vec2 {
-    let home = Camera::default().pan;
-    v2(f32::from(t.space.xxl) - home.x, f32::from(t.space.xl) - home.y)
 }
 
 /// The area two screen rectangles share.
