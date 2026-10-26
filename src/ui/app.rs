@@ -473,6 +473,8 @@ pub struct Folio {
     pub redo: Vec<Arc<Change>>,
     pub editing: Option<Edit>,
     pub menu: Option<Menu>,
+    /// The day and time being picked by hand on a note's Remind page.
+    pub remind_pick: Option<u64>,
     pub dialog: Option<Dialog>,
     pub palette: bool,
     pub palette_ix: usize,
@@ -724,6 +726,7 @@ impl Folio {
             redo: Vec::new(),
             editing: None,
             menu: None,
+            remind_pick: None,
             dialog: None,
             palette: false,
             palette_ix: 0,
@@ -1916,6 +1919,7 @@ impl Folio {
 
     pub fn set_reminders(&mut self, ids: &[Id], due: Option<u64>, cx: &mut Context<Self>) {
         self.menu = None;
+        self.remind_pick = None;
         self.change_notes(ids, cx, |s| {
             s.due = due;
             s.reminded = false;
@@ -1923,6 +1927,11 @@ impl Folio {
         if let Some(d) = due {
             self.notify(format!("Reminder set · {}", time::due_label(d, now())), cx);
         }
+    }
+
+    /// How the notes' reminders come back once they go off.
+    pub fn set_repeat(&mut self, ids: &[Id], repeat: crate::model::Repeat, cx: &mut Context<Self>) {
+        self.change_notes(ids, cx, |s| s.repeat = repeat);
     }
 
     /// Ctrl+C: words picked out of a note's text if there are any, else

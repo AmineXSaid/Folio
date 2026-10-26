@@ -96,6 +96,66 @@ pub fn presets(now: u64) -> Vec<(&'static str, u64)> {
     ]
 }
 
+/// The next time a repeating reminder at `due` comes round after `now`,
+/// at the same local time of day.
+pub fn next_repeat(due: u64, repeat: crate::model::Repeat, now: u64) -> u64 {
+    use crate::model::Repeat;
+    let d = local(due);
+    let (h, m) = (chrono::Timelike::hour(&d), chrono::Timelike::minute(&d));
+    let mut day = d.date_naive();
+    for _ in 0..800 {
+        day = match repeat {
+            Repeat::Never => return due,
+            Repeat::Daily => day + Duration::days(1),
+            Repeat::Weekdays => {
+                let mut n = day + Duration::days(1);
+                while matches!(n.weekday(), Weekday::Sat | Weekday::Sun) {
+                    n += Duration::days(1);
+                }
+                n
+            }
+            Repeat::Weekly => day + Duration::days(7),
+            Repeat::Monthly => {
+                let (y, mo) = if day.month() == 12 { (day.year() + 1, 1) } else { (day.year(), day.month() + 1) };
+                // The 31st falls on the last day of a shorter month.
+                let want = d.day();
+                (0..4).find_map(|back| chrono::NaiveDate::from_ymd_opt(y, mo, want - back)).unwrap_or(day)
+            }
+        };
+        let t = at(day, h, m);
+        if t > now {
+            return t;
+        }
+    }
+    now + 86_400
+}
+
+/// The day of `t`, near `now`: "Today", "Tomorrow", "Mon 3 Nov".
+pub fn day_label(t: u64, now: u64) -> String {
+    let d = local(t);
+    match (d.date_naive() - local(now).date_naive()).num_days() {
+        0 => "Today".into(),
+        1 => "Tomorrow".into(),
+        _ => d.format("%a %-d %b").to_string(),
+    }
+}
+
+/// The time of day of `t`: "09:00".
+pub fn clock(t: u64) -> String {
+    local(t).format("%H:%M").to_string()
+}
+
+/// A reminder time picked by hand: today at the next whole hour.
+pub fn next_hour(now: u64) -> u64 {
+    now - now % 3600 + 3600
+}
+
+/// `t` moved by whole days, keeping its local time of day.
+pub fn add_days(t: u64, days: i64) -> u64 {
+    let d = local(t);
+    at(d.date_naive() + Duration::days(days), chrono::Timelike::hour(&d), chrono::Timelike::minute(&d))
+}
+
 trait Hour {
     fn hour_of_day(&self) -> u32;
 }
@@ -108,6 +168,22 @@ impl Hour for chrono::DateTime<Local> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeats_land_on_the_next_time() {
+        use crate::model::Repeat;
+        let due = at(chrono::NaiveDate::from_ymd_opt(2026, 1, 30).unwrap(), 9, 0); // a Friday
+        let day = |t: u64| local(t).date_naive();
+        let d = |m, dd| chrono::NaiveDate::from_ymd_opt(2026, m, dd).unwrap();
+        assert_eq!(day(next_repeat(due, Repeat::Daily, due)), d(1, 31));
+        assert_eq!(day(next_repeat(due, Repeat::Weekdays, due)), d(2, 2));
+        assert_eq!(day(next_repeat(due, Repeat::Weekly, due)), d(2, 6));
+        assert_eq!(day(next_repeat(due, Repeat::Monthly, due)), d(2, 28));
+        assert_eq!(chrono::Timelike::hour(&local(next_repeat(due, Repeat::Weekly, due))), 9);
+        // Long overdue: the next one after now, not after the old time.
+        assert!(next_repeat(due, Repeat::Daily, due + 10 * 86_400) > due + 10 * 86_400);
+        assert_eq!(next_repeat(due, Repeat::Never, due), due);
+    }
 
     #[test]
     fn ago_reads_naturally() {

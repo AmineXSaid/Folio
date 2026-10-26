@@ -557,6 +557,35 @@ pub struct Sticker {
     /// Not flagged as stale before this (Unix seconds).
     #[serde(default)]
     pub snoozed: u64,
+    /// How the reminder comes back once it has gone off.
+    #[serde(default)]
+    pub repeat: Repeat,
+}
+
+/// A reminder that comes back: never, every day, on weekdays, every week
+/// or every month, at the same time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Repeat {
+    #[default]
+    Never,
+    Daily,
+    Weekdays,
+    Weekly,
+    Monthly,
+}
+
+impl Repeat {
+    pub const ALL: [Repeat; 5] = [Repeat::Never, Repeat::Daily, Repeat::Weekdays, Repeat::Weekly, Repeat::Monthly];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Repeat::Never => "Once",
+            Repeat::Daily => "Every day",
+            Repeat::Weekdays => "Weekdays",
+            Repeat::Weekly => "Every week",
+            Repeat::Monthly => "Every month",
+        }
+    }
 }
 
 fn yes() -> bool {
@@ -2117,7 +2146,12 @@ impl Board {
         for s in self.categories.iter_mut().flat_map(|c| c.stickers.iter_mut()) {
             if let Some(d) = s.due {
                 if d <= now && !s.reminded {
-                    s.reminded = true;
+                    if s.repeat == Repeat::Never {
+                        s.reminded = true;
+                    } else {
+                        // Shown now, and set again for its next time.
+                        s.due = Some(crate::time::next_repeat(d, s.repeat, now));
+                    }
                     out.push(s.id);
                 }
             }
@@ -2771,6 +2805,16 @@ mod tests {
         assert_eq!(b.take_due(60), vec![10]);
         assert!(b.take_due(70).is_empty());
         assert_eq!(b.reminders(), vec![(0, 10, 50)]);
+
+        // A daily reminder goes off, then waits for the same time tomorrow.
+        let s = &mut b.categories[0].stickers[0];
+        s.due = Some(1_800_000_000);
+        s.reminded = false;
+        s.repeat = Repeat::Daily;
+        assert_eq!(b.take_due(1_800_000_100), vec![10]);
+        let next = b.categories[0].stickers[0].due.unwrap();
+        assert!(next > 1_800_000_100 && next - 1_800_000_000 <= 25 * 3600);
+        assert!(b.take_due(1_800_000_200).is_empty());
     }
 
     #[test]

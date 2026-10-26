@@ -261,7 +261,18 @@ impl Folio {
                     Some(d) => format!("Reminder · {}", time::due_label(d, now())),
                     None => "Remind me…".into(),
                 };
-                items.push(row("m-remind", "icons/bell.svg", remind, Some("›".into()), &t).on_click(cx.listener(goto(MenuPage::Remind))).into_any_element());
+                items.push(
+                    row("m-remind", "icons/bell.svg", remind, Some("›".into()), &t)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            // The hand-picked time starts from the note's own.
+                            this.remind_pick = this.board.find_note(id).and_then(|s| s.due).filter(|&d| d > now());
+                            if let Some(m) = this.menu.as_mut() {
+                                m.page = MenuPage::Remind;
+                            }
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
                 if let Some(l) = s.link.as_ref().filter(|_| !many) {
                     let url = l.url.clone();
                     items.push(
@@ -535,6 +546,111 @@ impl Folio {
                             .into_any_element(),
                     );
                 }
+                // Any day and time: a day and a time to step through, then Set.
+                items.push(sep(&t).into_any_element());
+                items.push(caption("Pick a day and time", &t).into_any_element());
+                let pick = self.remind_pick.filter(|&p| p > now()).unwrap_or_else(|| time::next_hour(now()));
+                let step = |id: &'static str, path: &'static str, by: i64, days: bool, cx: &mut Context<Self>| {
+                    div()
+                        .id(id)
+                        .size(px(26.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.small)
+                        .cursor_pointer()
+                        .hover(|d| d.bg(t.colors.hover))
+                        .child(super::icon(path, px(14.), t.colors.text_muted))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let next = if days { time::add_days(pick, by) } else { (pick as i64 + by * 15 * 60) as u64 };
+                            // Never into the past.
+                            if next > now() {
+                                this.remind_pick = Some(next);
+                            }
+                            cx.notify();
+                        }))
+                };
+                let stepper = |what: String, back: gpui::Stateful<Div>, on: gpui::Stateful<Div>| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(2.))
+                        .child(back)
+                        .child(div().min_w(px(92.)).flex().justify_center().text_size(t.text.caption).font_weight(gpui::FontWeight::SEMIBOLD).text_color(t.colors.text).child(what))
+                        .child(on)
+                };
+                items.push(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px(t.space.sm)
+                        .py(px(2.))
+                        .child(stepper(
+                            time::day_label(pick, now()),
+                            step("m-day-back", "icons/chevron-left.svg", -1, true, cx),
+                            step("m-day-on", "icons/chevron-right.svg", 1, true, cx),
+                        ))
+                        .child(stepper(
+                            time::clock(pick),
+                            step("m-time-back", "icons/chevron-left.svg", -1, false, cx),
+                            step("m-time-on", "icons/chevron-right.svg", 1, false, cx),
+                        ))
+                        .into_any_element(),
+                );
+                // How it comes back.
+                let repeat = targets.first().and_then(|id| self.board.find_note(*id)).map(|s| s.repeat).unwrap_or_default();
+                items.push(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(4.))
+                        .px(t.space.sm)
+                        .py(px(4.))
+                        .children(Repeat::ALL.iter().map(|&r| {
+                            let on = r == repeat;
+                            let targets = targets.clone();
+                            div()
+                                .id(("m-repeat", r as usize))
+                                .h(px(24.))
+                                .px(px(8.))
+                                .flex()
+                                .items_center()
+                                .rounded(t.radius.full)
+                                .border_1()
+                                .text_size(t.text.micro)
+                                .cursor_pointer()
+                                .when(on, |d| d.bg(t.colors.brand_tint).border_color(t.colors.brand.opacity(0.4)).text_color(t.colors.brand_on_tint))
+                                .when(!on, |d| d.border_color(t.colors.border).text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
+                                .child(r.label())
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_repeat(&targets, r, cx)))
+                        }))
+                        .into_any_element(),
+                );
+                items.push(
+                    div()
+                        .px(t.space.sm)
+                        .py(px(4.))
+                        .child(
+                            super::primary_face(div().id("m-set-at"), &t)
+                                .h(px(30.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .gap(px(6.))
+                                .rounded(t.radius.button)
+                                .text_size(t.text.caption)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .cursor_pointer()
+                                .child(super::icon("icons/bell.svg", px(13.), t.colors.primary_fg))
+                                .child(format!("Remind me {} {}", time::day_label(pick, now()).to_lowercase(), time::clock(pick)))
+                                .on_click({
+                                    let targets = targets.clone();
+                                    cx.listener(move |this, _, _, cx| this.set_reminders(&targets, Some(pick), cx))
+                                }),
+                        )
+                        .into_any_element(),
+                );
                 if targets.iter().any(|id| self.board.find_note(*id).is_some_and(|s| s.due.is_some())) {
                     items.push(sep(&t).into_any_element());
                     items.push(
