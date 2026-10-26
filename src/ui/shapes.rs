@@ -502,7 +502,9 @@ impl Folio {
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(t.colors.text)
                         .opacity(alpha)
-                        .child(text.to_string())
+                        // A block as wide as the shape, so the words wrap
+                        // inside it rather than running out of its sides.
+                        .child(div().w_full().child(text.to_string()))
                         .into_any_element(),
                 );
             }
