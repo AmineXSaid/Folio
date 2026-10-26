@@ -903,12 +903,12 @@ impl Folio {
                         .into_any_element(),
                 );
                 // Its size and typeface, as in the bar while writing.
-                let (size, font, slanted) = self
+                let (size, font, slanted, align) = self
                     .sheet()
                     .labels
                     .iter()
                     .find(|l| l.id == id)
-                    .map(|l| (l.size, l.font, l.italic))
+                    .map(|l| (l.size, l.font, l.italic, l.align))
                     .unwrap_or_default();
                 let chip = |id: gpui::ElementId, on: bool| {
                     div()
@@ -951,6 +951,12 @@ impl Folio {
                                 .child("I")
                                 .on_click(cx.listener(move |this, _, _, cx| this.set_label(id, cx, |l| l.italic = !l.italic))),
                         )
+                        .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(t.colors.border))
+                        .children(crate::model::Align::ALL.iter().map(|&a| {
+                            chip(("m-label-align", a as usize).into(), align == a)
+                                .child(gpui::svg().path(a.icon()).size(px(14.)).text_color(if align == a { t.colors.brand_on_tint } else { t.colors.text_muted }))
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_label(id, cx, |l| l.align = a)))
+                        }))
                         .into_any_element(),
                 );
                 items.push(

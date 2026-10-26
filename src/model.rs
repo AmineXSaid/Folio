@@ -852,6 +852,46 @@ pub struct Label {
     /// Slanted throughout. Text written before this was.
     #[serde(default = "slanted")]
     pub italic: bool,
+    #[serde(default)]
+    pub align: Align,
+}
+
+/// Where the lines of text on the sheet sit across its width.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Align {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl Align {
+    pub const ALL: [Align; 3] = [Align::Left, Align::Center, Align::Right];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Align::Left => "Align left",
+            Align::Center => "Centre",
+            Align::Right => "Align right",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Align::Left => "icons/align-left.svg",
+            Align::Center => "icons/align-center.svg",
+            Align::Right => "icons/align-right.svg",
+        }
+    }
+
+    /// How far across the spare width a line moves: 0, a half, all.
+    pub fn share(self) -> f32 {
+        match self {
+            Align::Left => 0.,
+            Align::Center => 0.5,
+            Align::Right => 1.,
+        }
+    }
 }
 
 fn slanted() -> bool {
@@ -867,7 +907,7 @@ pub const LABEL_MAX_W: f32 = 2000.;
 impl Label {
     /// New text at `at`, upright, at the medium size.
     pub fn new(id: Id, at: Vec2, ink: Ink) -> Self {
-        Label { id, at, text: String::new(), ink, font: NoteFont::Sans, size: LabelSize::M, width: None, italic: false }
+        Label { id, at, text: String::new(), ink, font: NoteFont::Sans, size: LabelSize::M, width: None, italic: false, align: Align::Left }
     }
 }
 

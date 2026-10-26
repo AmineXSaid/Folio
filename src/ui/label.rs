@@ -9,7 +9,7 @@ use gpui::{canvas, div, prelude::*, px, Context, MouseButton, Styled, Window};
 
 use super::app::{Folio, Format, Selection};
 use super::*;
-use crate::model::{v2, Camera, Id, Ink, Label, LabelSize, NoteFont, Vec2, LABEL_WRAP};
+use crate::model::{v2, Align, Camera, Id, Ink, Label, LabelSize, NoteFont, Vec2, LABEL_WRAP};
 use crate::theme::Theme;
 
 /// The text area's padding around its text and the margin it keeps on
@@ -29,7 +29,12 @@ fn look<E: Styled>(el: E, l: &Label, z: f32, t: &Theme) -> E {
         .font_family(t.note_font(l.font))
         .text_size(px(l.size.units() * z))
         .line_height(px(l.size.line() * z))
-        .text_color(t.ink(l.ink));
+        .text_color(t.ink(l.ink))
+        .text_align(match l.align {
+            Align::Left => gpui::TextAlign::Left,
+            Align::Center => gpui::TextAlign::Center,
+            Align::Right => gpui::TextAlign::Right,
+        });
     if l.italic {
         el.italic()
     } else {
@@ -187,6 +192,12 @@ impl Folio {
             .child("I")
             .tooltip(tip("Slanted throughout".into()))
             .on_click(cx.listener(move |this, _, _, cx| this.set_label(id, cx, |l| l.italic = !l.italic)));
+        let aligns = Align::ALL.iter().map(|&a| {
+            chosen(button(("l-align", a as usize).into()).px(px(6.)), l.align == a)
+                .child(gpui::svg().path(a.icon()).size(px(14.)).text_color(t.colors.text_muted))
+                .tooltip(tip(a.label().to_string()))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_label(id, cx, |l| l.align = a)))
+        });
         let sizes = LabelSize::ALL.iter().map(|&s| {
             chosen(button(("l-size", s as usize).into()).px(px(5.)), l.size == s)
                 .text_size(t.text.caption)
@@ -264,6 +275,8 @@ impl Folio {
         let look_row = row()
             .children(fonts)
             .child(slanted)
+            .child(divider())
+            .children(aligns)
             .child(divider())
             .children(sizes)
             .child(div().flex_1())

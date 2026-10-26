@@ -692,6 +692,8 @@ struct Set {
     weight: u16,
     italic: bool,
     color: Rgba,
+    /// Where short lines sit in the width: 0 left, 0.5 centred, 1 right.
+    align: f32,
 }
 
 impl Set {
@@ -804,7 +806,13 @@ fn draw_lines(svg: &mut Svg, lines: &[Vec<Piece>], x: f32, y: f32, set: &Set, lo
 
 /// A paragraph of Markdown set in `width` at (`x`, `y`). Returns its height.
 fn paragraph(svg: &mut Svg, md: &str, x: f32, y: f32, width: f32, set: &Set, look: &Look) -> f32 {
-    let lines = wrap(&runs(md, look), set, width.max(1.));
+    let mut lines = wrap(&runs(md, look), set, width.max(1.));
+    if set.align > 0. {
+        for line in &mut lines {
+            let shift = (width - line.last().map_or(0., |p| p.x + p.w)).max(0.) * set.align;
+            line.iter_mut().for_each(|p| p.x += shift);
+        }
+    }
     draw_lines(svg, &lines, x, y, set, look)
 }
 
@@ -936,7 +944,7 @@ fn lay_note(s: &Sticker, t: &Theme, look: &Look, media: &Path, blur: bool) -> La
     let lh = if index { 24. } else { 20. } * k;
     let w = s.rect.w;
     let fam = family(s.font);
-    let body = Set { family: fam, size: 13. * k, lh, weight: 400, italic: false, color: look.body };
+    let body = Set { family: fam, size: 13. * k, lh, weight: 400, italic: false, color: look.body, align: 0. };
     let (rt, _) = radii(style);
     let mut y = 0.;
 
@@ -957,7 +965,7 @@ fn lay_note(s: &Sticker, t: &Theme, look: &Look, media: &Path, blur: bool) -> La
         NoteStyle::Cheat => (14., 14., 10., 14., 8.),
         NoteStyle::Index => (40., 14., 0., 10., 0.),
     };
-    let title_set = Set { family: fam, size: if style == NoteStyle::Cheat { 14. } else { 15. } * k, lh, weight: 600, italic: false, color: look.text };
+    let title_set = Set { family: fam, size: if style == NoteStyle::Cheat { 14. } else { 15. } * k, lh, weight: 600, italic: false, color: look.text, align: 0. };
     let width = w - left - right;
     match style {
         NoteStyle::Cheat => {
@@ -1000,7 +1008,7 @@ fn lay_note(s: &Sticker, t: &Theme, look: &Look, media: &Path, blur: bool) -> La
             Some(name) => svg.image(&media.join(name).to_string_lossy(), left, y + (row - 14. * k) / 2., 14. * k, 14. * k, Some(rrect(left, y + (row - 14. * k) / 2., 14. * k, 14. * k, 3., 3.))),
             None => svg.icon("globe", left, y + (row - 12. * k) / 2., 12. * k, look.subtle),
         }
-        let site = Set { family: fam, size: 11. * k, lh: row, weight: 400, italic: false, color: look.subtle };
+        let site = Set { family: fam, size: 11. * k, lh: row, weight: 400, italic: false, color: look.subtle, align: 0. };
         paragraph(&mut svg, &l.site, left + 20. * k, y, width - 20. * k, &site, look);
         y += row + 4. * k;
         let title = if l.title.is_empty() { l.url.clone() } else { l.title.clone() };
@@ -1059,12 +1067,12 @@ fn lay_note(s: &Sticker, t: &Theme, look: &Look, media: &Path, blur: bool) -> La
                 if let Some(label) = &label {
                     let row = if index { lh } else { 14. * k };
                     inside.icon("lightbulb", left + px, y + h + (row - 11. * k) / 2., 11. * k, look.body);
-                    let set = Set { family: fam, size: 10. * k, lh: row, weight: 700, italic: false, color: look.body };
+                    let set = Set { family: fam, size: 10. * k, lh: row, weight: 700, italic: false, color: look.body, align: 0. };
                     paragraph(&mut inside, &label.to_uppercase(), left + px + 16. * k, y + h, width - 2. * px - 16. * k, &set, look);
                     h += row + if index { 0. } else { 2. * k };
                 }
                 if !text.is_empty() {
-                    let set = Set { family: fam, size: 12.5 * k, lh: if index { lh } else { 18. * k }, weight: 400, italic: false, color: look.text };
+                    let set = Set { family: fam, size: 12.5 * k, lh: if index { lh } else { 18. * k }, weight: 400, italic: false, color: look.text, align: 0. };
                     h += prose(&mut inside, &text, left + px, y + h, width - 2. * px, &set, look);
                 }
                 h += py;
@@ -1079,7 +1087,7 @@ fn lay_note(s: &Sticker, t: &Theme, look: &Look, media: &Path, blur: bool) -> La
                 let row_lh = if index { lh } else { 16. * k };
                 let pad = if index { 0. } else { 5. * k };
                 // The header: small capitals over a rule.
-                let hs = Set { family: fam, size: 10. * k, lh: row_lh, weight: 700, italic: false, color: look.body };
+                let hs = Set { family: fam, size: 10. * k, lh: row_lh, weight: 700, italic: false, color: look.body, align: 0. };
                 let mut hh: f32 = 0.;
                 for (c, cell) in head.iter().enumerate() {
                     hh = hh.max(paragraph(&mut svg, &cell.to_uppercase(), left + c as f32 * (cw + cg), y, cw, &hs, look));
@@ -1307,7 +1315,7 @@ fn draw(sheet: &Category, t: &Theme, media: &Path, blur: bool) -> String {
     // Text on the sheet, set so its size is known.
     let mut labels = Svg::new(blur);
     for l in &sheet.labels {
-        let set = Set { family: family(l.font), size: l.size.units(), lh: l.size.line(), weight: 400, italic: l.italic, color: rgba(t.ink(l.ink)) };
+        let set = Set { family: family(l.font), size: l.size.units(), lh: l.size.line(), weight: 400, italic: l.italic, color: rgba(t.ink(l.ink)), align: l.align.share() };
         let width = l.width.unwrap_or(LABEL_WRAP);
         // As wide as its longest line, when it has no width of its own.
         let natural = l
@@ -1320,8 +1328,9 @@ fn draw(sheet: &Category, t: &Theme, media: &Path, blur: bool) -> String {
             })
             .fold(0., f32::max)
             .min(width);
-        let h = prose(&mut labels, &l.text, l.at.x, l.at.y, width, &set, &look);
-        stuff.push(Rect { x: l.at.x, y: l.at.y, w: if l.width.is_some() { width } else { natural }, h: h.max(set.lh) });
+        let w = if l.width.is_some() { width } else { natural };
+        let h = prose(&mut labels, &l.text, l.at.x, l.at.y, w, &set, &look);
+        stuff.push(Rect { x: l.at.x, y: l.at.y, w, h: h.max(set.lh) });
     }
 
     // The sheet's name, its emoji or monogram, and a line under it.
@@ -1960,7 +1969,7 @@ mod tests {
     #[test]
     fn lines_wrap_within_their_width() {
         let look = Look::of(&Theme::light());
-        let set = Set { family: SANS, size: 13., lh: 20., weight: 400, italic: false, color: look.text };
+        let set = Set { family: SANS, size: 13., lh: 20., weight: 400, italic: false, color: look.text, align: 0. };
         let lines = wrap(&runs("the quick brown fox jumps over the lazy dog again and again", &look), &set, 120.);
         assert!(lines.len() > 2);
         for line in &lines {

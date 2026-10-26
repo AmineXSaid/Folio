@@ -124,7 +124,7 @@ impl Piece for Label {
         self.id
     }
     fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
-        let Label { id, at, text, ink, font, size, width, italic } = l;
+        let Label { id, at, text, ink, font, size, width, italic, align } = l;
         Label {
             id: *id,
             at: field(base.map(|b| &b.at), at, &r.at, false),
@@ -134,6 +134,7 @@ impl Piece for Label {
             size: field(base.map(|b| &b.size), size, &r.size, false),
             width: field(base.map(|b| &b.width), width, &r.width, false),
             italic: field(base.map(|b| &b.italic), italic, &r.italic, false),
+            align: field(base.map(|b| &b.align), align, &r.align, false),
         }
     }
 }
