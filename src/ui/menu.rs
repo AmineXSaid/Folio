@@ -1,5 +1,5 @@
 //! Right-click menus: for a note, the empty sheet, a sheet's card, an
-//! area, a label, a shape. Sub-pages (Move to, Remind me, Icon, Colour) open in
+//! area, a label, a shape, a link. Sub-pages (Move to, Remind me, Icon, Colour) open in
 //! place with a way back.
 
 use gpui::{anchored, canvas, deferred, div, prelude::*, px, Context, MouseButton, SharedString, Stateful, Div, Window};
@@ -963,6 +963,98 @@ impl Folio {
                         .into_any_element(),
                 );
             }
+            (MenuKind::Link(id), _) => {
+                let Some(link) = self.sheet().links.iter().find(|l| l.id == id).cloned() else { return None };
+                let set = move |f: fn(&mut Link, LinkStyle, Ends, Ink), style: LinkStyle, ends: Ends, ink: Ink| {
+                    move |this: &mut Folio, _: &gpui::ClickEvent, _: &mut Window, cx: &mut Context<Folio>| {
+                        this.change(cx, |b| {
+                            if let Some(l) = b.sheet_mut().links.iter_mut().find(|l| l.id == id) {
+                                f(l, style, ends, ink);
+                            }
+                        });
+                    }
+                };
+                let chip = |id: gpui::ElementId, on: bool| {
+                    div()
+                        .id(id)
+                        .h(px(24.))
+                        .px(px(7.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(t.radius.small)
+                        .text_size(t.text.caption)
+                        .cursor_pointer()
+                        .when(on, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint))
+                        .when(!on, |d| d.text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
+                };
+                items.push(caption("Line", &t).into_any_element());
+                items.push(
+                    div()
+                        .flex()
+                        .gap(px(2.))
+                        .px(t.space.sm)
+                        .py(px(2.))
+                        .children(LinkStyle::ALL.iter().map(|&st| {
+                            chip(("m-link-style", st as usize).into(), link.style == st)
+                                .child(st.label())
+                                .on_click(cx.listener(set(|l, st, _, _| l.style = st, st, link.ends, link.ink)))
+                        }))
+                        .into_any_element(),
+                );
+                items.push(
+                    div()
+                        .flex()
+                        .gap(px(2.))
+                        .px(t.space.sm)
+                        .py(px(2.))
+                        .children(Ends::ALL.iter().map(|&en| {
+                            chip(("m-link-ends", en as usize).into(), link.ends == en)
+                                .child(en.label())
+                                .on_click(cx.listener(set(|l, _, en, _| l.ends = en, link.style, en, link.ink)))
+                        }))
+                        .into_any_element(),
+                );
+                items.push(caption("Colour", &t).into_any_element());
+                items.push(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(5.))
+                        .px(t.space.sm)
+                        .py(px(4.))
+                        .max_w(px(260.))
+                        .children(Ink::ALL.iter().map(|&ink| {
+                            div()
+                                .id(("m-link-ink", ink as usize))
+                                .size(px(20.))
+                                .rounded(t.radius.full)
+                                .bg(t.ink(ink))
+                                .border_1()
+                                .border_color(if link.ink == ink { t.colors.brand } else { t.colors.border })
+                                .when(link.ink == ink, |d| d.border_2())
+                                .cursor_pointer()
+                                .on_click(cx.listener(set(|l, _, _, ink| l.ink = ink, link.style, link.ends, ink)))
+                        }))
+                        .into_any_element(),
+                );
+                items.push(sep(&t).into_any_element());
+                items.push(
+                    row("m-link-swap", "icons/arrow-right-left.svg", "Reverse", None, &t)
+                        .on_click(cx.listener(set(|l, _, _, _| std::mem::swap(&mut l.from, &mut l.to), link.style, link.ends, link.ink)))
+                        .into_any_element(),
+                );
+                items.push(
+                    row("m-link-del", "icons/trash.svg", "Delete", Some("Del".into()), &t)
+                        .text_color(t.colors.danger)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.change(cx, |b| b.sheet_mut().links.retain(|l| l.id != id));
+                            this.selection.retain(|s| *s != super::app::Selection::Link(id));
+                        }))
+                        .into_any_element(),
+                );
+            }
             (MenuKind::Shape(id), _) => {
                 let Some(shape) = self.sheet().shapes.iter().find(|s| s.id == id).cloned() else { return None };
                 let ids = self.shape_targets(id);
@@ -1105,6 +1197,16 @@ impl Folio {
                         .into_any_element(),
                 );
                 items.push(sep(&t).into_any_element());
+                let starred = self.board.settings.shape_favourites.contains(&shape.geom);
+                let geom = shape.geom;
+                items.push(
+                    row("m-shape-star", "icons/star.svg", if starred { "Unstar in the shapes panel" } else { "Star in the shapes panel" }, None, &t)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.toggle_favourite(geom, cx)
+                        }))
+                        .into_any_element(),
+                );
                 items.push(
                     row("m-shape-dup", "icons/copy.svg", "Duplicate", Some(shortcut("D")), &t)
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1128,7 +1230,11 @@ impl Folio {
                         .text_color(t.colors.danger)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.menu = None;
-                            this.change(cx, |b| b.sheet_mut().shapes.retain(|s| !ids.contains(&s.id)));
+                            this.change(cx, |b| {
+                                for id in &ids {
+                                    b.sheet_mut().remove_shape(*id);
+                                }
+                            });
                             this.selection.retain(|s| !matches!(s, super::app::Selection::Shape(_)));
                         }))
                         .into_any_element(),

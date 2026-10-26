@@ -888,7 +888,7 @@ mod tests {
         there.categories[0].stickers.push(note(b, "Call mom", 41));
         let l = there.fresh_id();
         let first = there.categories[0].stickers[0].id;
-        there.categories[0].links.push(Link { id: l, from: first, to: b, ink: Ink::Graphite });
+        there.categories[0].links.push(Link::new(l, first, b, Ink::Graphite));
 
         let (m, rep) = merge(Some(&base), &here, &there);
         assert_eq!(titles(&m, 0), ["Plan", "Draft", "Buy milk", "Call mom"]);

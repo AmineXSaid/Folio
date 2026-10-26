@@ -233,6 +233,7 @@ pub enum Selection {
     Label(Id),
     Frame(Id),
     Shape(Id),
+    Link(Id),
 }
 
 /// The opening, playing (every launch).
@@ -319,6 +320,7 @@ pub enum MenuKind {
     Frame(Id),
     Label(Id),
     Shape(Id),
+    Link(Id),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -346,6 +348,7 @@ pub struct Clip {
     notes: Vec<Sticker>,
     links: Vec<Link>,
     labels: Vec<Label>,
+    shapes: Vec<Shape>,
     /// Cut, not copied: the first paste takes the notes back out of the
     /// Trash, where cutting put them.
     cut: bool,
@@ -438,6 +441,8 @@ pub struct Folio {
     /// The panel's search, and which of its families are open.
     pub shape_search: Entity<InputState>,
     pub shape_open: std::collections::HashSet<&'static str>,
+    /// The list of families to show is open at the panel's foot.
+    pub shape_families: bool,
     /// The shape under the pointer, outlined faintly.
     pub hover_shape: Option<Id>,
     /// Shapes arriving and turning, drawn in between.
@@ -701,7 +706,8 @@ impl Folio {
             hover_shape_grip: None,
             shapes_panel: false,
             shape_search,
-            shape_open: ["general", "flow", "arrows", "network"].into_iter().collect(),
+            shape_open: ["favourites", "general", "flow", "arrows", "network"].into_iter().collect(),
+            shape_families: false,
             hover_shape: None,
             shape_motion: Default::default(),
             space: false,
@@ -1784,7 +1790,8 @@ impl Folio {
                     }
                     Selection::Label(id) => b.sheet_mut().labels.retain(|l| l.id != id),
                     Selection::Frame(id) => b.sheet_mut().frames.retain(|f| f.id != id),
-                    Selection::Shape(id) => b.sheet_mut().shapes.retain(|s| s.id != id),
+                    Selection::Shape(id) => b.sheet_mut().remove_shape(id),
+                    Selection::Link(id) => b.sheet_mut().links.retain(|l| l.id != id),
                 }
             }
         });
@@ -1929,41 +1936,49 @@ impl Folio {
                 return;
             }
         }
-        if let Some((notes, texts)) = self.copy_notes(false, cx) {
-            self.notify(format!("Copied {} · {} pastes", things(notes, texts), shortcut("V")), cx);
+        if let Some((notes, texts, shapes)) = self.copy_notes(false, cx) {
+            self.notify(format!("Copied {} · {} pastes", things(notes, texts, shapes), shortcut("V")), cx);
         }
     }
 
     /// Ctrl+X: the selected notes and text go on the clipboard and off the
     /// sheet (the notes into the Trash, until they're pasted).
     pub fn cut_selection(&mut self, cx: &mut Context<Self>) {
-        let Some((notes, texts)) = self.copy_notes(true, cx) else { return };
+        let Some((notes, texts, shapes)) = self.copy_notes(true, cx) else { return };
         self.delete_selection(cx);
-        self.notify(format!("Cut {} · {} pastes", things(notes, texts), shortcut("V")), cx);
+        self.notify(format!("Cut {} · {} pastes", things(notes, texts, shapes), shortcut("V")), cx);
     }
 
     /// Puts the selected notes and text on the clipboard: their text for
     /// other apps, the notes themselves for Folio. How many notes and
     /// texts, if any.
-    pub fn copy_notes(&mut self, cut: bool, cx: &mut Context<Self>) -> Option<(usize, usize)> {
+    pub fn copy_notes(&mut self, cut: bool, cx: &mut Context<Self>) -> Option<(usize, usize, usize)> {
         self.menu = None;
         self.finish_edit(cx);
         let sheet = self.sheet();
         let notes: Vec<Sticker> = sheet.stickers.iter().filter(|s| self.is_selected(Selection::Sticker(s.id))).cloned().collect();
         let labels: Vec<Label> = sheet.labels.iter().filter(|l| self.is_selected(Selection::Label(l.id))).cloned().collect();
-        if notes.is_empty() && labels.is_empty() {
+        let shapes: Vec<Shape> = sheet.shapes.iter().filter(|s| self.is_selected(Selection::Shape(s.id))).cloned().collect();
+        if notes.is_empty() && labels.is_empty() && shapes.is_empty() {
             return None;
         }
-        let ids: std::collections::HashSet<Id> = notes.iter().map(|s| s.id).collect();
+        let ids: std::collections::HashSet<Id> = notes.iter().map(|s| s.id).chain(shapes.iter().map(|s| s.id)).collect();
         let links = sheet.links.iter().filter(|l| ids.contains(&l.from) && ids.contains(&l.to)).cloned().collect();
-        let mut text = notes.iter().map(|s| s.text()).chain(labels.iter().map(|l| l.text.clone())).filter(|t| !t.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
+        let mut text = notes
+            .iter()
+            .map(|s| s.text())
+            .chain(labels.iter().map(|l| l.text.clone()))
+            .chain(shapes.iter().map(|s| s.text.clone()))
+            .filter(|t| !t.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         if text.is_empty() {
-            // Pictures alone: still something to paste, and to know as ours.
-            text = things(notes.len(), labels.len());
+            // Pictures or shapes alone: still something to paste, and to know as ours.
+            text = things(notes.len(), labels.len(), shapes.len());
         }
         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-        let n = (notes.len(), labels.len());
-        self.clip = Some(Clip { text, notes, links, labels, cut });
+        let n = (notes.len(), labels.len(), shapes.len());
+        self.clip = Some(Clip { text, notes, links, labels, shapes, cut });
         Some(n)
     }
 
@@ -1977,10 +1992,15 @@ impl Folio {
         let inside = self.cursor.x > 0. && self.cursor.y > 0. && self.cursor.x < w && self.cursor.y < h;
         let cam = self.sheet().camera;
         let target = cam.to_world(if inside { self.cursor } else { v2(w / 2., h / 2.) });
-        let Some(bounds) = clip.notes.iter().map(|s| s.rect).chain(clip.labels.iter().map(label_rect)).reduce(|a, b| a.union(&b)) else { return };
+        let Some(bounds) =
+            clip.notes.iter().map(|s| s.rect).chain(clip.labels.iter().map(label_rect)).chain(clip.shapes.iter().map(Shape::bounds)).reduce(|a, b| a.union(&b))
+        else {
+            return;
+        };
         let d = target.sub(bounds.center());
         let t = now();
         let mut picked = Vec::new();
+        let mut arrived = Vec::new();
         self.change(cx, |b| {
             if cut {
                 let gone: std::collections::HashSet<Id> = clip.notes.iter().map(|s| s.id).collect();
@@ -2004,10 +2024,21 @@ impl Folio {
                 b.sheet_mut().stickers.push(n);
                 picked.push(Selection::Sticker(id));
             }
+            for s in &clip.shapes {
+                let id = b.fresh_id();
+                ids.insert(s.id, id);
+                let mut n = s.clone();
+                n.id = id;
+                n.rect.x += d.x;
+                n.rect.y += d.y;
+                b.sheet_mut().shapes.push(n);
+                picked.push(Selection::Shape(id));
+                arrived.push(id);
+            }
             for l in &clip.links {
                 if let (Some(&from), Some(&to)) = (ids.get(&l.from), ids.get(&l.to)) {
                     let id = b.fresh_id();
-                    b.sheet_mut().links.push(Link { id, from, to, ink: l.ink });
+                    b.sheet_mut().links.push(Link { id, from, to, ..l.clone() });
                 }
             }
             for l in &clip.labels {
@@ -2019,7 +2050,10 @@ impl Folio {
             }
         });
         self.selection = picked;
-        self.notify(format!("Pasted {}", things(clip.notes.len(), clip.labels.len())), cx);
+        for id in arrived {
+            self.shape_motion.arrive(id);
+        }
+        self.notify(format!("Pasted {}", things(clip.notes.len(), clip.labels.len(), clip.shapes.len())), cx);
         cx.notify();
     }
 
@@ -2852,12 +2886,14 @@ fn is_text_file(path: &std::path::Path) -> bool {
 }
 
 /// What was copied, in words: "the note", "3 notes", "the text", "4 things".
-fn things(notes: usize, texts: usize) -> String {
-    match (notes, texts) {
-        (1, 0) => "the note".into(),
-        (n, 0) => format!("{n} notes"),
-        (0, 1) => "the text".into(),
-        (0, n) => format!("{n} texts"),
-        (a, b) => format!("{} things", a + b),
+fn things(notes: usize, texts: usize, shapes: usize) -> String {
+    match (notes, texts, shapes) {
+        (1, 0, 0) => "the note".into(),
+        (n, 0, 0) => format!("{n} notes"),
+        (0, 1, 0) => "the text".into(),
+        (0, n, 0) => format!("{n} texts"),
+        (0, 0, 1) => "the shape".into(),
+        (0, 0, n) => format!("{n} shapes"),
+        (a, b, c) => format!("{} things", a + b + c),
     }
 }

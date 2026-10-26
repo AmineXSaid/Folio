@@ -44,9 +44,10 @@ enum Cmd {
     Rename,
     SavePng,
     SavePdf,
+    Shapes,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 25] = [
+const CMDS: [(Cmd, &str, &str, &str); 26] = [
     (Cmd::NewNote, "New note", "Ctrl N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl Shift N", "icons/plus.svg"),
     (Cmd::QuickNote, "Quick note to Inbox or any sheet", "Ctrl Alt N", "icons/inbox.svg"),
@@ -67,6 +68,7 @@ const CMDS: [(Cmd, &str, &str, &str); 25] = [
     (Cmd::Theme, "Switch light / dark", "Ctrl Shift L", "icons/moon.svg"),
     (Cmd::Fit, "Zoom to fit", "Ctrl 0", "icons/scan.svg"),
     (Cmd::Tidy, "Tidy up the sheet", "", "icons/wand-sparkles.svg"),
+    (Cmd::Shapes, "Show / hide the shapes panel", "Ctrl Shift S", "icons/shapes.svg"),
     (Cmd::Map, "Show / hide the map", "", "icons/map.svg"),
     (Cmd::Profile, "Change your name and avatar", "", "icons/user-round-pen.svg"),
     (Cmd::Intro, "Play the opening again", "", "icons/play.svg"),
@@ -115,7 +117,7 @@ impl Scope {
 
     fn of(group: &str) -> Scope {
         match group {
-            "Commands" => Scope::Commands,
+            "Commands" | "Shapes" => Scope::Commands,
             "Sheets" => Scope::Sheets,
             "Notes" => Scope::Notes,
             _ => Scope::All,
@@ -151,6 +153,8 @@ enum Target {
     NoteOf(String),
     /// Nothing matched: a sheet named by it.
     SheetOf(String),
+    /// A shape to add to the open sheet.
+    Shape(crate::model::Geom),
 }
 
 #[derive(Clone)]
@@ -369,7 +373,7 @@ impl Folio {
     fn rows_all(&self) -> Vec<Row> {
         let mut out: Vec<Row> = CMDS
             .iter()
-            .filter(|(c, ..)| !matches!(c, Cmd::Rename | Cmd::SavePng | Cmd::SavePdf) || self.screen == Screen::Sheet)
+            .filter(|(c, ..)| !matches!(c, Cmd::Rename | Cmd::SavePng | Cmd::SavePdf | Cmd::Shapes) || self.screen == Screen::Sheet)
             .map(|&(c, label, key, path)| Row {
                 label: label.into(),
                 group: "Commands",
@@ -463,6 +467,21 @@ impl Folio {
             self.rows_all().into_iter().filter_map(|r| fuzzy(q, &r.label).map(|(s, p)| (s, r, p))).collect();
         if !q.is_empty() || scope == Scope::Notes {
             scored.extend(self.note_rows(q));
+        }
+        // Shapes to add, as the shapes panel finds them, on a sheet.
+        if !q.is_empty() && self.screen == Screen::Sheet && matches!(scope, Scope::All | Scope::Commands) {
+            for (i, (e, lib)) in crate::shape::search(q).into_iter().take(12).enumerate() {
+                let row = Row {
+                    label: format!("Add shape: {}", e.name).into(),
+                    group: "Shapes",
+                    icon: "icons/shapes.svg",
+                    hint: None,
+                    detail: Some(lib.into()),
+                    emoji: None,
+                    target: Target::Shape(e.geom),
+                };
+                scored.push((1000 - i as i32, row, Vec::new()));
+            }
         }
         let mut counts = [0; 4];
         for (_, r, _) in &scored {
@@ -628,7 +647,9 @@ impl Folio {
                 let ix = self.board.active;
                 self.open_sheet(ix, window, cx);
             }
+            Target::Shape(g) => self.add_shape(g, None, cx),
             Target::Cmd(c) => match c {
+                Cmd::Shapes => self.toggle_shapes_panel(window, cx),
                 Cmd::NewNote => self.new_note(window, cx),
                 Cmd::NewSheet => self.new_sheet_dialog(window, cx),
                 Cmd::QuickNote => {

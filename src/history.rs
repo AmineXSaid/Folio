@@ -776,7 +776,7 @@ mod tests {
     fn every_kind_of_thing_on_a_sheet() {
         let mut before = board(3);
         let c = before.sheet_mut();
-        c.links.push(Link { id: 50, from: 100, to: 101, ink: Ink::Forest });
+        c.links.push(Link::new(50, 100, 101, Ink::Forest));
         c.labels.push(crate::model::Label::new(51, crate::model::v2(0., 0.), Ink::Graphite));
         let mut after = before.clone();
         let c = after.sheet_mut();

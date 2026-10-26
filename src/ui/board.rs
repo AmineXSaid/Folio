@@ -44,6 +44,16 @@ const TRAY_TOP: f32 = 12.;
 const TRAY_HEAD: f32 = 44.;
 const TRAY_ROW: f32 = 44.;
 
+/// A link ready to paint: its run on screen, colour, whether it's dashed,
+/// its arrowheads and whether it's picked.
+struct LinkPaint {
+    run: Vec<gpui::Point<Pixels>>,
+    color: Hsla,
+    dashed: bool,
+    heads: Vec<[gpui::Point<Pixels>; 3]>,
+    selected: bool,
+}
+
 /// A stroke ready to paint: screen points, colour, width.
 struct InkPath {
     points: Vec<gpui::Point<Pixels>>,
@@ -91,19 +101,40 @@ impl Folio {
             }
             paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color, width: s.width * cam.zoom });
         }
-        let mut curves: Vec<([gpui::Point<Pixels>; 4], Hsla)> = Vec::new();
+        // Links: their runs on screen, colour, dashed or not, arrowheads,
+        // and a dot where a plain one ends.
+        let mut curves: Vec<LinkPaint> = Vec::new();
+        let head = 12. * cam.zoom.max(0.6);
+        let mut add_link = |run: Vec<Vec2>, color: Hsla, style: LinkStyle, ends: Ends, selected: bool| {
+            let n = run.len();
+            let mut heads = Vec::new();
+            if n >= 2 && ends != Ends::None {
+                heads.push(arrow_head(run[n - 1], run[n - 2], head / cam.zoom).map(screen));
+                if ends == Ends::Both {
+                    heads.push(arrow_head(run[0], run[1], head / cam.zoom).map(screen));
+                }
+            }
+            curves.push(LinkPaint {
+                run: run.into_iter().map(screen).collect(),
+                color,
+                dashed: style == LinkStyle::Curve && ends == Ends::None,
+                heads,
+                selected,
+            });
+        };
         for l in &sheet.links {
-            if let (Some(a), Some(b)) = (sheet.sticker(l.from), sheet.sticker(l.to)) {
-                let (ra, rb) = (self.note_rect(a), self.note_rect(b));
+            if let (Some(ra), Some(rb)) = (self.end_rect(l.from), self.end_rect(l.to)) {
                 if ra.union(&rb).intersects(&view) {
-                    curves.push((link_curve(&ra, &rb).map(screen), t.ink(l.ink).opacity(0.75)));
+                    let selected = self.is_selected(Selection::Link(l.id));
+                    add_link(link_path(&ra, &rb, l.style), t.ink(l.ink).opacity(0.85), l.style, l.ends, selected);
                 }
             }
         }
         if let Gesture::Connect { from, to } = &self.gesture {
-            if let Some(a) = sheet.sticker(*from) {
+            if let Some(a) = self.end_rect(*from) {
                 let target = Rect { x: to.x - 1., y: to.y - 1., w: 2., h: 2. };
-                curves.push((link_curve(&self.note_rect(a), &target).map(screen), t.ink(self.ink)));
+                let (style, ends) = self.link_look(*from, None);
+                add_link(link_path(&a, &target, style), t.ink(self.ink), style, ends, false);
             }
         }
         // Rubber bands: the selection box or the area being drawn.
@@ -132,18 +163,39 @@ impl Folio {
             move |bounds, _, window, _| {
                 paint_pattern(bounds, cam, grid, pattern, dot, line, window);
                 let o = bounds.origin;
-                for (c, color) in &curves {
-                    let mut b = PathBuilder::stroke(px(link_width)).dash_array(&[px(dash), px(dash)]);
-                    b.move_to(c[0] + o);
-                    b.cubic_bezier_to(c[3] + o, c[1] + o, c[2] + o);
-                    if let Ok(p) = b.build() {
-                        window.paint_path(p, *color);
+                for l in &curves {
+                    let run: Vec<_> = l.run.iter().map(|p| *p + o).collect();
+                    if l.selected {
+                        // A soft band under a picked link.
+                        let mut b = PathBuilder::stroke(px(link_width + 6.));
+                        b.add_polygon(&run, false);
+                        if let Ok(p) = b.build() {
+                            window.paint_path(p, guide_color.opacity(0.18));
+                        }
                     }
-                    let r = px(3. * cam.zoom.max(0.7));
-                    let end = c[3] + o;
-                    window.paint_quad(
-                        gpui::fill(gpui::Bounds::new(point(end.x - r, end.y - r), gpui::size(r * 2., r * 2.)), *color).corner_radii(r),
-                    );
+                    let mut b = PathBuilder::stroke(px(link_width));
+                    if l.dashed {
+                        b = b.dash_array(&[px(dash), px(dash)]);
+                    }
+                    b.add_polygon(&run, false);
+                    if let Ok(p) = b.build() {
+                        window.paint_path(p, l.color);
+                    }
+                    for h in &l.heads {
+                        let mut b = PathBuilder::fill();
+                        b.add_polygon(&h.iter().map(|p| *p + o).collect::<Vec<_>>(), true);
+                        if let Ok(p) = b.build() {
+                            window.paint_path(p, l.color);
+                        }
+                    }
+                    if l.heads.is_empty() {
+                        if let Some(end) = run.last() {
+                            let r = px(3. * cam.zoom.max(0.7));
+                            window.paint_quad(
+                                gpui::fill(gpui::Bounds::new(point(end.x - r, end.y - r), gpui::size(r * 2., r * 2.)), l.color).corner_radii(r),
+                            );
+                        }
+                    }
                 }
                 for ink in &paths {
                     paint_stroke(ink, o, window);
@@ -316,6 +368,7 @@ impl Folio {
                 Some(Selection::Label(id)) => this.edit_label(id, false, window, cx),
                 Some(Selection::Frame(id)) => this.rename_frame(id, window, cx),
                 Some(Selection::Shape(id)) => this.edit_shape_text(id, window, cx),
+                Some(Selection::Link(_)) => {}
                 None => {}
             }))
             .on_action(cx.listener(|this, _: &Paste, _, cx| this.paste(false, cx)))
@@ -1077,6 +1130,9 @@ impl Folio {
                 self.select(Selection::Shape(id));
             }
             MenuKind::Shape(id)
+        } else if let Some(id) = self.link_at(world) {
+            self.select(Selection::Link(id));
+            MenuKind::Link(id)
         } else if let Some(id) = self.frame_bar_at(world).or_else(|| self.sheet().frame_at(world)) {
             self.select(Selection::Frame(id));
             MenuKind::Frame(id)
@@ -1123,12 +1179,19 @@ impl Folio {
                         add(*sel, v2(s.rect.x, s.rect.y), &mut out);
                     }
                 }
+                // A link follows its ends.
+                Selection::Link(_) => {}
                 Selection::Frame(id) => {
                     if let Some(f) = c.frames.iter().find(|f| f.id == id) {
                         add(*sel, v2(f.rect.x, f.rect.y), &mut out);
                         for m in c.frame_members(id) {
                             if let Some(s) = c.sticker(m).filter(|s| !s.locked) {
                                 add(Selection::Sticker(m), v2(s.rect.x, s.rect.y), &mut out);
+                            }
+                        }
+                        for m in c.frame_shapes(id) {
+                            if let Some(s) = c.shapes.iter().find(|s| s.id == m) {
+                                add(Selection::Shape(m), v2(s.rect.x, s.rect.y), &mut out);
                             }
                         }
                     }
@@ -1256,6 +1319,15 @@ impl Folio {
                         shapes.push(s);
                     }
                     self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
+                } else if let Some(id) = self.link_at(world) {
+                    if shift {
+                        self.toggle_selected(Selection::Link(id));
+                    } else {
+                        self.select(Selection::Link(id));
+                    }
+                    self.gesture = Gesture::None;
+                    cx.notify();
+                    return;
                 } else if let Some(id) = self.frame_bar_at(world) {
                     let sel = Selection::Frame(id);
                     if double {
@@ -1299,7 +1371,7 @@ impl Folio {
                 }
                 return;
             }
-            Tool::Connect => match self.note_at(world) {
+            Tool::Connect => match self.note_at(world).or_else(|| self.shape_at(world)) {
                 Some(from) => self.gesture = Gesture::Connect { from, to: world },
                 None => self.gesture = pan,
             },
@@ -1393,6 +1465,7 @@ impl Folio {
                                 s.rect.y = p.y;
                             }
                         }
+                        Selection::Link(_) => {}
                     }
                 }
             }
@@ -1685,10 +1758,11 @@ impl Folio {
                 self.board.sheet_mut().strokes.push(stroke);
             }
             Gesture::Connect { from, to } => {
-                if let Some(to_id) = self.note_at(to).filter(|t| *t != from) {
+                if let Some(to_id) = self.note_at(to).or_else(|| self.shape_at(to)).filter(|t| *t != from) {
                     let id = self.board.fresh_id();
                     let ink = self.ink;
-                    let linked = self.board.sheet_mut().toggle_link(id, from, to_id, ink);
+                    let (style, ends) = self.link_look(from, Some(to_id));
+                    let linked = self.board.sheet_mut().toggle_link_styled(id, from, to_id, ink, style, ends);
                     self.notify(if linked { "Linked" } else { "Link removed" }, cx);
                 }
             }

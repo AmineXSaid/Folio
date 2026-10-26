@@ -115,11 +115,14 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &T
                 div().h(px(2.)).w(relative_w(nw, [0.85, 0.7, 0.5][i % 3])).rounded(px(1.)).bg(ink).opacity(0.4)
             }))
     });
-    let links: Vec<[(f32, f32); 4]> = c
+    let links: Vec<Vec<(f32, f32)>> = c
         .links
         .iter()
-        .filter_map(|l| Some((c.sticker(l.from)?, c.sticker(l.to)?)))
-        .map(|(a, b2)| link_curve(&a.rect, &b2.rect).map(|p| (ox + p.x * k, oy + p.y * k)))
+        .filter_map(|l| {
+            let end = |id: Id| c.sticker(id).map(|s| s.rect).or_else(|| c.shapes.iter().find(|s| s.id == id).map(Shape::bounds));
+            Some(link_path(&end(l.from)?, &end(l.to)?, l.style))
+        })
+        .map(|run| run.into_iter().map(|p| (ox + p.x * k, oy + p.y * k)).collect())
         .collect();
     let link_color = t.colors.text_subtle.opacity(0.7);
     // Shapes: their paper and outline, thin at this size.
@@ -175,10 +178,8 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &T
                 }
                 for l in &links {
                     let o = bounds.origin;
-                    let p = |i: usize| point(o.x + px(l[i].0), o.y + px(l[i].1));
                     let mut b = PathBuilder::stroke(px(1.)).dash_array(&[px(3.), px(3.)]);
-                    b.move_to(p(0));
-                    b.cubic_bezier_to(p(3), p(1), p(2));
+                    b.add_polygon(&l.iter().map(|(x, y)| point(o.x + px(*x), o.y + px(*y))).collect::<Vec<_>>(), false);
                     if let Ok(path) = b.build() {
                         window.paint_path(path, link_color);
                     }

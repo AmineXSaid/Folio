@@ -80,8 +80,8 @@ pub fn board() -> Board {
     sheet.blurb = "Ideas, references & things in progress".into();
     sheet.stickers = vec![refresh, explore, launch, reminder, plan, ideas];
     sheet.links = vec![
-        Link { id: link_a, from: r1, to: r2, ink: Ink::Forest },
-        Link { id: link_b, from: l1, to: l2, ink: Ink::Forest },
+        Link::new(link_a, r1, r2, Ink::Forest),
+        Link::new(link_b, l1, l2, Ink::Forest),
     ];
     sheet.labels = vec![Label {
         text: "remember to leave room for the unexpected".into(),
@@ -130,7 +130,7 @@ pub fn board() -> Board {
     sheet.accent = Accent::Moss;
     sheet.icon = "🌱".into();
     sheet.stickers = vec![a, c, d];
-    sheet.links = vec![Link { id: l, from: ai, to: ci, ink: Ink::Forest }];
+    sheet.links = vec![Link::new(l, ai, ci, Ink::Forest)];
 
     b.add_sheet("Japan trip");
     let a = note(&mut b, (0., 0., 240., 150.), Paper::Blush, "Kyoto", "- [ ] Fushimi Inari at dawn\n- [ ] Philosopher's Path\n- [ ] Nishiki market");
@@ -284,12 +284,25 @@ fn network(b: &mut Board, now: u64) {
             shapes.push(shape(b, Geom::Logo(l), (at.x - w / 2., at.y - h / 2., w, h), text, &plain));
         }
     }
+    // Connectors: they follow the shapes they join.
+    let id_of = |shapes: &[Shape], text: &str| shapes.iter().find(|s| s.text == text).map(|s| s.id);
+    let mut links = Vec::new();
+    for (from, to, style, ends) in [
+        ("Laptop", "Office Wi-Fi", LinkStyle::Straight, Ends::End),
+        ("Phone", "Office Wi-Fi", LinkStyle::Straight, Ends::End),
+        ("NAS", "Backups", LinkStyle::Elbow, Ends::Both),
+    ] {
+        if let (Some(a), Some(z)) = (id_of(&shapes, from), id_of(&shapes, to)) {
+            links.push(Link { style, ends, ..Link::new(b.fresh_id(), a, z, Ink::Slate) });
+        }
+    }
     let mut tip = note(b, (860., 40., 230., 150.), Paper::Butter, "Shapes", "Open the shapes panel from the dock (Ctrl+Shift+S). Drag the round handle, or just outside a corner, to turn; [ and ] turn it by 15 degrees.");
     tip.edited = now;
     let sheet = b.sheet_mut();
     sheet.icon = "🛜".into();
     sheet.edited = now;
     sheet.shapes = shapes;
+    sheet.links = links;
     sheet.stickers = vec![tip];
 }
 

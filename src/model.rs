@@ -905,12 +905,124 @@ impl LabelSize {
     }
 }
 
+/// A link between two things on a sheet (notes or shapes): its id, its
+/// ends' ids, its ink, how it runs and where its arrowheads are.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Link {
     pub id: Id,
     pub from: Id,
     pub to: Id,
     pub ink: Ink,
+    /// Links between notes, and those made before styles, are curves.
+    #[serde(default)]
+    pub style: LinkStyle,
+    #[serde(default)]
+    pub ends: Ends,
+}
+
+impl Link {
+    /// A curve with no arrowheads, as links between notes are drawn.
+    pub fn new(id: Id, from: Id, to: Id, ink: Ink) -> Link {
+        Link { id, from, to, ink, style: LinkStyle::Curve, ends: Ends::None }
+    }
+}
+
+/// How a link runs from one end to the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LinkStyle {
+    /// A dashed S-curve, side to side.
+    #[default]
+    Curve,
+    Straight,
+    /// Across, up or down, and across again, at right angles.
+    Elbow,
+}
+
+impl LinkStyle {
+    pub const ALL: [LinkStyle; 3] = [LinkStyle::Curve, LinkStyle::Straight, LinkStyle::Elbow];
+    pub fn label(self) -> &'static str {
+        match self {
+            LinkStyle::Curve => "Curve",
+            LinkStyle::Straight => "Straight",
+            LinkStyle::Elbow => "Elbow",
+        }
+    }
+}
+
+/// Which ends of a link carry an arrowhead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Ends {
+    #[default]
+    None,
+    /// At the end it was drawn to.
+    End,
+    Both,
+}
+
+impl Ends {
+    pub const ALL: [Ends; 3] = [Ends::None, Ends::End, Ends::Both];
+    pub fn label(self) -> &'static str {
+        match self {
+            Ends::None => "No arrows",
+            Ends::End => "Arrow",
+            Ends::Both => "Both ways",
+        }
+    }
+}
+
+/// The path a link of `style` takes from box `a` to box `b`: leaving and
+/// arriving at their edges, as a run of points.
+pub fn link_path(a: &Rect, b: &Rect, style: LinkStyle) -> Vec<Vec2> {
+    match style {
+        LinkStyle::Curve => {
+            let c = link_curve(a, b);
+            (0..=24)
+                .map(|i| {
+                    let t = i as f32 / 24.;
+                    let u = 1. - t;
+                    let (k0, k1, k2, k3) = (u * u * u, 3. * u * u * t, 3. * u * t * t, t * t * t);
+                    v2(k0 * c[0].x + k1 * c[1].x + k2 * c[2].x + k3 * c[3].x, k0 * c[0].y + k1 * c[1].y + k2 * c[2].y + k3 * c[3].y)
+                })
+                .collect()
+        }
+        LinkStyle::Straight => {
+            let (ca, cb) = (a.center(), b.center());
+            vec![edge_toward(a, cb), edge_toward(b, ca)]
+        }
+        LinkStyle::Elbow => {
+            let c = link_curve(a, b);
+            let (p0, p3) = (c[0], c[3]);
+            if (c[1].y - p0.y).abs() < 1e-3 {
+                let mx = (p0.x + p3.x) / 2.;
+                vec![p0, v2(mx, p0.y), v2(mx, p3.y), p3]
+            } else {
+                let my = (p0.y + p3.y) / 2.;
+                vec![p0, v2(p0.x, my), v2(p3.x, my), p3]
+            }
+        }
+    }
+}
+
+/// Where the line from `r`'s centre toward `to` leaves `r`.
+fn edge_toward(r: &Rect, to: Vec2) -> Vec2 {
+    let c = r.center();
+    let d = to.sub(c);
+    if d.len() < 1e-4 {
+        return c;
+    }
+    let t = ((r.w / 2.) / d.x.abs().max(1e-6)).min((r.h / 2.) / d.y.abs().max(1e-6)).min(1.);
+    v2(c.x + d.x * t, c.y + d.y * t)
+}
+
+/// An arrowhead `size` long at `tip`, pointing away from `from`: its two
+/// barbs and the tip.
+pub fn arrow_head(tip: Vec2, from: Vec2, size: f32) -> [Vec2; 3] {
+    let d = tip.sub(from);
+    let l = d.len().max(1e-4);
+    let (ux, uy) = (d.x / l, d.y / l);
+    let (bx, by) = (tip.x - ux * size, tip.y - uy * size);
+    let (nx, ny) = (-uy * size * 0.5, ux * size * 0.5);
+    [v2(bx + nx, by + ny), tip, v2(bx - nx, by - ny)]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -1174,6 +1286,12 @@ impl Category {
         }
     }
 
+    /// Takes a shape away, and the links to it.
+    pub fn remove_shape(&mut self, id: Id) {
+        self.shapes.retain(|s| s.id != id);
+        self.links.retain(|l| l.from != id && l.to != id);
+    }
+
     pub fn remove_sticker(&mut self, id: Id) {
         self.stickers.retain(|s| s.id != id);
         self.links.retain(|l| l.from != id && l.to != id);
@@ -1181,7 +1299,13 @@ impl Category {
 
     /// Links `a` to `b`, or unlinks them when they already are. Returns
     /// whether a link now exists.
+    #[cfg(test)]
     pub fn toggle_link(&mut self, id: Id, a: Id, b: Id, ink: Ink) -> bool {
+        self.toggle_link_styled(id, a, b, ink, LinkStyle::Curve, Ends::None)
+    }
+
+    /// As `toggle_link`, a new link running and ending as given.
+    pub fn toggle_link_styled(&mut self, id: Id, a: Id, b: Id, ink: Ink, style: LinkStyle, ends: Ends) -> bool {
         if a == b {
             return false;
         }
@@ -1190,7 +1314,7 @@ impl Category {
             self.links.retain(|l| !same(l));
             false
         } else {
-            self.links.push(Link { id, from: a, to: b, ink });
+            self.links.push(Link { style, ends, ..Link::new(id, a, b, ink) });
             true
         }
     }
@@ -1224,6 +1348,12 @@ impl Category {
     pub fn frame_members(&self, id: Id) -> Vec<Id> {
         let Some(f) = self.frames.iter().find(|f| f.id == id) else { return Vec::new() };
         self.stickers.iter().filter(|s| f.rect.contains(s.rect.center())).map(|s| s.id).collect()
+    }
+
+    /// The shapes whose middle is in area `id`: they move with it.
+    pub fn frame_shapes(&self, id: Id) -> Vec<Id> {
+        let Some(f) = self.frames.iter().find(|f| f.id == id) else { return Vec::new() };
+        self.shapes.iter().filter(|s| !s.locked && f.rect.contains(s.rect.center())).map(|s| s.id).collect()
     }
 
     /// Lays `ids` out in tidy rows, in reading order of where they are now,
@@ -1497,6 +1627,12 @@ pub struct Settings {
     pub user_name: String,
     /// Your avatar, by name (`avatars.rs`).
     pub avatar: String,
+    /// Shapes starred in the shapes panel, first to last.
+    #[serde(default)]
+    pub shape_favourites: Vec<Geom>,
+    /// The panel's families put away (by id: "uml", "logos"...).
+    #[serde(default)]
+    pub shape_hidden: Vec<String>,
 }
 
 impl Default for Settings {
@@ -1519,6 +1655,8 @@ impl Default for Settings {
             minimap: true,
             user_name: String::new(),
             avatar: String::new(),
+            shape_favourites: Vec::new(),
+            shape_hidden: Vec::new(),
         }
     }
 }
@@ -1656,7 +1794,7 @@ impl Board {
                 s.rect.w = s.rect.w.max(MIN_STICKER.0);
                 s.rect.h = s.rect.h.max(MIN_STICKER.1);
             }
-            let ids: Vec<Id> = c.stickers.iter().map(|s| s.id).collect();
+            let ids: Vec<Id> = c.stickers.iter().map(|s| s.id).chain(c.shapes.iter().map(|s| s.id)).collect();
             c.links.retain(|l| ids.contains(&l.from) && ids.contains(&l.to));
         }
     }
@@ -2115,7 +2253,7 @@ impl Board {
                     let nid = id_();
                     c.stickers.push(note(nid, *x, *y, 220., [Paper::Butter, Paper::Sage, Paper::Sky, Paper::Lilac][i], "", "An idea…"));
                     let lid = id_();
-                    c.links.push(Link { id: lid, from: centre, to: nid, ink: Ink::Forest });
+                    c.links.push(Link::new(lid, centre, nid, Ink::Forest));
                 }
             }
             Template::Meeting => {
@@ -2177,6 +2315,58 @@ mod tests {
         assert!(label_rect(&l).h > marked.h && label_rect(&l).w > marked.w);
     }
     use super::*;
+
+    #[test]
+    fn links_run_edge_to_edge_in_each_style() {
+        let a = Rect { x: 0., y: 0., w: 100., h: 60. };
+        let b = Rect { x: 300., y: 20., w: 100., h: 60. };
+        let straight = link_path(&a, &b, LinkStyle::Straight);
+        assert_eq!(straight.len(), 2);
+        assert!((straight[0].x - 100.).abs() < 0.01 && (straight[1].x - 300.).abs() < 0.01);
+        let elbow = link_path(&a, &b, LinkStyle::Elbow);
+        assert_eq!(elbow.len(), 4);
+        // Right angles: across, down, across.
+        assert_eq!(elbow[0].y, elbow[1].y);
+        assert_eq!(elbow[1].x, elbow[2].x);
+        assert_eq!(elbow[2].y, elbow[3].y);
+        let curve = link_path(&a, &b, LinkStyle::Curve);
+        assert_eq!(curve.first(), Some(&v2(100., 30.)));
+        assert_eq!(curve.last(), Some(&v2(300., 50.)));
+        let h = arrow_head(v2(10., 0.), v2(0., 0.), 4.);
+        assert_eq!(h[1], v2(10., 0.));
+        assert!(h[0].x < 10. && h[2].x < 10. && h[0].y == -h[2].y);
+    }
+
+    #[test]
+    fn links_to_shapes_survive_loading_and_go_with_the_shape() {
+        let mut b = Board::empty();
+        let (n, s, l) = (b.fresh_id(), b.fresh_id(), b.fresh_id());
+        let c = b.sheet_mut();
+        c.stickers.push(Sticker { id: n, ..Default::default() });
+        c.shapes.push(Shape::new(s, Geom::Rect, v2(300., 0.)));
+        c.links.push(Link { style: LinkStyle::Straight, ends: Ends::End, ..Link::new(l, n, s, Ink::Cobalt) });
+        let mut loaded: Board = serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap();
+        loaded.normalize();
+        assert_eq!(loaded.sheet().links.len(), 1, "a link to a shape is kept");
+        assert_eq!(loaded.sheet().links[0].ends, Ends::End);
+        loaded.sheet_mut().remove_shape(s);
+        assert!(loaded.sheet().links.is_empty());
+        // Links written before styles read as plain curves.
+        let old: Link = serde_json::from_str(r#"{"id":1,"from":2,"to":3,"ink":"Forest"}"#).unwrap();
+        assert_eq!((old.style, old.ends), (LinkStyle::Curve, Ends::None));
+    }
+
+    #[test]
+    fn areas_carry_the_shapes_in_them() {
+        let mut c = Category::new(1, "S", Accent::Slate);
+        c.frames.push(Frame { id: 2, rect: Rect { x: 0., y: 0., w: 400., h: 300. }, title: String::new(), accent: Accent::Slate });
+        c.shapes.push(Shape::new(3, Geom::Rect, v2(100., 100.)));
+        c.shapes.push(Shape::new(4, Geom::Rect, v2(900., 100.)));
+        let mut locked = Shape::new(5, Geom::Rect, v2(120., 120.));
+        locked.locked = true;
+        c.shapes.push(locked);
+        assert_eq!(c.frame_shapes(2), vec![3]);
+    }
 
     fn sticker(id: Id, x: f32, y: f32) -> Sticker {
         Sticker {
@@ -2291,7 +2481,7 @@ mod tests {
         let mut s = sticker(40, 0., 0.);
         s.rect.w = 10.;
         c.stickers.push(s);
-        c.links.push(Link { id: 41, from: 40, to: 99, ink: Ink::Forest });
+        c.links.push(Link::new(41, 40, 99, Ink::Forest));
         c.camera.zoom = 50.;
         b.active = 9;
         b.normalize();
@@ -2506,7 +2696,7 @@ mod tests {
         let mut b = Board::empty();
         b.sheet_mut().stickers.push(sticker(10, 0., 0.));
         b.sheet_mut().stickers.push(sticker(11, 300., 0.));
-        b.sheet_mut().links.push(Link { id: 12, from: 10, to: 11, ink: Ink::Forest });
+        b.sheet_mut().links.push(Link::new(12, 10, 11, Ink::Forest));
         b.add_sheet("other");
         b.normalize();
         assert!(b.move_note(10, 1));
@@ -2589,7 +2779,7 @@ mod tests {
         let mut b = Board::empty();
         b.sheet_mut().stickers.push(sticker(10, 0., 0.));
         b.sheet_mut().stickers.push(sticker(11, 300., 0.));
-        b.sheet_mut().links.push(Link { id: 12, from: 10, to: 11, ink: Ink::Forest });
+        b.sheet_mut().links.push(Link::new(12, 10, 11, Ink::Forest));
         b.normalize();
         let copy = b.sheet().clone();
         let ix = b.adopt_sheet(copy, "Copy".into());

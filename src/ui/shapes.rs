@@ -254,6 +254,32 @@ struct Paint {
 }
 
 impl Folio {
+    /// The box a link's end `id` (a note or a shape) is drawn to.
+    pub fn end_rect(&self, id: Id) -> Option<Rect> {
+        let c = self.sheet();
+        c.sticker(id).map(|s| self.note_rect(s)).or_else(|| c.shapes.iter().find(|s| s.id == id).map(Shape::bounds))
+    }
+
+    /// How a new link runs: notes join by a dashed curve as they always
+    /// have; anything with a shape gets a straight arrow, as in a diagram.
+    pub fn link_look(&self, from: Id, to: Option<Id>) -> (LinkStyle, Ends) {
+        let shape = |id: Id| self.sheet().shapes.iter().any(|s| s.id == id);
+        if shape(from) || to.is_some_and(shape) {
+            (LinkStyle::Straight, Ends::End)
+        } else {
+            (LinkStyle::Curve, Ends::None)
+        }
+    }
+
+    /// The link under `p` (world), within a few pixels of its run.
+    pub fn link_at(&self, p: Vec2) -> Option<Id> {
+        let reach = 6. / self.sheet().camera.zoom;
+        self.sheet().links.iter().rev().find_map(|l| {
+            let run = link_path(&self.end_rect(l.from)?, &self.end_rect(l.to)?, l.style);
+            run.windows(2).any(|w| segment_distance(p, w[0], w[1]) <= reach).then_some(l.id)
+        })
+    }
+
     /// The front-most shape under `p` (world).
     pub fn shape_at(&self, p: Vec2) -> Option<Id> {
         let reach = 4. / self.sheet().camera.zoom;
@@ -378,6 +404,17 @@ impl Folio {
         let input = self.dialog_input.clone();
         window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
         cx.notify();
+    }
+
+    /// Stars `geom` in the shapes panel, or unstars it.
+    pub fn toggle_favourite(&mut self, geom: Geom, cx: &mut Context<Self>) {
+        self.set_setting(cx, |s| {
+            if s.shape_favourites.contains(&geom) {
+                s.shape_favourites.retain(|g| *g != geom);
+            } else {
+                s.shape_favourites.push(geom);
+            }
+        });
     }
 
     /// Opens or closes the shapes panel; open, its search is ready to type.
@@ -658,7 +695,33 @@ impl Folio {
         let q = self.shape_search.read(cx).value().trim().to_string();
         let mut body: Vec<gpui::AnyElement> = Vec::new();
         if q.is_empty() {
-            for (li, lib) in libraries().into_iter().enumerate() {
+            // Starred shapes first, then every family not put away.
+            let favs = &self.board.settings.shape_favourites;
+            let starred = crate::shape::Library {
+                id: "favourites",
+                name: "Favourites",
+                entries: favs.iter().map(|&g| Entry { geom: g, name: g.name(), keywords: "" }).collect(),
+            };
+            let hidden = self.board.settings.shape_hidden.clone();
+            let libs = std::iter::once(starred)
+                .filter(|l| !l.entries.is_empty())
+                .chain(libraries().into_iter().filter(|l| !hidden.iter().any(|h| h == l.id)));
+            if favs.is_empty() {
+                body.push(
+                    div()
+                        .mx(t.space.md)
+                        .mb(t.space.sm)
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .text_size(t.text.micro)
+                        .text_color(t.colors.text_subtle)
+                        .child(icon("icons/star.svg", px(11.), t.colors.text_subtle))
+                        .child("Right-click a shape to star it: starred ones stay up here.")
+                        .into_any_element(),
+                );
+            }
+            for (li, lib) in libs.enumerate() {
                 let open = self.shape_open.contains(lib.id);
                 let id = lib.id;
                 let head = div()
@@ -742,6 +805,56 @@ impl Folio {
                 .child(word)
         });
         let has_query = !q.is_empty();
+        // The families to show, ticked; opened from the panel's foot.
+        let families = self.shape_families.then(|| {
+            let hidden = self.board.settings.shape_hidden.clone();
+            let rows: Vec<_> = libraries()
+                .into_iter()
+                .map(|lib| {
+                    let id = lib.id;
+                    let on = !hidden.iter().any(|h| h == id);
+                    div()
+                        .id(gpui::ElementId::Name(format!("shape-family-{id}").into()))
+                        .h(px(28.))
+                        .px(t.space.sm)
+                        .flex()
+                        .items_center()
+                        .gap(t.space.sm)
+                        .rounded(t.radius.small)
+                        .cursor_pointer()
+                        .hover(|d| d.bg(t.colors.hover))
+                        .child(
+                            div()
+                                .size(px(16.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(4.))
+                                .border_1()
+                                .border_color(if on { t.colors.brand } else { t.colors.border })
+                                .when(on, |d| d.bg(t.colors.brand))
+                                .when(on, |d| d.child(icon("icons/check.svg", px(11.), t.colors.primary_fg))),
+                        )
+                        .child(div().flex_1().text_size(t.text.caption).text_color(t.colors.text).child(lib.name))
+                        .child(div().text_size(t.text.micro).text_color(t.colors.text_subtle).child(lib.entries.len().to_string()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_setting(cx, |s| {
+                                if s.shape_hidden.iter().any(|h| h == id) {
+                                    s.shape_hidden.retain(|h| h != id);
+                                } else {
+                                    s.shape_hidden.push(id.to_string());
+                                }
+                            })
+                        }))
+                })
+                .collect();
+            super::motion::enter(
+                div().px(t.space.sm).pb(t.space.xs).flex().flex_col().gap(px(1.)).children(rows),
+                "shape-families",
+                t.motion.pop_in,
+                t.motion.rise,
+            )
+        });
         div()
             .id("shapes-panel")
             .occlude()
@@ -816,6 +929,7 @@ impl Folio {
                     .when(!has_query, |d| d.child(div().flex().flex_wrap().gap(px(5.)).children(chips))),
             )
             .child(div().id("shapes-list").flex_1().min_h_0().overflow_y_scroll().py(t.space.sm).children(body))
+            .children(families.map(|f| div().border_t_1().border_color(t.colors.border).pt(t.space.xs).child(f)))
             .child(
                 div()
                     .px(t.space.md)
@@ -827,7 +941,31 @@ impl Folio {
                     .gap(px(3.))
                     .text_size(t.text.micro)
                     .text_color(t.colors.text_muted)
-                    .child("Click to add, or drag onto the sheet.")
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .child(div().flex_1().child("Click to add, or drag onto the sheet."))
+                            .child(
+                                div()
+                                    .id("shape-families-toggle")
+                                    .px(px(6.))
+                                    .py(px(2.))
+                                    .rounded(t.radius.small)
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(3.))
+                                    .cursor_pointer()
+                                    .text_color(if self.shape_families { t.colors.brand } else { t.colors.text_muted })
+                                    .hover(|d| d.bg(t.colors.hover))
+                                    .child("Families")
+                                    .child(icon(if self.shape_families { "icons/chevron-down.svg" } else { "icons/chevron-right.svg" }, px(11.), t.colors.text_muted))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.shape_families = !this.shape_families;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
                     .child(
                         div()
                             .flex()
@@ -843,7 +981,8 @@ impl Folio {
     fn shape_tile(&self, e: Entry, lib: &'static str, key: String, t: &Theme, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let (geom, name) = (e.geom, e.name);
         let ink = t.colors.text_body;
-        let tip = format!("{name}  ·  {lib}");
+        let starred = self.board.settings.shape_favourites.contains(&geom);
+        let tip = format!("{name}  ·  {lib}  ·  right-click to {}", if starred { "unstar" } else { "star" });
         let ghost_ink = t.ink(Ink::Graphite);
         let ghost_fill = t.paper(Paper::Plain);
         let zoom = self.sheet().camera.zoom;
@@ -860,6 +999,12 @@ impl Folio {
             .active(|d| d.bg(t.colors.brand_tint).border_color(t.colors.brand))
             .tooltip(move |window, cx| super::tip(tip.clone(), window, cx))
             .on_click(cx.listener(move |this, _, _, cx| this.add_shape(geom, None, cx)))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.toggle_favourite(geom, cx);
+            }))
+            .relative()
+            .when(starred, |d| d.child(div().absolute().top(px(2.)).right(px(2.)).child(icon("icons/star.svg", px(9.), t.colors.brand))))
             .on_drag(ShapeDrag(geom), move |d, _, _, cx| {
                 let (w, h) = d.0.default_size();
                 let k = zoom.clamp(0.4, 1.2);

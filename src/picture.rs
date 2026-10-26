@@ -1380,26 +1380,33 @@ fn draw(sheet: &Category, t: &Theme, media: &Path, blur: bool) -> String {
     }
     pattern(&mut svg, sheet.backdrop.pattern, bounds, t.size.dot_grid, &look);
 
-    // Links between notes, then ink.
+    // Links between notes and shapes, then ink.
     for l in &sheet.links {
-        let find = |id: Id| sheet.stickers.iter().zip(&laid).find(|(s, _)| s.id == id).map(|(s, l)| rect_of(s, l));
+        let find = |id: Id| {
+            sheet.stickers.iter().zip(&laid).find(|(s, _)| s.id == id).map(|(s, l)| rect_of(s, l)).or_else(|| sheet.shapes.iter().find(|s| s.id == id).map(Shape::bounds))
+        };
         if let (Some(a), Some(b)) = (find(l.from), find(l.to)) {
-            let c = link_curve(&a, &b);
-            let color = rgba(t.ink(l.ink)).alpha(0.75);
-            let _ = writeln!(
-                svg.body,
-                r#"<path d="M{} {}C{} {} {} {} {} {}" fill="none" {} stroke-width="2" stroke-dasharray="6 6"/>"#,
-                n(c[0].x),
-                n(c[0].y),
-                n(c[1].x),
-                n(c[1].y),
-                n(c[2].x),
-                n(c[2].y),
-                n(c[3].x),
-                n(c[3].y),
-                color.attr("stroke")
-            );
-            svg.rect(c[3].x - 3., c[3].y - 3., 6., 6., 3., color);
+            let run = link_path(&a, &b, l.style);
+            let color = rgba(t.ink(l.ink)).alpha(0.85);
+            let d: String = run.iter().enumerate().map(|(i, p)| format!("{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y))).collect();
+            let dash = if l.style == LinkStyle::Curve && l.ends == Ends::None { r#" stroke-dasharray="6 6""# } else { "" };
+            let _ = writeln!(svg.body, r#"<path d="{d}" fill="none" {} stroke-width="2" stroke-linejoin="round"{dash}/>"#, color.attr("stroke"));
+            let k = run.len();
+            let mut heads = Vec::new();
+            if k >= 2 && l.ends != Ends::None {
+                heads.push(arrow_head(run[k - 1], run[k - 2], 12.));
+                if l.ends == Ends::Both {
+                    heads.push(arrow_head(run[0], run[1], 12.));
+                }
+            }
+            for h in &heads {
+                svg.fill(&format!("M{} {}L{} {}L{} {}Z", n(h[0].x), n(h[0].y), n(h[1].x), n(h[1].y), n(h[2].x), n(h[2].y)), color);
+            }
+            if heads.is_empty() {
+                if let Some(e) = run.last() {
+                    svg.rect(e.x - 3., e.y - 3., 6., 6., 3., color);
+                }
+            }
         }
     }
     for s in &sheet.strokes {
