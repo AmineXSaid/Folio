@@ -51,13 +51,14 @@ impl Format {
 
 /// `sheet` as a `format` file in `t`'s colours, its pictures from `media`.
 /// `[[links]]` in its notes should already be written as Markdown links.
-pub fn render(sheet: &Category, t: &Theme, media: &Path, format: Format) -> Result<Vec<u8>, String> {
+/// A PDF goes on `page`.
+pub fn render_on(sheet: &Category, t: &Theme, media: &Path, format: Format, page: PdfPage) -> Result<Vec<u8>, String> {
     let svg = draw(sheet, t, media, format == Format::Png);
     let opt = usvg::Options { fontdb: fonts(), resources_dir: Some(media.to_path_buf()), ..Default::default() };
     let tree = usvg::Tree::from_str(&svg, &opt).map_err(|e| e.to_string())?;
     match format {
         Format::Png => png(&tree),
-        Format::Pdf => Ok(pdf(&tree, &sheet.name)),
+        Format::Pdf => Ok(pdf(&tree, &sheet.name, page)),
     }
 }
 
@@ -1572,16 +1573,30 @@ fn png(tree: &usvg::Tree) -> Result<Vec<u8>, String> {
 // ---------- PDF ----------
 
 /// A one-page PDF of `tree`, drawn as it is: shapes and outlined words as
-/// paths, pictures as images.
-fn pdf(tree: &usvg::Tree, title: &str) -> Vec<u8> {
+/// paths, pictures as images, and the words again, unseen, so they can be
+/// selected, searched and copied. On `page`'s paper, turned to suit the
+/// sheet, the sheet fitted inside a margin; or the sheet's own size.
+fn pdf(tree: &usvg::Tree, title: &str, page: PdfPage) -> Vec<u8> {
+    /// The margin round a sheet on paper (points, half an inch).
+    const MARGIN: f32 = 36.;
     let size = tree.size();
-    let k = PT.min(PDF_SIDE / size.width()).min(PDF_SIDE / size.height());
-    let (w, h) = (size.width() * k, size.height() * k);
+    let (sw, sh) = (size.width(), size.height());
+    let (k, w, h, ox, oy) = match page.points() {
+        None => {
+            let k = PT.min(PDF_SIDE / sw).min(PDF_SIDE / sh);
+            (k, sw * k, sh * k, 0., 0.)
+        }
+        Some((pw, ph)) => {
+            let (w, h) = if sw > sh { (ph, pw) } else { (pw, ph) };
+            let k = ((w - 2. * MARGIN) / sw).min((h - 2. * MARGIN) / sh);
+            (k, w, h, (w - sw * k) / 2., (h - sh * k) / 2.)
+        }
+    };
     let mut p = Pdf::default();
-    // Objects 1 to 5 are the catalog, pages, the page, its drawing and
-    // the document's info; pictures follow.
-    p.objects = vec![Vec::new(); 5];
-    let _ = writeln!(p.ops, "{} 0 0 {} 0 {} cm", n(k), n(-k), n(h));
+    // Objects 1 to 6 are the catalog, pages, the page, its drawing, the
+    // document's info and the font for the unseen words; pictures follow.
+    p.objects = vec![Vec::new(); 6];
+    let _ = writeln!(p.ops, "{} 0 0 {} {} {} cm", n(k), n(-k), n(ox), n(h - oy));
     p.group(tree.root(), tiny_skia::Transform::identity(), 1.);
 
     let drawing = miniz_oxide::deflate::compress_to_vec_zlib(p.ops.as_bytes(), 6);
@@ -1600,7 +1615,7 @@ fn pdf(tree: &usvg::Tree, title: &str) -> Vec<u8> {
     p.objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>".to_vec();
     p.objects[1] = b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec();
     p.objects[2] = format!(
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Resources << /ExtGState << {gs}>> /XObject << {xo}>> /Shading << {sh}>> >> /Contents 4 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Resources << /ExtGState << {gs}>> /XObject << {xo}>> /Shading << {sh}>> /Font << /F0 6 0 R >> >> /Contents 4 0 R >>",
         n(w),
         n(h)
     )
@@ -1609,6 +1624,7 @@ fn pdf(tree: &usvg::Tree, title: &str) -> Vec<u8> {
     let utf16: String = std::iter::once(0xfeffu16).chain(title.encode_utf16()).map(|u| format!("{u:04X}")).collect();
     let date = chrono::Local::now().format("D:%Y%m%d%H%M%S");
     p.objects[4] = format!("<< /Title <{utf16}> /Creator (Folio) /Producer (Folio) /CreationDate ({date}) >>").into_bytes();
+    p.objects[5] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec();
 
     let mut out: Vec<u8> = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n".to_vec();
     let mut offsets = Vec::new();
@@ -1635,6 +1651,39 @@ impl std::fmt::Write for Bytes<'_> {
         self.0.extend_from_slice(s.as_bytes());
         Ok(())
     }
+}
+
+/// `s` as a PDF string in WinAnsi: Latin letters and the usual
+/// punctuation; anything else as a question mark.
+fn win_ansi(s: &str) -> String {
+    let mut out = String::new();
+    for ch in s.chars() {
+        let code: u32 = match ch {
+            '€' => 0x80,
+            '‚' => 0x82,
+            '„' => 0x84,
+            '…' => 0x85,
+            '‘' => 0x91,
+            '’' => 0x92,
+            '“' => 0x93,
+            '”' => 0x94,
+            '•' => 0x95,
+            '–' => 0x96,
+            '—' => 0x97,
+            '™' => 0x99,
+            c if (c as u32) < 0x80 || (0xa0..=0xff).contains(&(c as u32)) => c as u32,
+            _ => '?' as u32,
+        };
+        match code {
+            0x28 | 0x29 | 0x5c => {
+                out.push('\\');
+                out.push(char::from_u32(code).unwrap_or('?'));
+            }
+            c if c < 0x20 || c > 0x7e => out.push_str(&format!("\\{c:03o}")),
+            c => out.push(char::from_u32(c).unwrap_or('?')),
+        }
+    }
+    out
 }
 
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
@@ -1694,12 +1743,47 @@ impl Pdf {
                 usvg::Node::Group(g) => self.group(g, ts, alpha),
                 usvg::Node::Path(p) => self.path(p, ts, alpha),
                 usvg::Node::Image(i) => self.image(i, ts, alpha),
-                usvg::Node::Text(t) => self.group(t.flattened(), ts, alpha),
+                usvg::Node::Text(t) => {
+                    self.group(t.flattened(), ts, alpha);
+                    self.words(t, ts);
+                }
             }
         }
         if clipped {
             self.ops.push_str("Q\n");
         }
+    }
+
+    /// A run of text written again over its drawing, unseen (render mode
+    /// 3), in Helvetica stretched to the drawn width: what a PDF reader
+    /// selects, searches and copies.
+    fn words(&mut self, t: &usvg::Text, ts: tiny_skia::Transform) {
+        let Some(first) = t.chunks().first() else { return };
+        let text: String = t.chunks().iter().map(|c| c.text()).collect();
+        let text = text.trim_end();
+        if text.trim().is_empty() {
+            return;
+        }
+        let size = first.spans().first().map_or(12., |s| s.font_size().get());
+        let b = t.bounding_box();
+        let (x, y) = (first.x().unwrap_or(b.x()), first.y().unwrap_or(b.bottom()));
+        let chars = text.chars().count() as f32;
+        // Helvetica runs about half an em a letter; stretched to fit.
+        let stretch = (100. * b.width() / (0.52 * size * chars)).clamp(30., 300.);
+        let m = ts.pre_concat(tiny_skia::Transform::from_row(1., 0., 0., -1., x, y));
+        let _ = writeln!(
+            self.ops,
+            "BT 3 Tr /F0 {} Tf {} Tz {} {} {} {} {} {} Tm ({}) Tj ET",
+            n(size),
+            n(stretch),
+            n(m.sx),
+            n(m.ky),
+            n(m.kx),
+            n(m.sy),
+            n(m.tx),
+            n(m.ty),
+            win_ansi(text)
+        );
     }
 
     fn path(&mut self, p: &usvg::Path, ts: tiny_skia::Transform, alpha: f32) {
@@ -1989,8 +2073,20 @@ mod tests {
         assert!(svg.contains(r#"stroke-dasharray="6 4.2""#));
         // Logos go in whole, in their own colours.
         assert!(svg.contains(r##"fill="#252f3e""##), "the AWS logo's ink");
-        let png = render(net, &Theme::dark(), &std::env::temp_dir(), Format::Png).expect("a png");
+        let png = render_on(net, &Theme::dark(), &std::env::temp_dir(), Format::Png, PdfPage::Fit).expect("a png");
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn a_pdf_carries_its_words_and_fits_paper() {
+        let s = sheet();
+        let dir = std::env::temp_dir();
+        let pdf = render_on(&s, &Theme::light(), &dir, Format::Pdf, PdfPage::A4).expect("a pdf");
+        let text = String::from_utf8_lossy(&pdf);
+        // On A4, upright or turned.
+        assert!(text.contains("/MediaBox [0 0 595.28 841.89]") || text.contains("/MediaBox [0 0 841.89 595.28]"), "{}", &text[..400.min(text.len())]);
+        assert!(text.contains("/BaseFont /Helvetica"));
+        assert_eq!(win_ansi("a (b) – ü\\ 中"), "a \\(b\\) \\226 \\374\\\\ ?");
     }
 
     #[test]
@@ -1998,9 +2094,9 @@ mod tests {
         let s = sheet();
         let dir = std::env::temp_dir();
         for t in [Theme::light(), Theme::dark()] {
-            let png = render(&s, &t, &dir, Format::Png).expect("a png");
+            let png = render_on(&s, &t, &dir, Format::Png, PdfPage::Fit).expect("a png");
             assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
-            let pdf = render(&s, &t, &dir, Format::Pdf).expect("a pdf");
+            let pdf = render_on(&s, &t, &dir, Format::Pdf, PdfPage::Fit).expect("a pdf");
             assert!(pdf.starts_with(b"%PDF-1.4"));
             assert!(pdf.ends_with(b"%%EOF\n"));
             // The table of where each object starts is right.
@@ -2008,7 +2104,7 @@ mod tests {
             let at: usize = tail.rsplit("startxref\n").next().and_then(|r| r.lines().next()).and_then(|l| l.parse().ok()).expect("startxref");
             assert!(pdf[at..].starts_with(b"xref"));
             let table = String::from_utf8_lossy(&pdf[at..]).to_string();
-            for (i, line) in table.lines().skip(3).take(5).enumerate() {
+            for (i, line) in table.lines().skip(3).take(6).enumerate() {
                 let offset: usize = line.split(' ').next().and_then(|v| v.parse().ok()).expect("an offset");
                 assert!(pdf[offset..].starts_with(format!("{} 0 obj", i + 1).as_bytes()), "object {}", i + 1);
             }

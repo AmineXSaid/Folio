@@ -1666,6 +1666,37 @@ pub enum OpenOn {
     LastSheet,
 }
 
+/// The page a sheet's PDF is drawn on: the sheet's own size, or a paper
+/// size to print, turned to suit the sheet, the sheet fitted inside.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PdfPage {
+    #[default]
+    Fit,
+    A4,
+    Letter,
+}
+
+impl PdfPage {
+    pub const ALL: [PdfPage; 3] = [PdfPage::Fit, PdfPage::A4, PdfPage::Letter];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PdfPage::Fit => "Fit sheet",
+            PdfPage::A4 => "A4",
+            PdfPage::Letter => "Letter",
+        }
+    }
+
+    /// Its size in points, upright; None for the sheet's own size.
+    pub fn points(self) -> Option<(f32, f32)> {
+        match self {
+            PdfPage::Fit => None,
+            PdfPage::A4 => Some((595.28, 841.89)),
+            PdfPage::Letter => Some((612., 792.)),
+        }
+    }
+}
+
 /// The quick note's shortcut until you choose another.
 pub const QUICK_KEYS: &str = "Ctrl+Alt+N";
 
@@ -1702,11 +1733,14 @@ pub struct Settings {
     /// The panel's families put away (by id: "uml", "logos"...).
     #[serde(default)]
     pub shape_hidden: Vec<String>,
+    /// The page a PDF export is laid on.
+    pub pdf_page: PdfPage,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            pdf_page: PdfPage::Fit,
             theme: ThemeMode::Light,
             open_on: OpenOn::Home,
             start_with_windows: false,

@@ -241,6 +241,15 @@ impl Folio {
                 })
             }
         });
+        // The paper a PDF goes on.
+        let page_now = self.board.settings.pdf_page;
+        let items: Vec<(&'static str, bool)> = PdfPage::ALL.iter().map(|p| (p.label(), *p == page_now)).collect();
+        let page = super::home::segmented("pop-page", &items, &t, {
+            let me = cx.entity();
+            move |i, _, cx| {
+                me.update(cx, |this, cx| this.set_setting(cx, |s| s.pdf_page = PdfPage::ALL[*i]));
+            }
+        });
         let card = div()
             .id("export-pop")
             .occlude()
@@ -285,6 +294,14 @@ impl Folio {
                     .gap(t.space.md)
                     .child(div().flex_1().child(small_label("PAPER", &t)))
                     .child(paper),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(t.space.md)
+                    .child(div().flex_1().child(small_label("PDF PAGE", &t)))
+                    .child(page),
             )
             .child(div().h(px(1.)).bg(t.colors.border))
             .child(
@@ -425,13 +442,14 @@ impl Folio {
             t = t.high_contrast();
         }
         let media = store::media_dir(&self.dir);
+        let page = b.settings.pdf_page;
         let n = sheets.len();
         self.export.busy = true;
         self.notify(if n == 1 { "Drawing the sheet…".to_string() } else { format!("Drawing {n} sheets…") }, cx);
         let work = cx.background_spawn(async move {
             let mut first = None;
             for c in &sheets {
-                let bytes = picture::render(c, &t, &media, kind).map_err(|e| format!("{}: {e}", c.name))?;
+                let bytes = picture::render_on(c, &t, &media, kind, page).map_err(|e| format!("{}: {e}", c.name))?;
                 let path = export::unused(&dest, &export::file_name(&c.name), kind.ext());
                 std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
                 first.get_or_insert(path);
