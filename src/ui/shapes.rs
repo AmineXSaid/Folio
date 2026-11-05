@@ -11,7 +11,7 @@ use gpui::component::input::Input;
 use gpui::component::Sizable as _;
 use gpui::{canvas, div, point, prelude::*, px, Animation, AnimationExt, Context, Hsla, MouseButton, PathBuilder, Pixels, Window};
 
-use super::app::{Dialog, Folio, Gesture, Selection, Tool};
+use super::app::{Folio, Gesture, Selection, Tool};
 use super::*;
 use crate::model::*;
 use crate::shape::{libraries, rotate, search, Entry, SHAPE_TEXT, TEXT_PAD};
@@ -394,16 +394,69 @@ impl Folio {
         self.set_turn(ids, cx, |r| (r / 15.).round() * 15. + by);
     }
 
-    /// Asks for the words in shape `id`.
+    /// Types the words in shape `id` where they sit: a caret in the shape;
+    /// clicking away, Ctrl+Enter or Esc keeps them.
     pub fn edit_shape_text(&mut self, id: Id, window: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.sheet().shapes.iter().find(|s| s.id == id) else { return };
         let text = s.text.clone();
-        self.dialog = Some(Dialog::ShapeText(id));
+        self.finish_shape_text(cx);
+        self.shape_edit = Some(id);
         self.menu = None;
-        self.dialog_input.update(cx, |i, cx| i.set_value(text, window, cx));
-        let input = self.dialog_input.clone();
+        let end = text.len();
+        self.shape_input.update(cx, |i, cx| {
+            i.set_value(text, window, cx);
+            // All of it picked, so typing replaces it and an arrow key keeps it.
+            i.set_selected_range(0..end, cx);
+        });
+        let input = self.shape_input.clone();
         window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
         cx.notify();
+    }
+
+    /// Ends typing in a shape: its words kept, as one undo step.
+    pub fn finish_shape_text(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.shape_edit.take() else { return };
+        let text = self.shape_input.read(cx).value().trim().to_string();
+        if self.sheet().shapes.iter().any(|s| s.id == id && s.text != text) {
+            self.change_shapes(&[id], cx, |s| s.text = text.clone());
+        }
+        cx.notify();
+    }
+
+    /// The field over a shape whose words are being typed: as wide as its
+    /// words' place, in their size, centred as they're drawn.
+    pub(super) fn render_shape_edit(&self, t: &Theme) -> Option<gpui::AnyElement> {
+        let id = self.shape_edit?;
+        let s = self.sheet().shapes.iter().find(|s| s.id == id)?;
+        let cam = self.sheet().camera;
+        let z = cam.zoom;
+        let tr = s.text_rect();
+        let pad = if s.geom.is_figure() { 0. } else { TEXT_PAD };
+        let a = cam.to_screen(v2(tr.x + pad, tr.y + pad));
+        let (w, h) = ((tr.w - 2. * pad).max(40.) * z, (tr.h - 2. * pad).max(SHAPE_TEXT * 1.6) * z);
+        Some(
+            div()
+                .id("shape-edit")
+                .key_context("ShapeEdit")
+                .absolute()
+                .left(px(a.x))
+                .top(px(a.y))
+                .w(px(w))
+                .h(px(h))
+                .flex()
+                .items_center()
+                .text_center()
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(t.colors.text)
+                // A press here places the caret or picks words out.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .w_full()
+                        .child(rem_scaled(px(SHAPE_TEXT * z / 0.875), gpui::component::input::Textarea::new(&self.shape_input).appearance(false))),
+                )
+                .into_any_element(),
+        )
     }
 
     /// Stars `geom` in the shapes panel, or unstars it.
@@ -470,7 +523,8 @@ impl Folio {
                     o
                 })
                 .collect();
-            let text = s.text.trim();
+            // The words being typed are drawn by their field instead.
+            let text = if self.shape_edit == Some(s.id) { "" } else { s.text.trim() };
             let turned = s.rot.rem_euclid(360.) != 0.;
             let tr = s.text_rect();
             let glyphs = if turned && !text.is_empty() {

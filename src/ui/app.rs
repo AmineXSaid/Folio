@@ -368,7 +368,6 @@ pub enum Dialog {
     RenameSheet(Id),
     RenameFrame(Id),
     /// The words in a shape.
-    ShapeText(Id),
     /// The first sync, and both sides have notes: merge, or keep one.
     DriveChoice(super::sync::Pick),
     /// Setting up Google sign-in: the app's client id and secret.
@@ -527,6 +526,9 @@ pub struct Folio {
     /// Why the keys just pressed can't be the shortcut.
     pub keys_hint: Option<SharedString>,
     pub label_input: Entity<TextareaState>,
+    /// The shape whose words are being typed in place, and its field.
+    pub shape_edit: Option<Id>,
+    pub shape_input: Entity<TextareaState>,
     pub desktop: crate::desktop::Desktop,
     pub sync: super::sync::DriveSync,
     pub export: super::transfer::ExportChoice,
@@ -590,6 +592,7 @@ impl Folio {
         let secret_input = cx.new(|cx| InputState::new(window, cx).placeholder("GOCSPX-…").masked(true));
         let welcome_input = cx.new(|cx| InputState::new(window, cx).placeholder("Your name"));
         let label_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 30).placeholder("Write…"));
+        let shape_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 12).placeholder("Words…"));
         let shape_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search shapes: wifi, decision, arrow…"));
         let subs = vec![
             cx.subscribe_in(&shape_search, window, |this, _, ev, window, cx| match ev {
@@ -628,6 +631,12 @@ impl Folio {
                 }
                 InputEvent::Blur => this.finish_naming(true, cx),
                 _ => {}
+            }),
+            // Words in a shape: clicking away keeps them.
+            cx.subscribe_in(&shape_input, window, |this, _, ev, _, cx| {
+                if matches!(ev, InputEvent::Blur) {
+                    this.finish_shape_text(cx);
+                }
             }),
             // Writing on the sheet: clicking away keeps it.
             cx.subscribe_in(&label_input, window, |this, _, ev, _, cx| {
@@ -764,6 +773,8 @@ impl Folio {
             keys_recorder: None,
             keys_hint: None,
             label_input,
+            shape_edit: None,
+            shape_input,
             desktop: crate::desktop::Desktop::default(),
             sync: Default::default(),
             export: Default::default(),
@@ -1425,7 +1436,6 @@ impl Folio {
                     }
                 });
             }
-            Dialog::ShapeText(id) => self.change_shapes(&[id], cx, |s| s.text = name.clone()),
             // Its own buttons decide; Ctrl+Enter doesn't pick for you.
             Dialog::GoogleSetup => {
                 let id = self.client_input.read(cx).value().trim().to_string();
@@ -2810,6 +2820,9 @@ impl Render for Folio {
                     this.welcome_close(cx);
                 } else if this.label_edit.is_some() {
                     this.finish_label(cx);
+                    window.focus(&this.focus, cx);
+                } else if this.shape_edit.is_some() {
+                    this.finish_shape_text(cx);
                     window.focus(&this.focus, cx);
                 } else if this.naming {
                     this.finish_naming(false, cx);

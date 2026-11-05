@@ -499,6 +499,7 @@ impl Folio {
             // trips a one-letter tool key.
             .children(self.render_name_field(&t))
             .children(self.render_label_edit(&t, cx))
+            .children(self.render_shape_edit(&t))
             .children(edit_layer)
             .children(edit_bar_leaving)
             .children(self.render_shapes_panel(cx))
@@ -1206,6 +1207,10 @@ impl Folio {
         // Clicking away from text being written just finishes it.
         if self.label_edit.is_some() {
             self.finish_label(cx);
+            return;
+        }
+        if self.shape_edit.is_some() {
+            self.finish_shape_text(cx);
             return;
         }
         self.finish_edit(cx);
