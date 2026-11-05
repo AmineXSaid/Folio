@@ -518,7 +518,7 @@ impl Folio {
             // trips a one-letter tool key.
             .children(self.render_name_field(&t))
             .children(self.render_label_edit(&t, cx))
-            .children(self.render_shape_edit(&t))
+            .children(self.render_shape_edit(&t, cx))
             .children(edit_layer)
             .children(edit_bar_leaving)
             .children(self.render_shapes_panel(cx))

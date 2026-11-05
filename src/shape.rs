@@ -19,6 +19,8 @@ pub const MIN_SHAPE: f32 = 24.;
 /// its edge, in world units.
 pub const SHAPE_TEXT: f32 = 16.;
 pub const TEXT_PAD: f32 = 10.;
+/// The smallest a shape's words are made to fit inside it.
+pub const LEAST_TEXT: f32 = 8.;
 
 /// Which outline a shape has.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +253,45 @@ impl Geom {
     /// anywhere in the box, their words written under it.
     pub fn is_figure(self) -> bool {
         matches!(self, Geom::Icon(_) | Geom::Actor | Geom::Logo(_))
+    }
+
+    /// How far in from each side of the box (left, top, right, bottom,
+    /// as fractions of it) the room for words lies: the part of the shape
+    /// a box of words fits inside, so they never cross its outline.
+    pub fn word_room(self) -> (f32, f32, f32, f32) {
+        match self {
+            Geom::Diamond => (0.25, 0.25, 0.25, 0.25),
+            Geom::Ellipse | Geom::Circle => (0.15, 0.15, 0.15, 0.15),
+            Geom::Triangle => (0.27, 0.45, 0.27, 0.06),
+            Geom::Merge => (0.27, 0.06, 0.27, 0.45),
+            Geom::Hexagon => (0.2, 0.08, 0.2, 0.08),
+            Geom::Octagon => (0.12, 0.12, 0.12, 0.12),
+            Geom::Pentagon => (0.18, 0.3, 0.18, 0.06),
+            Geom::Star => (0.32, 0.36, 0.32, 0.26),
+            Geom::Cross => (0.3, 0.3, 0.3, 0.3),
+            Geom::Heart => (0.2, 0.18, 0.2, 0.35),
+            Geom::Cloud => (0.18, 0.2, 0.18, 0.16),
+            Geom::Parallelogram | Geom::Trapezoid | Geom::ManualOp => (0.2, 0.05, 0.2, 0.05),
+            Geom::ManualInput => (0.05, 0.25, 0.05, 0.05),
+            Geom::Cylinder => (0.05, 0.25, 0.05, 0.1),
+            Geom::Callout => (0.04, 0.04, 0.04, 0.28),
+            Geom::Document | Geom::MultiDocument => (0.04, 0.04, 0.1, 0.22),
+            Geom::Cube => (0.04, 0.22, 0.2, 0.04),
+            Geom::Step | Geom::Chevron => (0.25, 0.08, 0.25, 0.08),
+            Geom::Terminator => (0.14, 0.05, 0.14, 0.05),
+            Geom::Delay => (0.04, 0.05, 0.22, 0.05),
+            Geom::OffPage => (0.08, 0.05, 0.08, 0.32),
+            Geom::Display => (0.16, 0.05, 0.16, 0.05),
+            Geom::Collate | Geom::Sort => (0.3, 0.3, 0.3, 0.3),
+            Geom::Or | Geom::SummingJunction => (0.2, 0.2, 0.2, 0.2),
+            Geom::LoopLimit => (0.06, 0.18, 0.06, 0.04),
+            Geom::Predefined => (0.12, 0.04, 0.12, 0.04),
+            Geom::Tape => (0.04, 0.16, 0.04, 0.16),
+            Geom::SequentialData => (0.15, 0.15, 0.15, 0.15),
+            Geom::BlockArrow => (0.04, 0.25, 0.3, 0.25),
+            Geom::BlockDoubleArrow => (0.25, 0.25, 0.25, 0.25),
+            _ => (0., 0., 0., 0.),
+        }
     }
 
     /// Has a body that takes a fill.
@@ -693,11 +734,36 @@ impl Shape {
     pub fn text_rect(&self) -> Rect {
         let r = self.rect;
         if !self.geom.is_figure() {
-            return r;
+            // Inside the shape's room for words, less a margin.
+            let (l, t, rt, b) = self.geom.word_room();
+            let pad = TEXT_PAD.min(r.w * 0.1).min(r.h * 0.1);
+            let (x, y) = (r.x + l * r.w + pad, r.y + t * r.h + pad);
+            return Rect { x, y, w: (r.w * (1. - l - rt) - 2. * pad).max(8.), h: (r.h * (1. - t - b) - 2. * pad).max(8.) };
         }
         let w = r.w.max(160.);
         let lines = crate::glyphs::wrap(self.text.trim(), SHAPE_TEXT, w).len().max(1);
         Rect { x: r.x + (r.w - w) / 2., y: r.y + r.h + 4., w, h: lines as f32 * SHAPE_TEXT * crate::glyphs::LEADING }
+    }
+
+    /// The type size its words are set at: as large as they come, made
+    /// smaller (down to `LEAST_TEXT`) until they fit inside the shape.
+    pub fn text_size(&self) -> f32 {
+        let text = self.text.trim();
+        if self.geom.is_figure() || text.is_empty() {
+            return SHAPE_TEXT;
+        }
+        let r = self.text_rect();
+        let mut size = SHAPE_TEXT;
+        while size > LEAST_TEXT {
+            let lines = crate::glyphs::wrap(text, size, r.w);
+            let tall = lines.len() as f32 * size * crate::glyphs::LEADING;
+            let wide = lines.iter().map(|l| crate::glyphs::advance(l, size)).fold(0., f32::max);
+            if tall <= r.h + 0.5 && wide <= r.w + 0.5 {
+                break;
+            }
+            size -= 0.5;
+        }
+        size
     }
 
     /// The box round the turned shape and its line.
@@ -907,5 +973,21 @@ mod tests {
         s.flip_x = true;
         let p = s.outlines()[0].points[1];
         assert!(s.hit(p, 2.));
+    }
+
+    #[test]
+    fn words_fit_inside_the_shape() {
+        let mut d = Shape::new(1, Geom::Diamond, v2(100., 100.));
+        d.rect = Rect { x: 0., y: 0., w: 200., h: 120. };
+        let room = d.text_rect();
+        // The room for words lies inside the diamond.
+        assert!(room.x >= 50. && room.x + room.w <= 150. && room.y >= 30. && room.y + room.h <= 90.);
+        d.text = "Online?".into();
+        assert_eq!(d.text_size(), SHAPE_TEXT);
+        d.text = "A much longer question that would never fit at full size in here".into();
+        let size = d.text_size();
+        assert!(size < SHAPE_TEXT && size >= LEAST_TEXT);
+        let lines = crate::glyphs::wrap(d.text.trim(), size, room.w);
+        assert!(lines.len() as f32 * size * crate::glyphs::LEADING <= room.h + 0.5 || size == LEAST_TEXT);
     }
 }

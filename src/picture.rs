@@ -17,7 +17,6 @@ use resvg::{tiny_skia, usvg};
 
 use crate::markdown::{blocks, ruled_line, Block};
 use crate::model::*;
-use crate::shape::{SHAPE_TEXT, TEXT_PAD};
 use crate::theme::Theme;
 
 /// The room around what's on the sheet, in world units.
@@ -1328,11 +1327,11 @@ fn draw_shape(svg: &mut Svg, s: &Shape, t: &Theme) {
     if text.is_empty() {
         return;
     }
-    let font = Font::new(SANS, SHAPE_TEXT, crate::glyphs::WEIGHT);
+    let size = s.text_size();
+    let font = Font::new(SANS, size, crate::glyphs::WEIGHT);
     let r = s.text_rect();
-    let pad = if s.geom.is_figure() { 0. } else { TEXT_PAD };
-    let lines = crate::glyphs::wrap(text, SHAPE_TEXT, (r.w - 2. * pad).max(SHAPE_TEXT));
-    let lh = SHAPE_TEXT * crate::glyphs::LEADING;
+    let lines = crate::glyphs::wrap(text, size, r.w.max(size));
+    let lh = size * crate::glyphs::LEADING;
     let top = r.y + (r.h - lh * lines.len() as f32) / 2.;
     let c = s.center();
     let _ = writeln!(svg.body, r#"<g transform="rotate({} {} {})">"#, n(s.rot), n(c.x), n(c.y));
@@ -2118,7 +2117,8 @@ mod tests {
         let net = b.categories.iter().find(|c| !c.shapes.is_empty()).expect("the shapes sheet");
         let svg = draw(net, &Theme::light(), &std::env::temp_dir(), false);
         assert!(svg.contains(r#"<g transform="rotate(15 "#), "the access point's words turn with it");
-        assert!(svg.contains(">Access point</text>"));
+        // Kept inside the hexagon: on one line or wrapped onto two.
+        assert!(svg.contains(">Access point</text>") || (svg.contains(">Access</text>") && svg.contains(">point</text>")));
         assert!(svg.contains(r#"stroke-dasharray="6 4.2""#));
         // Logos go in whole, in their own colours.
         assert!(svg.contains(r##"fill="#252f3e""##), "the AWS logo's ink");

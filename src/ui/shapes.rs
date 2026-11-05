@@ -14,7 +14,7 @@ use gpui::{canvas, div, point, prelude::*, px, Animation, AnimationExt, Context,
 use super::app::{Folio, Gesture, Selection, Tool};
 use super::*;
 use crate::model::*;
-use crate::shape::{libraries, rotate, search, Entry, SHAPE_TEXT, TEXT_PAD};
+use crate::shape::{libraries, rotate, search, Entry};
 use crate::theme::{theme, Motion, Theme};
 
 /// A selected shape's frame: how far outside the shape it's drawn, how far
@@ -439,15 +439,23 @@ impl Folio {
 
     /// The field over a shape whose words are being typed: as wide as its
     /// words' place, in their size, centred as they're drawn.
-    pub(super) fn render_shape_edit(&self, t: &Theme) -> Option<gpui::AnyElement> {
+    pub(super) fn render_shape_edit(&self, t: &Theme, cx: &App) -> Option<gpui::AnyElement> {
         let id = self.shape_edit?;
         let s = self.sheet().shapes.iter().find(|s| s.id == id)?;
         let cam = self.sheet().camera;
         let z = cam.zoom;
-        let tr = s.text_rect();
-        let pad = if s.geom.is_figure() { 0. } else { TEXT_PAD };
-        let a = cam.to_screen(v2(tr.x + pad, tr.y + pad));
-        let (w, h) = ((tr.w - 2. * pad).max(40.) * z, (tr.h - 2. * pad).max(SHAPE_TEXT * 1.6) * z);
+        // Laid out as the words being typed will be: in the shape's room
+        // for words, at the size they fit at.
+        let live = Shape { text: self.shape_input.read(cx).value().to_string(), ..s.clone() };
+        let tr = live.text_rect();
+        let size = live.text_size();
+        // The text area insets its words by its padding and keeps a margin on
+        // the right, so the field reaches past the room by those.
+        const PAD_X: f32 = 10.;
+        const MARGIN: f32 = 10.;
+        let a = cam.to_screen(v2(tr.x, tr.y));
+        let a = v2(a.x - PAD_X, a.y);
+        let (w, h) = (tr.w * z + 2. * PAD_X + MARGIN, tr.h.max(size * 1.6) * z);
         Some(
             div()
                 .id("shape-edit")
@@ -467,7 +475,7 @@ impl Folio {
                 .child(
                     div()
                         .w_full()
-                        .child(rem_scaled(px(SHAPE_TEXT * z / 0.875), gpui::component::input::Textarea::new(&self.shape_input).appearance(false))),
+                        .child(rem_scaled(px(size * z / 0.875), gpui::component::input::Textarea::new(&self.shape_input).appearance(false))),
                 )
                 .into_any_element(),
         )
@@ -541,9 +549,9 @@ impl Folio {
             let text = if self.shape_edit == Some(s.id) { "" } else { s.text.trim() };
             let turned = s.rot.rem_euclid(360.) != 0.;
             let tr = s.text_rect();
+            let size = s.text_size();
             let glyphs = if turned && !text.is_empty() {
-                let pad = if s.geom.is_figure() { 0. } else { TEXT_PAD };
-                crate::glyphs::outlines(text, SHAPE_TEXT, tr, pad)
+                crate::glyphs::outlines(text, size, tr, 0.)
                     .into_iter()
                     .map(|c| c.into_iter().map(|p| cam.to_screen(s.turn(p))).collect())
                     .collect()
@@ -559,14 +567,13 @@ impl Folio {
                         .top(px(a.y))
                         .w(px(tr.w * z))
                         .h(px(tr.h * z))
-                        .when(!s.geom.is_figure(), |d| d.p(px(TEXT_PAD * z)))
                         .flex()
                         .items_center()
                         .justify_center()
                         .overflow_hidden()
                         .text_center()
-                        .text_size(px(SHAPE_TEXT * z))
-                        .line_height(px(SHAPE_TEXT * crate::glyphs::LEADING * z))
+                        .text_size(px(size * z))
+                        .line_height(px(size * crate::glyphs::LEADING * z))
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(t.colors.text)
                         .opacity(alpha)
