@@ -493,6 +493,8 @@ pub struct Folio {
     pub viewport: Rc<Cell<Bounds<Pixels>>>,
     /// Each note's natural height (world units), measured as it's drawn.
     pub heights: Rc<RefCell<HashMap<Id, f32>>>,
+    /// A reading connection to the saved board, for ranking search results.
+    pub search_db: RefCell<Option<rusqlite::Connection>>,
     /// Lines of ink as last tessellated (`board.rs`).
     pub ink_cache: super::board::InkCache,
     /// The edit bar's size as last drawn (screen px), to find it a place.
@@ -777,6 +779,7 @@ impl Folio {
             viewport: Rc::new(Cell::new(Bounds::default())),
             heights: Rc::new(RefCell::new(HashMap::new())),
             ink_cache: Default::default(),
+            search_db: RefCell::new(None),
             edit_bar_size: Rc::new(Cell::new((700., 76.))),
             mark_at: Rc::default(),
             export_at: Rc::default(),
@@ -891,6 +894,24 @@ impl Folio {
     }
 
     /// The front-most note under `p` (world), as drawn.
+    /// Notes matching `q`, every sheet: found in the board as it is now,
+    /// the best matches first by the saved word index (FTS5) where it has
+    /// them, then the rest in sheet order.
+    pub fn ranked_search(&self, q: &str) -> Vec<crate::model::Hit> {
+        let mut hits = self.board.search(q);
+        if hits.len() < 2 || q.trim().starts_with('#') {
+            return hits;
+        }
+        let mut db = self.search_db.borrow_mut();
+        if db.is_none() && crate::db::db_file(&self.dir).exists() {
+            *db = crate::db::open(&self.dir).ok();
+        }
+        let Some(conn) = db.as_ref() else { return hits };
+        let order: Vec<Id> = crate::db::search(conn, q).unwrap_or_default().into_iter().filter(|h| h.0 == "note").map(|h| h.1).collect();
+        hits.sort_by_key(|h| order.iter().position(|id| *id == h.note).unwrap_or(usize::MAX));
+        hits
+    }
+
     /// The front-most line of ink under `p` (world), within a few pixels.
     pub fn stroke_at(&self, p: Vec2) -> Option<Id> {
         let reach = 4. / self.sheet().camera.zoom;

@@ -47,6 +47,15 @@ pub fn media_dir(dir: &Path) -> PathBuf {
 /// `FOLIO_DEMO=1`); if the file can't be read, an empty board, with the bad
 /// file kept aside as `board.json.bad`.
 pub fn load(dir: &Path) -> Board {
+    // The database, once there is one; before that, board.json (the next
+    // save moves the board into the database).
+    if crate::db::db_file(dir).exists() {
+        if let Ok(Some((mut b, _))) = crate::db::open(dir).and_then(|c| crate::db::load(&c)) {
+            apply_view(dir, &mut b);
+            b.normalize();
+            return b;
+        }
+    }
     let path = board_file(dir);
     let Ok(text) = std::fs::read_to_string(&path) else {
         if std::env::var_os("FOLIO_DEMO").is_some() {
@@ -136,11 +145,23 @@ pub struct Saver {
     /// The number of the newest save on the disk.
     written: Arc<Mutex<u64>>,
     view_written: Arc<Mutex<u64>>,
+    /// The database, open, and what was last written to it.
+    db: Arc<Mutex<Option<(rusqlite::Connection, crate::db::Rows)>>>,
 }
 
 impl Saver {
     pub fn new(dir: &Path) -> Self {
-        Saver { dir: dir.to_path_buf(), written: Arc::default(), view_written: Arc::default() }
+        Saver { dir: dir.to_path_buf(), written: Arc::default(), view_written: Arc::default(), db: Arc::default() }
+    }
+
+    /// Writes `board` into the database: only the rows that changed.
+    fn write_db(&self, board: &Board) -> rusqlite::Result<()> {
+        let mut db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        if db.is_none() {
+            *db = Some((crate::db::open(&self.dir)?, crate::db::Rows::new()));
+        }
+        let (conn, last) = db.as_mut().expect("just opened");
+        crate::db::save(conn, board, last).map(|_| ())
     }
 
     /// Writes the view as view save number `n`, unless a later one is
@@ -160,14 +181,21 @@ impl Saver {
     /// already on the disk (then `Ok(false)`). The board is turned to text
     /// before waiting for an earlier save to finish.
     pub fn write(&self, n: u64, board: &Board, steps: &[Arc<Change>]) -> std::io::Result<bool> {
-        let text = serde_json::to_string(board).map_err(std::io::Error::other)?;
         let history = history_text(steps);
         let mut written = self.written.lock().unwrap_or_else(|e| e.into_inner());
         if n <= *written {
             return Ok(false);
         }
         std::fs::create_dir_all(&self.dir)?;
-        write_whole(&board_file(&self.dir), &text)?;
+        if let Err(e) = self.write_db(board) {
+            // The database wouldn't take it: the board goes to board.json
+            // instead, so nothing is lost.
+            eprintln!("folio.db: {e}");
+            let text = serde_json::to_string(board).map_err(std::io::Error::other)?;
+            write_whole(&board_file(&self.dir), &text)?;
+            let _ = std::fs::remove_file(crate::db::db_file(&self.dir));
+            *self.db.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
         *written = n;
         // The board is safe; undo after a restart is a bonus.
         let _ = write_whole(&history_file(&self.dir), &history);
@@ -458,6 +486,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_file(big);
         let _ = std::fs::remove_file(small);
+    }
+
+    #[test]
+    fn the_board_moves_into_the_database_and_back() {
+        let dir = temp_dir("db");
+        let board = demo::board();
+        // An old folder: board.json only.
+        save(&dir, &board).unwrap();
+        assert_eq!(load(&dir), board);
+        // The app's next save puts it in folio.db, which is read from then on.
+        let saver = Saver::new(&dir);
+        let mut moved = board.clone();
+        moved.categories[0].name = "Moved in".into();
+        assert!(saver.write(1, &moved, &[]).unwrap());
+        assert!(crate::db::db_file(&dir).exists());
+        assert_eq!(load(&dir).categories[0].name, "Moved in");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

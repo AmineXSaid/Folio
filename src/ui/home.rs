@@ -366,7 +366,7 @@ impl Folio {
 
     /// While searching: the matching notes, then the matching sheets.
     fn render_results(&self, q: &str, card_w: f32, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let hits = self.board.search(q);
+        let hits = self.ranked_search(q);
         let shown = hits.len().min(60);
         // Each note found fades up into the list; ones already there stay.
         let rows = hits.into_iter().take(60).enumerate().map(|(i, h)| {

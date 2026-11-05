@@ -34,6 +34,9 @@ resvg = { version = "=0.46.0", default-features = false, features = ["text", "sy
 ttf-parser = "=0.25.1"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 miniz_oxide = "=0.8.9"
+# The board on disk: SQLite, one row per thing, with full-text search
+# (FTS5). MIT; SQLite itself is public domain, built in.
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
 
 # Windows: the tray icon and its menu, and reminder notifications.
 [target.'cfg(windows)'.dependencies]

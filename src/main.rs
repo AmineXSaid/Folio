@@ -3,6 +3,7 @@
 mod assets;
 mod avatars;
 mod cloud;
+mod db;
 mod demo;
 mod export;
 mod fonts;

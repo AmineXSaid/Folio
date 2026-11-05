@@ -362,7 +362,7 @@ holds that sheet, as the Trash does.
 | Stage | Format | Why |
 |---|---|---|
 | v0.1 | One JSON file + `media/` | Transparent, easy to back up, trivially correct with atomic rename. |
-| v0.3 | **SQLite** (`rusqlite`, bundled; WAL) with one row per item and a `sheets` table | Incremental saves, crash safety, fast search with FTS5 across all sheets. JSON stays as export/import. |
+| v0.3 ✅ | **SQLite** (`rusqlite` 0.32, bundled; WAL) in `folio.db`: one row per thing on a sheet (`items`), a `sheets` table and one row for the rest of the board; a save writes only the rows that changed, in one transaction; an FTS5 index (`words`) over notes, text and shapes orders search results by relevance (the hits themselves come from the board in memory, current to the keystroke). A folder with only `board.json` is read from it and moves into the database on its first save; if the database ever refuses a save, the board is written to `board.json` instead (`src/db.rs`) | Incremental saves, crash safety, fast search with FTS5 across all sheets. JSON stays as export/import. |
 | v1.0 | Daily rotating backups (`backups/YYYY-MM-DD.json.gz`, keep 14), export a sheet to PNG/PDF/Markdown | Peace of mind and sharing. |
 | v0.2 | Optional Google Drive sync: board.json by Drive revision, merged per item (three-way, from `sync-base.json`) when both changed | Multi-device with the account people already have, without overwriting anyone's work. |
 | Later | The same merge over a plain folder (OneDrive/Syncthing); merging inside a note's text | No account needed; two edits to one note both survive. |
