@@ -210,6 +210,47 @@ fn tidy_input(title: &Entity<InputState>, body: &Entity<TextareaState>, paste: b
     body.update(cx, |i, cx| replace_changed(i, &text, &new, range, window, cx));
 }
 
+/// Shows the Markdown in a text area styled as it's typed: bold words bold,
+/// slanted ones slanted, struck, code, links, highlights and coloured words
+/// in their colours, headings bold, and the marks themselves faint.
+pub fn style_markdown(input: &Entity<TextareaState>, cx: &mut gpui::App) {
+    use crate::markdown::Look;
+    use gpui::component::input::TextDecoration;
+    use gpui::HighlightStyle;
+    let t = crate::theme::theme(cx).clone();
+    let text = input.read(cx).value().to_string();
+    let mark_tint = |name: &str| -> gpui::Hsla {
+        let hex = name.strip_prefix('#').and_then(|h| u32::from_str_radix(h, 16).ok());
+        let named = crate::theme::MARKS.iter().find(|m| m.0 == name).map(|m| if t.is_dark { m.2 } else { m.1 });
+        gpui::rgb(hex.or(named).unwrap_or(crate::theme::MARKS[0].1)).into()
+    };
+    let ink = |name: &str| -> gpui::Hsla {
+        match name.strip_prefix('#').and_then(|h| u32::from_str_radix(h, 16).ok()) {
+            Some(hex) => gpui::rgb(hex).into(),
+            None => crate::model::TEXT_COLOURS.iter().find(|c| c.0 == name).map_or(t.colors.text, |c| t.ink(c.1)),
+        }
+    };
+    let line = |w: f32| gpui::StrikethroughStyle { thickness: gpui::px(w), ..Default::default() };
+    let styles: Vec<TextDecoration> = crate::markdown::looks(&text)
+        .into_iter()
+        .map(|(range, look)| {
+            let style = match look {
+                Look::Mark => HighlightStyle { color: Some(t.colors.text_subtle), ..Default::default() },
+                Look::Bold | Look::Heading => HighlightStyle { font_weight: Some(gpui::FontWeight::BOLD), ..Default::default() },
+                Look::Italic => HighlightStyle { font_style: Some(gpui::FontStyle::Italic), ..Default::default() },
+                Look::Strike => HighlightStyle { strikethrough: Some(line(1.)), ..Default::default() },
+                Look::Code => HighlightStyle { background_color: Some(t.colors.hover), ..Default::default() },
+                Look::Link => HighlightStyle { color: Some(t.colors.brand), ..Default::default() },
+                Look::Highlight(c) => HighlightStyle { background_color: Some(mark_tint(&c)), ..Default::default() },
+                Look::Ink(c) => HighlightStyle { color: Some(ink(&c)), ..Default::default() },
+                Look::Done => HighlightStyle { color: Some(t.colors.text_muted), strikethrough: Some(line(1.)), ..Default::default() },
+            };
+            TextDecoration::new(range, style)
+        })
+        .collect();
+    input.update(cx, |i, cx| i.set_text_styles(styles, cx));
+}
+
 /// The clipboard's rich text (from a browser or a word processor) as
 /// Markdown, when there is some.
 fn rich_clip() -> Option<String> {
@@ -695,9 +736,15 @@ impl Folio {
                 _ => {}
             }),
             // Writing on the sheet: clicking away keeps it.
-            cx.subscribe_in(&label_input, window, |this, _, ev, _, cx| {
-                if matches!(ev, InputEvent::Blur) {
-                    this.finish_label(cx);
+            cx.subscribe_in(&label_input, window, |this, input, ev, _, cx| match ev {
+                InputEvent::Blur => this.finish_label(cx),
+                // Styled as it's typed.
+                InputEvent::Change => style_markdown(input, cx),
+                _ => {}
+            }),
+            cx.subscribe_in(&body_input, window, |_, input, ev, _, cx| {
+                if matches!(ev, InputEvent::Change) {
+                    style_markdown(input, cx);
                 }
             }),
             cx.subscribe_in(&welcome_input, window, |this, _, ev, window, cx| match ev {
@@ -1690,6 +1737,7 @@ impl Folio {
             i.set_value(body, window, cx);
             i.set_selected_range(end..end, cx);
         });
+        style_markdown(&self.body_input, cx);
         self.editing = Some(Edit { id, is_new });
         self.menu = None;
         self.select(Selection::Sticker(id));
@@ -2230,6 +2278,7 @@ impl Folio {
             i.set_value(text, window, cx);
             i.set_selected_range(end..end, cx);
         });
+        style_markdown(&self.label_input, cx);
         let input = self.label_input.clone();
         window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
         cx.notify();

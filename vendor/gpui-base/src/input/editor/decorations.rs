@@ -554,6 +554,34 @@ impl InputBaseState<EditorMode> {
     }
 }
 
+/// Styles laid over a plain text area's words (Folio): one layer, replaced
+/// whole each time the text changes, so it needs no tracking through edits.
+#[derive(Default)]
+pub struct TextareaExtras {
+    layer: DecorationCollections,
+}
+
+impl crate::input::InputExtras for TextareaExtras {
+    fn decoration_layers(&self) -> Vec<&[TextDecoration]> {
+        self.layer.iter().collect()
+    }
+}
+
+impl InputBaseState<crate::input::TextareaMode> {
+    /// Replaces the styles laid over the text: each a UTF-8 byte range of
+    /// [`Self::value`] and how it's drawn (weight, slant, colour, fill,
+    /// strikethrough). They don't change the text or where lines break.
+    pub fn set_text_styles(&mut self, decorations: Vec<TextDecoration>, cx: &mut Context<Self>) {
+        let decorations = normalize(&self.text, decorations);
+        if self.extras.layer.entries.is_empty() {
+            self.extras.layer.create(decorations);
+        } else {
+            self.extras.layer.set(DecorationCollectionId(0), decorations);
+        }
+        cx.notify();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

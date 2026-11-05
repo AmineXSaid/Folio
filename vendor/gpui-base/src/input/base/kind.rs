@@ -343,8 +343,8 @@ impl InputModeKind for InputMode {
 impl InputModeKind for TextareaMode {
     const MULTI_LINE: bool = true;
 
-    /// Ordinary multi-line text needs nothing beyond the shared engine.
-    type Extras = ();
+    /// Multi-line text, with styles an app can lay over its words.
+    type Extras = super::decorations::TextareaExtras;
 }
 // `EditorMode`'s implementation lives with the editor code, next to the
 // language features it dispatches to.

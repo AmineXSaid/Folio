@@ -735,6 +735,151 @@ fn tighten(lines: Vec<String>) -> String {
     out.join("\n")
 }
 
+// ---------- Styled while typing ----------
+
+/// How a stretch of a note's Markdown looks while it's typed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Look {
+    /// A Markdown mark (`**`, `#`, `- [ ]`, a tag…): there, but faint.
+    Mark,
+    Bold,
+    Italic,
+    Strike,
+    Code,
+    Heading,
+    Link,
+    /// Highlighted, in this colour name (or `#hex`).
+    Highlight(String),
+    /// Words in this colour name (or `#hex`).
+    Ink(String),
+    /// A ticked task's words.
+    Done,
+}
+
+/// The stretches of `text` (byte ranges) and how each looks while typed:
+/// headings, list and quote marks, bold, slanted, struck, code, links,
+/// highlights and coloured words, their marks faint. Stretches may overlap
+/// (a bold word in a heading); later ones are drawn over earlier ones.
+pub fn looks(text: &str) -> Vec<(Range<usize>, Look)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_end_matches('\n');
+        let lead = body.len() - body.trim_start().len();
+        let rest = &body[lead..];
+        let mut from = lead;
+        // Block marks at the start of the line.
+        if let Some(h) = rest.strip_prefix('#') {
+            let hashes = 1 + h.chars().take_while(|c| *c == '#').count();
+            if rest[hashes..].starts_with(' ') {
+                out.push((at + lead..at + lead + hashes + 1, Look::Mark));
+                out.push((at + lead + hashes + 1..at + body.len(), Look::Heading));
+                from = lead + hashes + 1;
+            }
+        } else if let Some(q) = rest.strip_prefix("> ").or_else(|| (rest == ">").then_some("")) {
+            out.push((at + lead..at + body.len() - q.len(), Look::Mark));
+            from = body.len() - q.len();
+        }
+        let rest = &body[from..];
+        let task = ["- [ ] ", "* [ ] ", "- [x] ", "- [X] ", "* [x] "].into_iter().find(|m| rest.starts_with(m));
+        if let Some(m) = task {
+            out.push((at + from..at + from + m.len(), Look::Mark));
+            if m.contains('x') || m.contains('X') {
+                out.push((at + from + m.len()..at + body.len(), Look::Done));
+            }
+            from += m.len();
+        } else if rest.starts_with("- ") || rest.starts_with("* ") || rest.starts_with("+ ") {
+            out.push((at + from..at + from + 2, Look::Mark));
+            from += 2;
+        } else {
+            let digits = rest.chars().take_while(char::is_ascii_digit).count();
+            if digits > 0 && rest[digits..].starts_with(". ") {
+                out.push((at + from..at + from + digits + 2, Look::Mark));
+                from += digits + 2;
+            }
+        }
+        inline_looks(&body[from..], at + from, &mut out);
+        at += line.len();
+    }
+    out
+}
+
+/// The inline marks in `s` (which starts at byte `base` of the text).
+fn inline_looks(s: &str, base: usize, out: &mut Vec<(Range<usize>, Look)>) {
+    let mut i = 0;
+    while i < s.len() {
+        let rest = &s[i..];
+        // `code`: nothing inside it is a mark.
+        if rest.starts_with('`') {
+            if let Some(end) = rest[1..].find('`') {
+                out.push((base + i..base + i + 1, Look::Mark));
+                out.push((base + i + 1..base + i + 1 + end, Look::Code));
+                out.push((base + i + 1 + end..base + i + 2 + end, Look::Mark));
+                i += end + 2;
+                continue;
+            }
+        }
+        // Pairs of marks round words.
+        let pair = [("**", Look::Bold), ("__", Look::Bold), ("~~", Look::Strike), ("*", Look::Italic), ("_", Look::Italic)]
+            .into_iter()
+            .find(|(m, _)| rest.starts_with(m) && rest[m.len()..].chars().next().is_some_and(|c| !c.is_whitespace()) && rest[m.len()..].contains(m));
+        if let Some((m, look)) = pair {
+            // A lone `_` inside a word (snake_case) isn't a mark.
+            let in_word = m == "_" && s[..i].chars().next_back().is_some_and(char::is_alphanumeric);
+            if let Some(end) = rest[m.len()..].find(m).filter(|_| !in_word) {
+                let (a, b) = (base + i, base + i + m.len() + end);
+                out.push((a..a + m.len(), Look::Mark));
+                out.push((a + m.len()..b, look));
+                out.push((b..b + m.len(), Look::Mark));
+                // Marks inside it (a slanted word in a bold run) count too.
+                inline_looks(&rest[m.len()..m.len() + end], a + m.len(), out);
+                i += m.len() + end + m.len();
+                continue;
+            }
+        }
+        // <mark color="…">…</mark> and <font color="…">…</font>.
+        let tag = [("<mark", "</mark>"), ("<font", "</font>")].into_iter().find(|(open, _)| rest.starts_with(open));
+        if let Some((open, close)) = tag {
+            if let (Some(gt), Some(end)) = (rest.find('>'), rest.find(close)) {
+                if gt < end {
+                    let color = rest[..gt].split("color=").nth(1).map(|v| v.trim_matches(|c| c == '"' || c == '\'' || c == ' ' || c == '/').to_string()).unwrap_or_else(|| "yellow".into());
+                    let a = base + i;
+                    out.push((a..a + gt + 1, Look::Mark));
+                    out.push((a + gt + 1..a + end, if open == "<mark" { Look::Highlight(color) } else { Look::Ink(color) }));
+                    out.push((a + end..a + end + close.len(), Look::Mark));
+                    inline_looks(&rest[gt + 1..end], a + gt + 1, out);
+                    i += end + close.len();
+                    continue;
+                }
+            }
+        }
+        // [[a note]] and [words](address).
+        if rest.starts_with("[[") {
+            if let Some(end) = rest.find("]]") {
+                let a = base + i;
+                out.push((a..a + 2, Look::Mark));
+                out.push((a + 2..a + end, Look::Link));
+                out.push((a + end..a + end + 2, Look::Mark));
+                i += end + 2;
+                continue;
+            }
+        }
+        if rest.starts_with('[') {
+            if let Some(mid) = rest.find("](") {
+                if let Some(close) = rest[mid..].find(')') {
+                    let a = base + i;
+                    out.push((a..a + 1, Look::Mark));
+                    out.push((a + 1..a + mid, Look::Link));
+                    out.push((a + mid..a + mid + close + 1, Look::Mark));
+                    i += mid + close + 1;
+                    continue;
+                }
+            }
+        }
+        i += rest.chars().next().map_or(1, char::len_utf8);
+    }
+}
+
 // ---------- Rich text in ----------
 
 /// Rich text from another app (HTML, as a browser or a word processor puts
@@ -1276,5 +1421,21 @@ mod tests {
         );
         assert_eq!(from_html("a<br>b&nbsp;c"), "a\nb c");
         assert_eq!(from_html("<style>p{}</style><p>  spaced \n out </p>"), "spaced out");
+    }
+
+    #[test]
+    fn markdown_is_styled_as_it_is_typed() {
+        let t = "## Plan\n- [x] **Done** it\nSee *this* and `x*y`, <font color=\"red\">red</font>.";
+        let l = looks(t);
+        let what = |look: Look| l.iter().filter(|(_, k)| *k == look).map(|(r, _)| &t[r.clone()]).collect::<Vec<_>>();
+        assert_eq!(what(Look::Heading), ["Plan"]);
+        assert_eq!(what(Look::Bold), ["Done"]);
+        assert_eq!(what(Look::Italic), ["this"]);
+        assert_eq!(what(Look::Code), ["x*y"]);
+        assert_eq!(what(Look::Done), ["**Done** it"]);
+        assert_eq!(what(Look::Ink("red".into())), ["red"]);
+        assert!(what(Look::Mark).contains(&"## ") && what(Look::Mark).contains(&"- [x] ") && what(Look::Mark).contains(&"**"));
+        // snake_case isn't slanted.
+        assert!(looks("a snake_case_name").is_empty());
     }
 }
