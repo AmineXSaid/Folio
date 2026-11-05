@@ -329,10 +329,11 @@ and to GPUI's mouse events first.
    scan, and over 10,000 notes it takes 7.5 µs (release build), far under
    a frame. An R-tree (`rstar`), updated on every move, would cost more in
    upkeep than it saves until sheets are much larger than anyone keeps.
-2. **Cache tessellated ink.** Each stroke is re-tessellated by lyon every
-   frame. Cache the `Path` per stroke in screen space and rebuild it only
-   when zoom changes (pan is a translation), or rasterise settled ink into
-   tiles.
+2. **Cache tessellated ink.** Done: each settled stroke's `Path` is kept
+   with what it was built from (its points, width and the zoom); a pan only
+   shifts it, and it's rebuilt when the stroke or the zoom changes
+   (`board.rs`, `InkCache`). Tessellating 1,000 strokes took about 10 ms a
+   frame before.
 3. **Smaller saves.** Saving is off the UI thread (done), but it still
    copies the whole board there and writes all of it. Once the board is in
    SQLite, write only the rows that changed. Drive sync turns the board to
@@ -344,8 +345,9 @@ and to GPUI's mouse events first.
    when it's brought in, pasted, synced down, or (for older ones) once at
    start, away from the screen; notes and backgrounds show the copy, while
    exports keep the original and sync leaves the copies out.
-5. **Markdown cache.** Parse once per edit and keep the AST keyed by
-   `(sticker id, edited)`.
+5. **Markdown cache.** Already so: gpui-component's text view keeps its
+   parse while a note's text is unchanged (a string compare per frame) and
+   parses new text in the background, keyed by the view's id.
 
 ### 5.4 Memory
 
