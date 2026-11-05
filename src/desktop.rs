@@ -438,3 +438,40 @@ mod tests {
         assert!(!may_type("Ctrl+Shift+N") && !may_type("Ctrl+Alt+Space") && !may_type("Ctrl+Alt+Super+N"));
     }
 }
+
+/// The clipboard's rich text, as HTML, when another app put some there
+/// (Windows' "HTML Format"); None elsewhere or when there's none.
+#[cfg(windows)]
+pub fn clipboard_html() -> Option<String> {
+    use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW};
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+    let name: Vec<u16> = "HTML Format".encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: plain Win32 clipboard calls; the clipboard is closed on every
+    // path, and the locked memory is read within its reported size.
+    unsafe {
+        let format = RegisterClipboardFormatW(name.as_ptr());
+        if format == 0 || IsClipboardFormatAvailable(format) == 0 || OpenClipboard(std::ptr::null_mut()) == 0 {
+            return None;
+        }
+        let mut out = None;
+        let handle = GetClipboardData(format);
+        if !handle.is_null() {
+            let data = GlobalLock(handle) as *const u8;
+            if !data.is_null() {
+                let size = GlobalSize(handle);
+                let bytes = std::slice::from_raw_parts(data, size);
+                let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+                out = Some(String::from_utf8_lossy(&bytes[..end]).into_owned());
+                GlobalUnlock(handle);
+            }
+        }
+        CloseClipboard();
+        // Its header ("Version:0.9 StartHTML:…") comes before the HTML.
+        out.map(|h| h.find('<').map_or(h.clone(), |i| h[i..].to_string()))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn clipboard_html() -> Option<String> {
+    None
+}

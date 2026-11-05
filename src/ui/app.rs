@@ -174,8 +174,18 @@ fn tidy_input(title: &Entity<InputState>, body: &Entity<TextareaState>, paste: b
     let sel = body.read(cx).selected_range();
     let untitled = title.read(cx).value().trim().is_empty();
     let (head, new, range) = if paste {
-        let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) else { return };
-        let (head, md) = if untitled && text.trim().is_empty() { markdown::tidy(&clip) } else { (None, markdown::tidy_body(&clip)) };
+        let (head, md) = match rich_clip() {
+            // Rich text: as Markdown, a first heading as the title of a new note.
+            Some(md) if untitled && text.trim().is_empty() => match md.split_once('\n') {
+                Some((first, rest)) if first.starts_with('#') => (Some(first.trim_start_matches('#').trim().to_string()), rest.trim_start().to_string()),
+                _ => (None, md),
+            },
+            Some(md) => (None, md),
+            None => {
+                let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) else { return };
+                if untitled && text.trim().is_empty() { markdown::tidy(&clip) } else { (None, markdown::tidy_body(&clip)) }
+            }
+        };
         let new = format!("{}{md}{}", &text[..sel.start], &text[sel.end..]);
         let at = sel.start + md.len();
         (head, new, at..at)
@@ -195,6 +205,12 @@ fn tidy_input(title: &Entity<InputState>, body: &Entity<TextareaState>, paste: b
     body.update(cx, |i, cx| replace_changed(i, &text, &new, range, window, cx));
 }
 
+/// The clipboard's rich text (from a browser or a word processor) as
+/// Markdown, when there is some.
+fn rich_clip() -> Option<String> {
+    crate::desktop::clipboard_html().map(|h| markdown::from_html(&h)).filter(|md| !md.trim().is_empty())
+}
+
 /// Writes `new` over `old` in a text area where they differ, as one undo
 /// step, then selects `sel`.
 /// Text into Markdown in a text with no title: the selection, or all of
@@ -203,8 +219,13 @@ fn tidy_text(body: &Entity<TextareaState>, paste: bool, window: &mut Window, cx:
     let text = body.read(cx).value().to_string();
     let sel = body.read(cx).selected_range();
     let (new, range) = if paste {
-        let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) else { return };
-        let md = markdown::tidy_body(&clip);
+        let md = match rich_clip() {
+            Some(md) => md,
+            None => {
+                let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) else { return };
+                markdown::tidy_body(&clip)
+            }
+        };
         let at = sel.start + md.len();
         (format!("{}{md}{}", &text[..sel.start], &text[sel.end..]), at..at)
     } else if sel.is_empty() {
@@ -645,10 +666,11 @@ impl Folio {
                 _ => {}
             }),
             // Words in a shape: clicking away keeps them.
-            cx.subscribe_in(&shape_input, window, |this, _, ev, _, cx| {
-                if matches!(ev, InputEvent::Blur) {
-                    this.finish_shape_text(cx);
-                }
+            cx.subscribe_in(&shape_input, window, |this, _, ev, _, cx| match ev {
+                InputEvent::Blur => this.finish_shape_text(cx),
+                // The words shrink to fit as they're typed.
+                InputEvent::Change => cx.notify(),
+                _ => {}
             }),
             // Writing on the sheet: clicking away keeps it.
             cx.subscribe_in(&label_input, window, |this, _, ev, _, cx| {

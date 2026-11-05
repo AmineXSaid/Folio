@@ -735,6 +735,354 @@ fn tighten(lines: Vec<String>) -> String {
     out.join("\n")
 }
 
+// ---------- Rich text in ----------
+
+/// Rich text from another app (HTML, as a browser or a word processor puts
+/// it on the clipboard) as a note's Markdown: bold, slanted, struck, code,
+/// links, headings, lists (numbered and nested), highlights, coloured words,
+/// tables and paragraphs; everything else as its words.
+pub fn from_html(html: &str) -> String {
+    // The clipboard's own wrapping: only what was copied.
+    let html = match (html.find("<!--StartFragment-->"), html.find("<!--EndFragment-->")) {
+        (Some(a), Some(b)) if b > a => &html[a + "<!--StartFragment-->".len()..b],
+        _ => html,
+    };
+    let mut out = String::new();
+    // Open lists: numbered or not, and the next number.
+    let mut lists: Vec<(bool, usize)> = Vec::new();
+    // Links being written: where their words began, and where they go.
+    let mut links: Vec<(usize, String)> = Vec::new();
+    // Open coloured or highlighted spans, so each closes what it opened.
+    let mut spans: Vec<&'static str> = Vec::new();
+    let mut skip = 0usize;
+    let mut pre = false;
+    // A table: its rows, each its cells.
+    let mut table: Option<Vec<Vec<String>>> = None;
+    let mut cell: Option<String> = None;
+    let mut i = 0;
+    let bytes = html.as_bytes();
+    while i < html.len() {
+        if html[i..].starts_with("<!--") {
+            i = html[i..].find("-->").map_or(html.len(), |e| i + e + 3);
+            continue;
+        }
+        if bytes[i] == b'<' {
+            let Some(end) = html[i..].find('>') else { break };
+            let tag = &html[i + 1..i + end];
+            i += end + 1;
+            let closing = tag.starts_with('/');
+            let tag = tag.trim_start_matches('/').trim_end_matches('/');
+            let name = tag.split(|c: char| c.is_whitespace()).next().unwrap_or("").to_ascii_lowercase();
+            let attrs = &tag[name.len().min(tag.len())..];
+            if matches!(name.as_str(), "style" | "script" | "head" | "title") {
+                skip = if closing { skip.saturating_sub(1) } else { skip + 1 };
+                continue;
+            }
+            if skip > 0 {
+                continue;
+            }
+            let sink = |out: &mut String, cell: &mut Option<String>, s: &str| match cell {
+                Some(c) => c.push_str(s),
+                None => out.push_str(s),
+            };
+            match (name.as_str(), closing) {
+                ("b" | "strong", _) => sink(&mut out, &mut cell, "**"),
+                ("i" | "em", _) => sink(&mut out, &mut cell, "*"),
+                ("s" | "strike" | "del", _) => sink(&mut out, &mut cell, "~~"),
+                ("code", _) if !pre => sink(&mut out, &mut cell, "`"),
+                ("pre", false) => {
+                    block_break(&mut out);
+                    out.push_str("```\n");
+                    pre = true;
+                }
+                ("pre", true) => {
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    out.push_str("```\n\n");
+                    pre = false;
+                }
+                ("a", false) => {
+                    let href = html_attr(attrs, "href").unwrap_or_default();
+                    sink(&mut out, &mut cell, "[");
+                    links.push((0, href));
+                }
+                ("a", true) => {
+                    if let Some((_, href)) = links.pop() {
+                        let tail = if href.is_empty() { "]".to_string() } else { format!("]({href})") };
+                        sink(&mut out, &mut cell, &tail);
+                    }
+                }
+                ("mark", false) => {
+                    sink(&mut out, &mut cell, "<mark color=\"yellow\">");
+                }
+                ("mark", true) => sink(&mut out, &mut cell, "</mark>"),
+                ("span" | "font", false) => {
+                    let color = html_attr(attrs, "color").or_else(|| css_value(&html_attr(attrs, "style").unwrap_or_default(), "color"));
+                    match color.and_then(|c| hex_colour(&c)) {
+                        Some(hex) => {
+                            sink(&mut out, &mut cell, &format!("<font color=\"{hex}\">"));
+                            spans.push("</font>");
+                        }
+                        None => spans.push(""),
+                    }
+                }
+                ("span" | "font", true) => {
+                    let close = spans.pop().unwrap_or("");
+                    sink(&mut out, &mut cell, close);
+                }
+                ("h1" | "h2" | "h3" | "h4" | "h5" | "h6", false) => {
+                    block_break(&mut out);
+                    let level = name[1..].parse::<usize>().unwrap_or(3).min(3);
+                    out.push_str(&"#".repeat(level));
+                    out.push(' ');
+                }
+                ("h1" | "h2" | "h3" | "h4" | "h5" | "h6", true) | ("p" | "div" | "blockquote", _) => block_break(&mut out),
+                ("br", _) => {
+                    let gap = if cell.is_some() { " " } else { "\n" };
+                    sink(&mut out, &mut cell, gap);
+                }
+                ("ul", false) => {
+                    line_break(&mut out);
+                    lists.push((false, 1));
+                }
+                ("ol", false) => {
+                    line_break(&mut out);
+                    lists.push((true, 1));
+                }
+                ("ul" | "ol", true) => {
+                    lists.pop();
+                    if lists.is_empty() {
+                        block_break(&mut out);
+                    }
+                }
+                ("li", false) => {
+                    line_break(&mut out);
+                    let depth = lists.len().saturating_sub(1);
+                    out.push_str(&"  ".repeat(depth));
+                    match lists.last_mut() {
+                        Some((true, n)) => {
+                            out.push_str(&format!("{n}. "));
+                            *n += 1;
+                        }
+                        _ => out.push_str("- "),
+                    }
+                }
+                ("li", true) => line_break(&mut out),
+                ("table", false) => {
+                    block_break(&mut out);
+                    table = Some(Vec::new());
+                }
+                ("tr", false) => {
+                    if let Some(t) = table.as_mut() {
+                        t.push(Vec::new());
+                    }
+                }
+                ("td" | "th", false) => cell = Some(String::new()),
+                ("td" | "th", true) => {
+                    if let (Some(t), Some(c)) = (table.as_mut(), cell.take()) {
+                        if let Some(row) = t.last_mut() {
+                            row.push(c.split_whitespace().collect::<Vec<_>>().join(" ").replace('|', "\\|"));
+                        }
+                    }
+                }
+                ("table", true) => {
+                    if let Some(rows) = table.take() {
+                        let rows: Vec<Vec<String>> = rows.into_iter().filter(|r| !r.is_empty()).collect();
+                        let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
+                        for (n, r) in rows.iter().enumerate() {
+                            let mut r = r.clone();
+                            r.resize(cols, String::new());
+                            out.push_str(&format!("| {} |\n", r.join(" | ")));
+                            if n == 0 {
+                                out.push_str(&format!("|{}\n", " --- |".repeat(cols)));
+                            }
+                        }
+                        out.push('\n');
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        let next = html[i..].find('<').map_or(html.len(), |e| i + e);
+        let text = &html[i..next];
+        i = next;
+        if skip > 0 {
+            continue;
+        }
+        let text = entities(text);
+        if pre {
+            out.push_str(&text);
+            continue;
+        }
+        // Runs of space, tabs and line ends are one space, as a browser shows them.
+        let mut words = String::new();
+        for c in text.chars() {
+            if c.is_whitespace() && c != '\u{a0}' {
+                if !words.ends_with(' ') {
+                    words.push(' ');
+                }
+            } else {
+                words.push(if c == '\u{a0}' { ' ' } else { c });
+            }
+        }
+        match cell.as_mut() {
+            Some(c) => c.push_str(&words),
+            None => {
+                // No space at the start of a line.
+                let words = if out.is_empty() || out.ends_with('\n') || out.ends_with(' ') { words.trim_start().to_string() } else { words };
+                out.push_str(&words);
+            }
+        }
+    }
+    // At most one blank line between blocks, and none at the ends.
+    let mut tidy = String::new();
+    let mut blank = 0;
+    for line in out.lines() {
+        let line = line.trim_end();
+        if line.trim().is_empty() {
+            blank += 1;
+            continue;
+        }
+        if !tidy.is_empty() {
+            tidy.push_str(if blank > 0 { "\n\n" } else { "\n" });
+        }
+        blank = 0;
+        tidy.push_str(line);
+    }
+    tidy
+}
+
+/// Ends the line being written, if one is.
+fn line_break(out: &mut String) {
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+}
+
+/// A blank line before what comes next.
+fn block_break(out: &mut String) {
+    line_break(out);
+    if !out.is_empty() && !out.ends_with("\n\n") {
+        out.push('\n');
+    }
+}
+
+/// An attribute's value in a tag: `name="value"`, `name='value'` or bare.
+fn html_attr(attrs: &str, name: &str) -> Option<String> {
+    let lower = attrs.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(at) = lower[from..].find(name).map(|a| a + from) {
+        let before_ok = at == 0 || !lower.as_bytes()[at - 1].is_ascii_alphanumeric() && lower.as_bytes()[at - 1] != b'-';
+        let rest = attrs[at + name.len()..].trim_start();
+        if before_ok && rest.starts_with('=') {
+            let v = rest[1..].trim_start();
+            let value = match v.chars().next() {
+                Some(q @ ('"' | '\'')) => v[1..].split(q).next().unwrap_or(""),
+                _ => v.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or(""),
+            };
+            return Some(entities(value));
+        }
+        from = at + name.len();
+    }
+    None
+}
+
+/// A property's value in a style attribute: `color: #c00; …`.
+fn css_value(style: &str, name: &str) -> Option<String> {
+    style.split(';').find_map(|decl| {
+        let (k, v) = decl.split_once(':')?;
+        (k.trim().eq_ignore_ascii_case(name)).then(|| v.trim().to_string())
+    })
+}
+
+/// A CSS colour as `#rrggbb`: hex, `rgb(…)` or a few names; None for
+/// black and the usual text greys, which are just text.
+fn hex_colour(c: &str) -> Option<String> {
+    let c = c.trim().to_ascii_lowercase();
+    let (r, g, b) = if let Some(h) = c.strip_prefix('#') {
+        match h.len() {
+            3 => {
+                let d = |i: usize| u8::from_str_radix(&h[i..i + 1], 16).ok().map(|v| v * 17);
+                (d(0)?, d(1)?, d(2)?)
+            }
+            6 => {
+                let d = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+                (d(0)?, d(2)?, d(4)?)
+            }
+            _ => return None,
+        }
+    } else if let Some(args) = c.strip_prefix("rgb(").or_else(|| c.strip_prefix("rgba(")) {
+        let v: Vec<u8> = args.trim_end_matches(')').split(',').take(3).filter_map(|x| x.trim().parse::<f32>().ok()).map(|x| x.clamp(0., 255.) as u8).collect();
+        if v.len() < 3 {
+            return None;
+        }
+        (v[0], v[1], v[2])
+    } else {
+        match c.as_str() {
+            "red" => (0xc0, 0x39, 0x2b),
+            "green" => (0x2e, 0x7d, 0x32),
+            "blue" => (0x1e, 0x5a, 0xc8),
+            "orange" => (0xe6, 0x7e, 0x22),
+            "purple" => (0x7b, 0x3f, 0xb5),
+            _ => return None,
+        }
+    };
+    // Black, white and greys are the text's own colour, not a choice.
+    let grey = r.abs_diff(g) < 24 && g.abs_diff(b) < 24 && r.abs_diff(b) < 24;
+    (!grey).then(|| format!("#{r:02x}{g:02x}{b:02x}"))
+}
+
+/// `&amp;` and the like as the characters they stand for.
+fn entities(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let Some(end) = rest.find(';').filter(|&e| e <= 10) else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let name = &rest[1..end];
+        let ch = match name {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some('\u{a0}'),
+            "ndash" => Some('–'),
+            "mdash" => Some('—'),
+            "hellip" => Some('…'),
+            "rsquo" => Some('’'),
+            "lsquo" => Some('‘'),
+            "rdquo" => Some('”'),
+            "ldquo" => Some('“'),
+            n if n.starts_with("#x") || n.starts_with("#X") => u32::from_str_radix(&n[2..], 16).ok().and_then(char::from_u32),
+            n if n.starts_with('#') => n[1..].parse::<u32>().ok().and_then(char::from_u32),
+            _ => None,
+        };
+        match ch {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -915,5 +1263,18 @@ mod tests {
         assert_eq!(s2, "a <font color=\"blue\">big</font> day");
         let (s3, _) = toggle_font(&s2, r2, "blue");
         assert_eq!(s3, "a big day");
+    }
+
+    #[test]
+    fn rich_text_comes_in_as_markdown() {
+        let html = "<html><body><!--StartFragment--><h2>Plan</h2><p>Make it <b>bold</b> and <em>calm</em>, see <a href=\"https://x.y\">this</a>.</p>\
+<ul><li>One</li><li>Two<ol><li>a</li><li>b</li></ol></li></ul><p><span style=\"color: rgb(192, 57, 43)\">red words</span> &amp; <span style=\"color:#333\">grey</span></p>\
+<table><tr><th>Week</th><th>Focus</th></tr><tr><td>01</td><td>Intro</td></tr></table><!--EndFragment--></body></html>";
+        assert_eq!(
+            from_html(html),
+            "## Plan\n\nMake it **bold** and *calm*, see [this](https://x.y).\n\n- One\n- Two\n  1. a\n  2. b\n\n<font color=\"#c0392b\">red words</font> & grey\n\n| Week | Focus |\n| --- | --- |\n| 01 | Intro |"
+        );
+        assert_eq!(from_html("a<br>b&nbsp;c"), "a\nb c");
+        assert_eq!(from_html("<style>p{}</style><p>  spaced \n out </p>"), "spaced out");
     }
 }
