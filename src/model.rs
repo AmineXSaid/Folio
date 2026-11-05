@@ -856,6 +856,19 @@ impl Stroke {
         Rect { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2. * pad, h: y1 - y0 + 2. * pad }
     }
 
+    /// Moves the whole line by `d`.
+    pub fn translate(&mut self, d: Vec2) {
+        for p in &mut self.points {
+            *p = p.add(d);
+        }
+    }
+
+    /// Whether most of the line lies inside the loop `lasso`.
+    pub fn within(&self, lasso: &[Vec2]) -> bool {
+        let inside = self.points.iter().filter(|p| point_in(**p, lasso)).count();
+        !self.points.is_empty() && inside * 2 >= self.points.len()
+    }
+
     /// Whether `p` is within `radius` of the line.
     pub fn hit(&self, p: Vec2, radius: f32) -> bool {
         let r = radius + self.width / 2.;
@@ -1755,6 +1768,24 @@ pub fn link_curve(a: &Rect, b: &Rect) -> [Vec2; 4] {
         let k = ((p3.y - p0.y).abs() * 0.5).max(40.);
         [p0, v2(p0.x, p0.y + sy * k), v2(p3.x, p3.y - sy * k), p3]
     }
+}
+
+/// Whether `p` lies inside the closed loop `poly` (even-odd).
+pub fn point_in(p: Vec2, poly: &[Vec2]) -> bool {
+    let mut inside = false;
+    let n = poly.len();
+    if n < 3 {
+        return false;
+    }
+    let mut j = n - 1;
+    for i in 0..n {
+        let (a, b) = (poly[i], poly[j]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
 }
 
 pub fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
@@ -3161,6 +3192,16 @@ mod tests {
         assert_eq!((r.x, r.y, r.w, r.h), (0., -50., 200., 200.));
         let c = Crop { x: 0.9, y: -0.2, w: 0.5, h: 0.01 }.clamped();
         assert_eq!((c.x, c.y, c.w, c.h), (0.5, 0., 0.5, Crop::LEAST));
+    }
+
+    #[test]
+    fn a_lasso_catches_the_lines_mostly_inside_it() {
+        let lasso = vec![v2(0., 0.), v2(100., 0.), v2(100., 100.), v2(0., 100.)];
+        assert!(point_in(v2(50., 50.), &lasso) && !point_in(v2(150., 50.), &lasso));
+        let mut s = Stroke { id: 1, ink: Ink::Graphite, width: 2., marker: false, points: vec![v2(10., 10.), v2(50., 50.), v2(90., 90.)] };
+        assert!(s.within(&lasso));
+        s.translate(v2(80., 0.));
+        assert!(!s.within(&lasso));
     }
 
     #[test]

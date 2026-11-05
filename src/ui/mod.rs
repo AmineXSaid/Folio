@@ -89,6 +89,7 @@ gpui::actions!(
         ToolConnect,
         ToolFrame,
         ToolEraser,
+        ToolLasso,
         // Shapes: the picker, and turning the selected ones.
         ToggleShapes,
         TurnLeft,

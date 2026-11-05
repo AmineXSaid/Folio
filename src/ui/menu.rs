@@ -1426,6 +1426,48 @@ impl Folio {
                         .into_any_element(),
                 );
             }
+            (MenuKind::Ink(_), _) => {
+                // The picked lines of ink: their ink, or gone.
+                let ids = self.selected_strokes();
+                let now_ink = ids.first().and_then(|id| self.sheet().strokes.iter().find(|s| s.id == *id)).map(|s| s.ink);
+                items.push(caption("Ink", &t).into_any_element());
+                items.push(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(5.))
+                        .px(t.space.sm)
+                        .py(px(4.))
+                        .max_w(px(260.))
+                        .children(Ink::ALL.iter().map(|&ink| {
+                            let ids = ids.clone();
+                            div()
+                                .id(("m-stroke-ink", ink as usize))
+                                .size(px(20.))
+                                .rounded(t.radius.full)
+                                .bg(t.ink(ink))
+                                .border_1()
+                                .border_color(if now_ink == Some(ink) { t.colors.brand } else { t.colors.border })
+                                .when(now_ink == Some(ink), |d| d.border_2())
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.menu = None;
+                                    this.recolour_strokes(&ids, ink, cx);
+                                }))
+                        }))
+                        .into_any_element(),
+                );
+                items.push(sep(&t).into_any_element());
+                items.push(
+                    row("m-stroke-del", "icons/trash.svg", if ids.len() > 1 { "Delete these lines" } else { "Delete this line" }, Some("Del".into()), &t)
+                        .text_color(t.colors.danger)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            this.delete_selection(cx);
+                        }))
+                        .into_any_element(),
+                );
+            }
             _ => {}
         }
         let heading = match kind {

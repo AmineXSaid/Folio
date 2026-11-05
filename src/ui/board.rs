@@ -87,6 +87,18 @@ impl Folio {
 
         // Ink beneath the notes: links, then strokes.
         let mut paths: Vec<InkPath> = Vec::new();
+        // Picked lines of ink: a soft band of the brand colour under each.
+        for s in sheet.strokes.iter().filter(|s| self.is_selected(Selection::Stroke(s.id)) && s.bounds().intersects(&view)) {
+            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color: t.colors.brand.opacity(0.28), width: (s.width + 8.) * cam.zoom });
+        }
+        // The loop being drawn with the lasso, closed back to where it began.
+        if let Gesture::Lasso { points } = &self.gesture {
+            let mut run: Vec<_> = points.iter().map(|p| screen(*p)).collect();
+            if let Some(first) = run.first().copied() {
+                run.push(first);
+            }
+            paths.push(InkPath { points: run, color: t.colors.brand.opacity(0.8), width: 1.5 });
+        }
         for s in sheet.strokes.iter().filter(|s| s.bounds().intersects(&view)) {
             let mut color = t.ink(s.ink);
             if s.marker {
@@ -336,7 +348,7 @@ impl Folio {
         let cursor = match self.tool {
             _ if self.space => gpui::CursorStyle::OpenHand,
             Tool::Hand => gpui::CursorStyle::OpenHand,
-            Tool::Pen | Tool::Marker | Tool::Eraser | Tool::Connect | Tool::Frame => gpui::CursorStyle::Crosshair,
+            Tool::Pen | Tool::Marker | Tool::Eraser | Tool::Connect | Tool::Frame | Tool::Lasso => gpui::CursorStyle::Crosshair,
             Tool::Text if self.label_grip_at(self.cursor).is_some() || matches!(self.gesture, Gesture::LabelWidth { .. }) => {
                 gpui::CursorStyle::ResizeLeftRight
             }
@@ -390,7 +402,7 @@ impl Folio {
                 Some(Selection::Label(id)) => this.edit_label(id, false, window, cx),
                 Some(Selection::Frame(id)) => this.rename_frame(id, window, cx),
                 Some(Selection::Shape(id)) => this.edit_shape_text(id, window, cx),
-                Some(Selection::Link(_)) => {}
+                Some(Selection::Link(_) | Selection::Stroke(_)) => {}
                 None => {}
             }))
             .on_action(cx.listener(|this, _: &Paste, _, cx| this.paste(false, cx)))
@@ -431,6 +443,7 @@ impl Folio {
             .on_action(cx.listener(|this, _: &ToolConnect, _, cx| this.set_tool(Tool::Connect, cx)))
             .on_action(cx.listener(|this, _: &ToolFrame, _, cx| this.set_tool(Tool::Frame, cx)))
             .on_action(cx.listener(|this, _: &ToolEraser, _, cx| this.set_tool(Tool::Eraser, cx)))
+            .on_action(cx.listener(|this, _: &ToolLasso, _, cx| this.set_tool(Tool::Lasso, cx)))
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                 if ev.keystroke.key == "space" && !this.space {
                     this.space = true;
@@ -1180,6 +1193,11 @@ impl Folio {
         } else if let Some(id) = self.link_at(world) {
             self.select(Selection::Link(id));
             MenuKind::Link(id)
+        } else if let Some(id) = self.stroke_at(world) {
+            if !self.is_selected(Selection::Stroke(id)) {
+                self.select(Selection::Stroke(id));
+            }
+            MenuKind::Ink(id)
         } else if let Some(id) = self.frame_bar_at(world).or_else(|| self.sheet().frame_at(world)) {
             self.select(Selection::Frame(id));
             MenuKind::Frame(id)
@@ -1228,6 +1246,12 @@ impl Folio {
                 }
                 // A link follows its ends.
                 Selection::Link(_) => {}
+                Selection::Stroke(id) => {
+                    if let Some(s) = c.strokes.iter().find(|s| s.id == id) {
+                        let b = s.bounds();
+                        add(*sel, v2(b.x, b.y), &mut out);
+                    }
+                }
                 Selection::Frame(id) => {
                     if let Some(f) = c.frames.iter().find(|f| f.id == id) {
                         add(*sel, v2(f.rect.x, f.rect.y), &mut out);
@@ -1384,6 +1408,19 @@ impl Folio {
                     self.gesture = Gesture::None;
                     cx.notify();
                     return;
+                } else if let Some(id) = self.stroke_at(world) {
+                    // A line of ink: picked to move, recolour or delete.
+                    let sel = Selection::Stroke(id);
+                    if shift {
+                        if !self.toggle_selected(sel) {
+                            self.gesture = Gesture::None;
+                            cx.notify();
+                            return;
+                        }
+                    } else if !self.is_selected(sel) {
+                        self.select(sel);
+                    }
+                    self.gesture = Gesture::Move { items: self.move_set(), start: world, moved: false };
                 } else if let Some(id) = self.frame_bar_at(world) {
                     let sel = Selection::Frame(id);
                     if double {
@@ -1411,6 +1448,12 @@ impl Folio {
                     }
                     self.gesture = Gesture::Marquee { start: world, now: world, additive: shift };
                 }
+            }
+            Tool::Lasso => {
+                if !shift {
+                    self.selection.clear();
+                }
+                self.gesture = Gesture::Lasso { points: vec![world] };
             }
             Tool::Pen | Tool::Marker => {
                 let marker = self.tool == Tool::Marker;
@@ -1526,7 +1569,19 @@ impl Folio {
                             }
                         }
                         Selection::Link(_) => {}
+                        Selection::Stroke(id) => {
+                            if let Some(s) = sheet.strokes.iter_mut().find(|s| s.id == id) {
+                                let b = s.bounds();
+                                s.translate(p.sub(v2(b.x, b.y)));
+                            }
+                        }
                     }
+                }
+            }
+            Gesture::Lasso { points } => {
+                // A point every few pixels is enough for the loop.
+                if points.last().is_none_or(|q| q.sub(world).len() * cam.zoom > 3.) {
+                    points.push(world);
                 }
             }
             Gesture::Resize { id, start, rect, grip } => {
@@ -1587,6 +1642,7 @@ impl Folio {
                     .chain(c.labels.iter().filter(|l| r.intersects(&self.label_box(l))).map(|l| Selection::Label(l.id)))
                     .chain(c.frames.iter().filter(|f| contains(&r, &f.rect)).map(|f| Selection::Frame(f.id)))
                     .chain(c.shapes.iter().filter(|s| r.intersects(&s.bounds())).map(|s| Selection::Shape(s.id)))
+                    .chain(c.strokes.iter().filter(|s| contains(&r, &s.bounds())).map(|s| Selection::Stroke(s.id)))
                     .collect();
                 if additive {
                     for s in std::mem::take(&mut self.selection) {
@@ -1798,6 +1854,32 @@ impl Folio {
             Gesture::Marquee { start, now, .. } => {
                 if start.sub(now).len() * self.sheet().camera.zoom < 3. {
                     // A click on the empty sheet.
+                }
+            }
+            Gesture::Lasso { points } => {
+                // Everything inside the loop is picked: lines of ink mostly
+                // inside it, and notes, text and shapes whose middle is.
+                let c = self.sheet();
+                let inside = |r: Rect| point_in(r.center(), &points);
+                let mut sel: Vec<Selection> = c
+                    .strokes
+                    .iter()
+                    .filter(|s| s.within(&points))
+                    .map(|s| Selection::Stroke(s.id))
+                    .chain(c.stickers.iter().filter(|s| inside(self.note_rect(s))).map(|s| Selection::Sticker(s.id)))
+                    .chain(c.labels.iter().filter(|l| inside(self.label_box(l))).map(|l| Selection::Label(l.id)))
+                    .chain(c.shapes.iter().filter(|s| inside(s.bounds())).map(|s| Selection::Shape(s.id)))
+                    .collect();
+                for s in std::mem::take(&mut self.selection) {
+                    if !sel.contains(&s) {
+                        sel.push(s);
+                    }
+                }
+                let n = sel.len();
+                self.selection = sel;
+                // Picked, they're moved with the pointer.
+                if n > 0 {
+                    self.tool = Tool::Select;
                 }
             }
             Gesture::MakeFrame { start, now } => {

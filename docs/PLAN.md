@@ -288,9 +288,16 @@ with Ramer–Douglas–Peucker (at a tolerance of about a third of a screen
 pixel). Shapes (v0.2) are outlines fitted to a box and turned about its
 centre (`Shape { geom, rect, rot, … }`): the board fills and strokes them
 as paths, so they turn freely, and the export writes the same outlines.
-**Planned:** pressure from tablets (GPUI pointer events carry it on some
-platforms), connectors between shapes, and a lasso to select, move and
-recolour ink.
+Done: connectors between shapes (with connection points and routing), and
+the **Lasso** tool (L): draw a loop and the lines of ink mostly inside it,
+and the notes, text and shapes whose middle is, are picked; picked ink
+shows a soft band, moves with the pointer, and its right-click menu
+recolours or deletes it. A line of ink is also picked by clicking it with
+Select, or by a selection box drawn round it.
+**Not possible yet:** pen pressure. GPUI's pointer events carry no pressure
+on Windows or Linux (only a trackpad's force-click stage on macOS), so it
+needs pressure added to the vendored Windows platform's pointer messages
+and to GPUI's mouse events first.
 
 ---
 

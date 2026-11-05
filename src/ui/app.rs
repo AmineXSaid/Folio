@@ -35,11 +35,13 @@ pub enum Tool {
     Connect,
     Frame,
     Eraser,
+    /// Draw a loop round things to pick them, ink included.
+    Lasso,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 8] =
-        [Tool::Select, Tool::Hand, Tool::Pen, Tool::Marker, Tool::Text, Tool::Connect, Tool::Frame, Tool::Eraser];
+    pub const ALL: [Tool; 9] =
+        [Tool::Select, Tool::Lasso, Tool::Hand, Tool::Pen, Tool::Marker, Tool::Text, Tool::Connect, Tool::Frame, Tool::Eraser];
     pub fn icon(self) -> &'static str {
         match self {
             Tool::Select => "icons/mouse-pointer-2.svg",
@@ -50,6 +52,7 @@ impl Tool {
             Tool::Connect => "icons/spline.svg",
             Tool::Frame => "icons/square-dashed.svg",
             Tool::Eraser => "icons/eraser.svg",
+            Tool::Lasso => "icons/lasso.svg",
         }
     }
     pub fn name(self) -> &'static str {
@@ -62,6 +65,7 @@ impl Tool {
             Tool::Connect => "Connect",
             Tool::Frame => "Area",
             Tool::Eraser => "Eraser",
+            Tool::Lasso => "Lasso",
         }
     }
     pub fn key(self) -> &'static str {
@@ -74,6 +78,7 @@ impl Tool {
             Tool::Connect => "C",
             Tool::Frame => "F",
             Tool::Eraser => "E",
+            Tool::Lasso => "L",
         }
     }
     /// Tools that put ink down, so the ink swatches show beside them.
@@ -258,6 +263,8 @@ pub enum Selection {
     Frame(Id),
     Shape(Id),
     Link(Id),
+    /// A line drawn with the pen or marker.
+    Stroke(Id),
 }
 
 /// The opening, playing (every launch).
@@ -313,6 +320,8 @@ pub enum Gesture {
     Resize { id: Id, start: Vec2, rect: Rect, grip: Grip },
     ResizeFrame { id: Id, start: Vec2, rect: Rect, grip: Grip },
     Marquee { start: Vec2, now: Vec2, additive: bool },
+    /// A loop being drawn with the lasso, on the sheet.
+    Lasso { points: Vec<Vec2> },
     Draw(Stroke),
     Erase { erased: bool },
     /// A link being drawn from `from` (fixed to `side` of it, if picked).
@@ -346,6 +355,8 @@ pub enum MenuKind {
     Label(Id),
     Shape(Id),
     Link(Id),
+    /// The lines of ink picked, the one right-clicked among them.
+    Ink(Id),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -874,6 +885,26 @@ impl Folio {
     }
 
     /// The front-most note under `p` (world), as drawn.
+    /// The front-most line of ink under `p` (world), within a few pixels.
+    pub fn stroke_at(&self, p: Vec2) -> Option<Id> {
+        let reach = 4. / self.sheet().camera.zoom;
+        self.sheet().strokes.iter().rev().find(|s| s.hit(p, reach)).map(|s| s.id)
+    }
+
+    /// The lines of ink picked.
+    pub fn selected_strokes(&self) -> Vec<Id> {
+        self.selection.iter().filter_map(|s| if let Selection::Stroke(id) = s { Some(*id) } else { None }).collect()
+    }
+
+    /// Recolours lines of ink, as one undo step.
+    pub fn recolour_strokes(&mut self, ids: &[Id], ink: crate::model::Ink, cx: &mut Context<Self>) {
+        self.change(cx, |b| {
+            for s in b.sheet_mut().strokes.iter_mut().filter(|s| ids.contains(&s.id)) {
+                s.ink = ink;
+            }
+        });
+    }
+
     pub fn note_at(&self, p: Vec2) -> Option<Id> {
         self.sheet().stickers.iter().rev().find(|s| self.note_rect(s).contains(p)).map(|s| s.id)
     }
@@ -1848,6 +1879,7 @@ impl Folio {
                     Selection::Frame(id) => b.sheet_mut().frames.retain(|f| f.id != id),
                     Selection::Shape(id) => b.sheet_mut().remove_shape(id),
                     Selection::Link(id) => b.sheet_mut().links.retain(|l| l.id != id),
+                    Selection::Stroke(id) => b.sheet_mut().strokes.retain(|l| l.id != id),
                 }
             }
         });
