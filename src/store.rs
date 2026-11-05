@@ -370,7 +370,64 @@ pub fn import_image(dir: &Path, src: &Path, id: u64) -> std::io::Result<String> 
     let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
     let name = media_name(id, &ext);
     std::fs::copy(src, media.join(&name))?;
+    make_view_copy(&media.join(&name));
     Ok(name)
+}
+
+/// The longest side a picture is drawn at on the sheet (pixels); a larger
+/// one is shown from a copy this size, so a big photo doesn't sit in the
+/// graphics card's memory whole.
+pub const VIEW_SIDE: u32 = 2048;
+
+/// Where the smaller copy of picture `path` for showing lives:
+/// `name.view.png` (or `.jpg`) beside it.
+pub fn view_copy_path(path: &Path) -> PathBuf {
+    let jpeg = path.extension().is_some_and(|e| matches!(e.to_ascii_lowercase().to_str(), Some("jpg" | "jpeg" | "webp")));
+    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(if jpeg { ".view.jpg" } else { ".view.png" });
+    path.with_file_name(name)
+}
+
+/// Writes the smaller copy of a large still picture; nothing for one that's
+/// small enough, an SVG or a GIF (which may move). True if one was made.
+pub fn make_view_copy(path: &Path) -> bool {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp") {
+        return false;
+    }
+    let Ok((w, h)) = image::image_dimensions(path) else { return false };
+    if w.max(h) <= VIEW_SIDE {
+        return false;
+    }
+    let Ok(img) = image::open(path) else { return false };
+    let small = img.resize(VIEW_SIDE, VIEW_SIDE, image::imageops::FilterType::Triangle);
+    let out = view_copy_path(path);
+    let small = if out.extension().is_some_and(|e| e == "jpg") { image::DynamicImage::ImageRgb8(small.to_rgb8()) } else { small };
+    small.save(&out).is_ok()
+}
+
+/// Makes the smaller copies pictures brought in before there were any
+/// still lack: run once, away from the screen.
+pub fn make_view_copies(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(media_dir(dir)) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.contains(".view.") && !name.ends_with(".tmp") && !view_copy_path(&p).exists() {
+            make_view_copy(&p);
+        }
+    }
+}
+
+/// The file to show picture `name` from: its smaller copy when it has one.
+pub fn shown_picture(dir: &Path, name: &str) -> PathBuf {
+    let path = media_dir(dir).join(name);
+    let view = view_copy_path(&path);
+    if view.exists() {
+        view
+    } else {
+        path
+    }
 }
 
 #[cfg(test)]
@@ -381,6 +438,26 @@ mod tests {
         let d = std::env::temp_dir().join(format!("folio-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn a_large_picture_is_shown_from_a_smaller_copy() {
+        let dir = temp_dir("mip");
+        std::fs::create_dir_all(media_dir(&dir)).unwrap();
+        let big = std::env::temp_dir().join(format!("folio-big-{}.png", std::process::id()));
+        image::RgbImage::new(3000, 1000).save(&big).unwrap();
+        let name = import_image(&dir, &big, 7).unwrap();
+        let shown = shown_picture(&dir, &name);
+        assert!(shown.to_string_lossy().ends_with(".view.png"), "{shown:?}");
+        assert_eq!(image::image_dimensions(&shown).unwrap(), (VIEW_SIDE, 683));
+        // A small one is shown as it is.
+        let small = std::env::temp_dir().join(format!("folio-small-{}.png", std::process::id()));
+        image::RgbImage::new(300, 100).save(&small).unwrap();
+        let name = import_image(&dir, &small, 8).unwrap();
+        assert_eq!(shown_picture(&dir, &name), media_dir(&dir).join(&name));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(big);
+        let _ = std::fs::remove_file(small);
     }
 
     #[test]

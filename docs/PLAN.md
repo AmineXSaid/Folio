@@ -338,9 +338,11 @@ and to GPUI's mouse events first.
    text off the UI thread (only a copy is taken there), sends the same text
    again while nothing changed, and lists Drive's pictures only when the
    board or the pictures here changed.
-4. **Picture mipmaps.** Decode large pictures to a downscaled copy at import,
-   matched to the largest size a sticker shows them at, so a 24 MP photo
-   doesn't sit in GPU memory at full size.
+4. **Picture mipmaps.** Done: a still picture larger than 2,048 px on its
+   longer side gets a copy that size beside it (`name.view.png` or `.jpg`)
+   when it's brought in, pasted, synced down, or (for older ones) once at
+   start, away from the screen; notes and backgrounds show the copy, while
+   exports keep the original and sync leaves the copies out.
 5. **Markdown cache.** Parse once per edit and keep the AST keyed by
    `(sticker id, edited)`.
 

@@ -619,6 +619,9 @@ const UNDO_DEPTH: usize = 100;
 impl Folio {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let dir = store::data_dir();
+        // Large pictures from before get their smaller copies, quietly.
+        let sweep = dir.clone();
+        std::thread::spawn(move || store::make_view_copies(&sweep));
         let mut board = store::load(&dir);
         let t = now();
         board.purge(t);
@@ -2352,8 +2355,9 @@ impl Folio {
         self.notify(format!("Every sheet has this background · {} to undo", shortcut("Z")), cx);
     }
 
+    /// The file picture `name` is shown from: its smaller copy if it's large.
     pub fn image_path(&self, name: &str) -> PathBuf {
-        store::media_dir(&self.dir).join(name)
+        store::shown_picture(&self.dir, name)
     }
 
     // ---------- Bringing things in ----------
@@ -2426,6 +2430,7 @@ impl Folio {
                     let written =
                         std::fs::create_dir_all(&media).and_then(|_| std::fs::write(media.join(&file), &img.bytes));
                     if written.is_ok() {
+                        store::make_view_copy(&media.join(&file));
                         self.board.sheet_mut().stickers.push(image_sticker(id, at, file, String::new()));
                         self.select(Selection::Sticker(id));
                         self.commit(before, cx);
@@ -2505,6 +2510,7 @@ impl Folio {
                     let (bytes, ext) = file?;
                     let name = store::media_name(this.board.fresh_id(), &ext);
                     std::fs::write(media.join(&name), bytes).ok()?;
+                    store::make_view_copy(&media.join(&name));
                     Some(name)
                 };
                 let image = save(this, page.image);

@@ -645,16 +645,25 @@ impl Drive {
             let tmp = media.join(format!("{}.tmp", f.name));
             std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
             std::fs::rename(tmp, media.join(&f.name)).map_err(|e| e.to_string())?;
+            // A large one gets its smaller copy for showing here too.
+            crate::store::make_view_copy(&media.join(&f.name));
             here.insert(f.name);
         }
         Ok(here)
     }
 }
 
-/// The picture files in `media` (none if it isn't there yet).
+/// The picture files in `media` (none if it isn't there yet), less the
+/// smaller copies made for showing: each computer makes its own.
 fn local_pictures(media: &Path) -> HashSet<String> {
     std::fs::read_dir(media)
-        .map(|r| r.flatten().filter(|e| e.path().is_file()).filter_map(|e| e.file_name().to_str().map(String::from)).collect())
+        .map(|r| {
+            r.flatten()
+                .filter(|e| e.path().is_file())
+                .filter_map(|e| e.file_name().to_str().map(String::from))
+                .filter(|n| !n.contains(".view."))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
