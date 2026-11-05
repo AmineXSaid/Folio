@@ -493,6 +493,9 @@ pub struct Folio {
     pub viewport: Rc<Cell<Bounds<Pixels>>>,
     /// Each note's natural height (world units), measured as it's drawn.
     pub heights: Rc<RefCell<HashMap<Id, f32>>>,
+    /// Moving SVG drawings' frames, by picture (None while being made, or
+    /// for a still one).
+    pub svg_players: RefCell<HashMap<String, Option<std::sync::Arc<gpui::RenderImage>>>>,
     /// A reading connection to the saved board, for ranking search results.
     pub search_db: RefCell<Option<rusqlite::Connection>>,
     /// Lines of ink as last tessellated (`board.rs`).
@@ -780,6 +783,7 @@ impl Folio {
             heights: Rc::new(RefCell::new(HashMap::new())),
             ink_cache: Default::default(),
             search_db: RefCell::new(None),
+            svg_players: RefCell::new(HashMap::new()),
             edit_bar_size: Rc::new(Cell::new((700., 76.))),
             mark_at: Rc::default(),
             export_at: Rc::default(),

@@ -34,7 +34,66 @@ pub struct CropEdit {
     pub frame: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
+/// The frames of a moving SVG drawing, about `width` pixels wide: one
+/// round of its movement at 15 a second (at most 120), each drawn by resvg.
+/// None for a still drawing or one that won't draw.
+pub fn svg_frames(path: &std::path::Path, width: f32) -> Option<gpui::RenderImage> {
+    const FPS: f32 = 15.;
+    let svg = std::fs::read_to_string(path).ok()?;
+    if !crate::svg_anim::is_animated(&svg) {
+        return None;
+    }
+    let period = crate::svg_anim::period(&svg).max(0.2);
+    let n = ((period * FPS).ceil() as usize).clamp(2, 120);
+    let step = period / n as f32;
+    let opt = resvg::usvg::Options { resources_dir: path.parent().map(|p| p.to_path_buf()), ..Default::default() };
+    let mut frames = Vec::with_capacity(n);
+    for i in 0..n {
+        let tree = resvg::usvg::Tree::from_str(&crate::svg_anim::at(&svg, i as f32 * step), &opt).ok()?;
+        let size = tree.size();
+        let k = (width / size.width()).min(1200. / size.height().max(1.));
+        let (w, h) = ((size.width() * k).ceil().max(1.) as u32, (size.height() * k).ceil().max(1.) as u32);
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
+        resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(k, k), &mut pixmap.as_mut());
+        // Straight (not premultiplied) colour, blue first, as GPUI draws it.
+        let mut bgra = Vec::with_capacity((w * h * 4) as usize);
+        for p in pixmap.pixels() {
+            let c = p.demultiply();
+            bgra.extend_from_slice(&[c.blue(), c.green(), c.red(), c.alpha()]);
+        }
+        let buffer = image::RgbaImage::from_raw(w, h, bgra)?;
+        frames.push(image::Frame::from_parts(buffer, 0, 0, image::Delay::from_numer_denom_ms((step * 1000.).round() as u32, 1)));
+    }
+    Some(gpui::RenderImage::new(frames))
+}
+
 impl Folio {
+    /// A moving SVG drawing's frames, once made (they're made away from the
+    /// screen, the first time it's shown); None while they're being made or
+    /// for a still drawing.
+    fn svg_player(&self, name: &str, cx: &mut Context<Self>) -> Option<std::sync::Arc<gpui::RenderImage>> {
+        if !name.to_ascii_lowercase().ends_with(".svg") {
+            return None;
+        }
+        if let Some(made) = self.svg_players.borrow().get(name) {
+            return made.clone();
+        }
+        self.svg_players.borrow_mut().insert(name.to_string(), None);
+        let path = self.image_path(name);
+        let key = name.to_string();
+        let work = cx.background_spawn(async move { svg_frames(&path, 480.) });
+        cx.spawn(async move |this, cx| {
+            if let Some(frames) = work.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.svg_players.borrow_mut().insert(key, Some(std::sync::Arc::new(frames)));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        None
+    }
+
     /// A picture's own size, read once and kept.
     pub fn picture_size(&self, name: &str) -> Option<(f32, f32)> {
         let path = self.image_path(name);
@@ -113,8 +172,12 @@ impl Folio {
                 let r = crop_place(natural, (w, h), s.crop.unwrap_or(Crop::ALL));
                 frame.child(img(path).id(("picture", id)).absolute().left(px(r.x)).top(px(r.y)).w(px(r.w)).h(px(r.h))).into_any_element()
             }
-            // The id gives the picture frame state, so an animated GIF plays.
-            _ => frame.child(img(path).id(("picture", id)).size_full().object_fit(ObjectFit::Cover)).into_any_element(),
+            // A moving SVG plays its frames; the id gives the picture frame
+            // state, so they (and an animated GIF's) play.
+            _ => match self.svg_player(name, cx) {
+                Some(frames) => frame.child(img(frames).id(("picture", id)).size_full().object_fit(ObjectFit::Cover)).into_any_element(),
+                None => frame.child(img(path).id(("picture", id)).size_full().object_fit(ObjectFit::Cover)).into_any_element(),
+            },
         };
         if s.caption.trim().is_empty() {
             return picture;

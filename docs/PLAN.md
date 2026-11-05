@@ -29,7 +29,7 @@ and what is still to come.
 | Tasks | ✅ `- [ ]` lines are real checkboxes you tick with a click, with a done/total chip; a Tasks page (drawer, palette) lists every task on every sheet grouped by sheet, Open / Done / All: tick one there (it's ticked in its note, one undo step) or click its words to go to the note (`Board::tasks`, `ui/tasks.rs`) | |
 | Links between notes | ✅ `[[name]]` in a note links to the note with that title (on the same sheet first, then any other), or else the sheet with that name; it draws as a link and a click goes there (Alt+← comes back); a note's menu has Link to a note… (pick it in the palette: the link is written at the end) and, when others link to it, Linked from; a "2 linked here" chip on the note opens that list (`model::link_names`, `Board::resolve`, `Board::backlinks`, cached per edit). Renaming a note (its title, or the first line of an untitled one) or a sheet rewrites every `[[old name]]` that meant it to the new name, in the same undo step; links that meant something else by that name stay (`Board::relinked`) | |
 | Coloured text | ✅ words in seven colours (red, orange, green, blue, purple, pink, grey): pick them while typing, then a colour dot on the bar's second row (again to take it off); kept as `<font color="red">…</font>`, drawn in that ink's shade for the theme, in pictures and PDFs too | |
-| Tables, images, GIFs, SVG | ✅ as before; link cards from a pasted address: the page's title, site icon and preview picture; **crop** a note's picture in place (its menu's Crop picture: the whole picture shows with the part kept outlined; drag inside to move it, a corner to resize; Whole picture, Done, or click away to keep, Esc to leave it); a **caption** typed under the picture while the note is open, shown small and slanted; both in undo, sync and exports (`src/ui/crop.rs`) | animated SVG (§4.2) |
+| Tables, images, GIFs, SVG | ✅ as before; link cards from a pasted address: the page's title, site icon and preview picture; **crop** a note's picture in place (its menu's Crop picture: the whole picture shows with the part kept outlined; drag inside to move it, a corner to resize; Whole picture, Done, or click away to keep, Esc to leave it); a **caption** typed under the picture while the note is open, shown small and slanted; both in undo, sync and exports (`src/ui/crop.rs`); **moving SVG** pictures play (SMIL, §4.2) | CSS-animated SVG |
 | Reminders | ✅ presets (in an hour, this evening, tomorrow morning, Monday); Windows notification + in-app toast; Today strip on the home screen; overdue in red; any day and time, picked with a day and a time stepper (15-minute steps) on the Remind page; repeats: once, every day, weekdays, every week, every month, at the same time (a monthly one on the 31st falls on the month's last day) | |
 | Search | ✅ every note on every sheet, by text, `#tag` (the tags on the home screen) or note colour (`paper:sage`); jumps to the note; Ctrl+K palette for commands, sheets and notes (the search field shows it on hover) | |
 | Right-click menus | ✅ note, empty sheet, area, label, sheet card; Move to sheet | |
@@ -262,24 +262,19 @@ GPUI's image element decodes PNG, JPEG, WebP, GIF and BMP. It plays animated
 GIFs (it needs an element id, which every sticker picture has) and renders
 SVG through resvg.
 
-**Animated SVG is not built in:** resvg renders one static frame and ignores
-SMIL (`<animate>`, `<animateTransform>`, `<animateMotion>`) and CSS
-animations. **Assumption:** the SVGs you care about are SMIL or simple CSS
-keyframe animations (loaders, icons, diagrams), not scripted ones. **Plan
-(Phase 3):**
-
-1. Parse the file with `usvg` once and keep the tree.
-2. A small animator evaluates SMIL `animate` / `animateTransform` /
-   `set` (and the CSS subset `@keyframes` with `transform`, `opacity`,
-   `fill`, `stroke`) at time *t*, producing per-node overrides.
-3. Rasterise with `resvg` into a `tiny-skia` pixmap at the sticker's
-   **on-screen** size, then hand it to GPUI as a `RenderImage`.
-4. Drive it from `request_animation_frame` only while the sticker is
-   visible and the window is focused. Cap at 30 fps and cache frames for
-   short loops, so a sheet full of animated icons stays cheap.
-
-If that turns out too large to build, a fallback: convert on import to an
-animated WebP (pre-rendered frames). It's lossy but simple.
+**Animated SVG plays** (done): resvg draws one still frame and ignores
+SMIL, so `src/svg_anim.rs` works out the drawing at a moment in time:
+`<animate>` (numbers, lists of numbers and colours blended; anything else
+stepping halfway), `<animateTransform>` (translate, scale, rotate, skew;
+`additive="sum"` added to the element's own transform) and `<set>`, with
+`begin`, `dur`, `repeatCount`, `values` or `from`/`to`, and
+`fill="freeze"`. The first time a moving SVG note picture is shown, one
+round of its movement (its longest animation, at most a minute) is drawn
+by resvg at 15 frames a second (at most 120 frames, 480 px across) away
+from the screen and handed to GPUI as one many-framed `RenderImage`, which
+plays it in a loop as it plays a GIF (`ui/crop.rs::svg_frames`). Not
+played: CSS `@keyframes`, `<animateMotion>`, event-started animations (they
+start at once), and `keyTimes`/`calcMode` (values are evenly spaced).
 
 ### 4.3 Drawing on the sheet
 
@@ -453,7 +448,7 @@ Folio file.
 **v0.3: data and scale.** SQLite store with full-text search; R-tree;
 cached ink tessellation; picture mipmaps. Done: reorder sheets by drag.
 
-**v0.4: richer content.** Coloured text; WYSIWYG while typing; connectors between shapes; animated SVG player; image crop; custom reminder times and repeats.
+**v0.4: richer content.** WYSIWYG while typing. Done: coloured text, connectors between shapes, the animated SVG player (SMIL), image crop and captions, custom reminder times and repeats.
 
 **v1.0: ship.** A signed build (it needs a code-signing certificate),
 export (PNG/PDF/Markdown). Done: the Windows installer (`installer/`, NSIS,

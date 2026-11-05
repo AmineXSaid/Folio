@@ -20,6 +20,7 @@ mod model;
 mod picture;
 mod shape;
 mod store;
+mod svg_anim;
 mod theme;
 mod time;
 mod ui;
