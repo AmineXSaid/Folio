@@ -467,6 +467,8 @@ pub struct Folio {
     pub export_pop: bool,
     /// Each label's size (world units), measured as it's drawn.
     pub label_sizes: Rc<RefCell<HashMap<Id, (f32, f32)>>>,
+    /// Background pictures' own sizes, read once each.
+    pub picture_sizes: RefCell<HashMap<String, Option<(f32, f32)>>>,
     /// Where the sheet's name is drawn (window), for clicks and renaming.
     pub head_name: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Undo and redo steps: what each edit changed, not copies of the board.
@@ -732,6 +734,7 @@ impl Folio {
             export_at: Rc::default(),
             export_pop: false,
             label_sizes: Rc::new(RefCell::new(HashMap::new())),
+            picture_sizes: RefCell::new(HashMap::new()),
             head_name: Rc::default(),
             undo,
             redo: Vec::new(),

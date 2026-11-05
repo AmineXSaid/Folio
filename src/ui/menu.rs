@@ -741,6 +741,32 @@ impl Folio {
                         .into_any_element(),
                 );
                 if has_picture {
+                    let fit = bd.fit;
+                    items.push(
+                        div()
+                            .flex()
+                            .gap(px(4.))
+                            .px(t.space.sm)
+                            .py(px(4.))
+                            .children(BackdropFit::ALL.iter().map(|&f| {
+                                let on = f == fit;
+                                div()
+                                    .id(("m-bg-fit", f as usize))
+                                    .h(px(26.))
+                                    .px(px(10.))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(t.radius.full)
+                                    .border_1()
+                                    .text_size(t.text.caption)
+                                    .cursor_pointer()
+                                    .when(on, |d| d.bg(t.colors.brand_tint).border_color(t.colors.brand.opacity(0.4)).text_color(t.colors.brand_on_tint))
+                                    .when(!on, |d| d.border_color(t.colors.border).text_color(t.colors.text_muted).hover(|d| d.bg(t.colors.hover)))
+                                    .child(f.label())
+                                    .on_click(cx.listener(move |this, _, _, cx| this.set_backdrop(cx, |b| b.fit = f)))
+                            }))
+                            .into_any_element(),
+                    );
                     let soft = bd.soften;
                     items.push(
                         row("m-bg-soften", if soft { "icons/eye-off.svg" } else { "icons/eye.svg" }, "Soften the picture", Some(if soft { "On" } else { "Off" }.into()), &t)

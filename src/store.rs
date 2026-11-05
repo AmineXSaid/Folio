@@ -515,6 +515,16 @@ mod tests {
     }
 }
 
+/// A picture's own size in pixels (an SVG's in its units), if it reads.
+pub fn picture_size(path: &Path) -> Option<(f32, f32)> {
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
+        let data = std::fs::read(path).ok()?;
+        let tree = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default()).ok()?;
+        return Some((tree.size().width(), tree.size().height()));
+    }
+    image::image_dimensions(path).ok().map(|(w, h)| (w as f32, h as f32))
+}
+
 /// Where a crash is written down: `crash.log` beside the board.
 pub fn crash_file(dir: &Path) -> PathBuf {
     dir.join("crash.log")

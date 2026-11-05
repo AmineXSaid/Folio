@@ -298,13 +298,30 @@ impl Folio {
 
         // A picture behind the sheet: still while the sheet moves, softened
         // toward the paper so notes stay easy to read.
+        // Or tiles, or once on the sheet: those move and zoom with it.
         let picture = sheet.backdrop.image.as_ref().map(|name| {
             let paper = t.tint(sheet.backdrop.tint);
-            div()
-                .absolute()
-                .inset_0()
-                .child(gpui::img(self.image_path(name)).id("backdrop").size_full().object_fit(gpui::ObjectFit::Cover))
-                .when(sheet.backdrop.soften, |d| d.child(div().absolute().inset_0().bg(paper.opacity(0.55))))
+            let path = self.image_path(name);
+            let size = *self.picture_sizes.borrow_mut().entry(name.clone()).or_insert_with(|| crate::store::picture_size(&path));
+            let cam = sheet.camera;
+            let view = window.viewport_size();
+            let layer = div().absolute().inset_0().overflow_hidden();
+            let layer = match (sheet.backdrop.fit, size) {
+                (BackdropFit::Tile, Some((w, h))) => {
+                    let (tw, th, at) = crate::model::tiles(w * cam.zoom, h * cam.zoom, cam.to_screen(v2(0., 0.)), f32::from(view.width), f32::from(view.height), 24.);
+                    layer.children(at.into_iter().enumerate().map(|(i, p)| {
+                        gpui::img(path.clone()).id(("backdrop-tile", i)).absolute().left(px(p.x)).top(px(p.y)).w(px(tw)).h(px(th))
+                    }))
+                }
+                (BackdropFit::OnSheet, Some((w, h))) => {
+                    // Its longer side about 2,000 units, at the sheet's top-left.
+                    let k = 2000. / w.max(h);
+                    let a = cam.to_screen(v2(0., 0.));
+                    layer.child(gpui::img(path).id("backdrop").absolute().left(px(a.x)).top(px(a.y)).w(px(w * k * cam.zoom)).h(px(h * k * cam.zoom)))
+                }
+                _ => layer.child(gpui::img(path).id("backdrop").size_full().object_fit(gpui::ObjectFit::Cover)),
+            };
+            layer.when(sheet.backdrop.soften, |d| d.child(div().absolute().inset_0().bg(paper.opacity(0.55))))
         });
 
         let empty = sheet.stickers.is_empty()

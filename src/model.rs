@@ -1221,6 +1221,58 @@ pub struct Backdrop {
     pub image: Option<String>,
     /// The picture faded toward the paper, so notes stay easy to read.
     pub soften: bool,
+    /// How the picture lies: filling the window, still; repeated as tiles
+    /// that move and zoom with the sheet; or once, on the sheet itself.
+    pub fit: BackdropFit,
+}
+
+/// How a sheet's background picture lies.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BackdropFit {
+    /// Filling the window, still while the sheet moves.
+    #[default]
+    Still,
+    /// Repeated at its own size, moving and zooming with the sheet.
+    Tile,
+    /// Once, laid on the sheet at its top-left, moving and zooming with it.
+    OnSheet,
+}
+
+impl BackdropFit {
+    pub const ALL: [BackdropFit; 3] = [BackdropFit::Still, BackdropFit::Tile, BackdropFit::OnSheet];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BackdropFit::Still => "Fill, still",
+            BackdropFit::Tile => "Tiles",
+            BackdropFit::OnSheet => "On the sheet",
+        }
+    }
+}
+
+/// The tiles of a picture `w` by `h` (screen pixels at this zoom) that
+/// cover a window `vw` by `vh`, the sheet's origin on screen at `origin`:
+/// each tile's top-left. A picture tinier than `least` is drawn at whole
+/// multiples of its size so there are never too many.
+pub fn tiles(w: f32, h: f32, origin: Vec2, vw: f32, vh: f32, least: f32) -> (f32, f32, Vec<Vec2>) {
+    if w <= 0. || h <= 0. {
+        return (w, h, Vec::new());
+    }
+    let k = (least / w.min(h)).max(1.).ceil();
+    let (w, h) = (w * k, h * k);
+    let x0 = origin.x.rem_euclid(w) - w;
+    let y0 = origin.y.rem_euclid(h) - h;
+    let mut out = Vec::new();
+    let mut y = y0;
+    while y < vh {
+        let mut x = x0;
+        while x < vw {
+            out.push(v2(x, y));
+            x += w;
+        }
+        y += h;
+    }
+    (w, h, out)
 }
 
 /// One line of a pattern on screen: across (`y`) or down (`x`), and
@@ -2864,6 +2916,22 @@ mod tests {
     }
 
     #[test]
+    fn tiles_cover_the_window_and_follow_the_sheet() {
+        let (w, h, t) = tiles(100., 50., v2(30., 10.), 250., 120., 24.);
+        assert_eq!((w, h), (100., 50.));
+        assert_eq!(t[0], v2(-70., -40.));
+        // Columns from -70 past 250, rows from -40 past 120.
+        assert_eq!(t.len(), 4 * 4);
+        // Moving the sheet by a whole tile changes nothing.
+        let (_, _, again) = tiles(100., 50., v2(130., 60.), 250., 120., 24.);
+        assert_eq!(t, again);
+        // A tiny picture is drawn bigger, so the count stays sane.
+        let (w, _, many) = tiles(2., 2., v2(0., 0.), 1000., 1000., 24.);
+        assert_eq!(w, 24.);
+        assert!(many.len() < 2000);
+    }
+
+    #[test]
     fn reminders_fire_once() {
         let mut b = Board::empty();
         let mut s = sticker(10, 0., 0.);
@@ -2993,7 +3061,7 @@ mod tests {
     #[test]
     fn sheets_saved_before_backdrops_are_dotted_paper() {
         let mut c = Category::new(1, "t", Accent::Amber);
-        c.backdrop = Backdrop { pattern: Pattern::Graph, tint: Tint::Mint, image: Some("9.svg".into()), soften: true };
+        c.backdrop = Backdrop { pattern: Pattern::Graph, tint: Tint::Mint, image: Some("9.svg".into()), soften: true, fit: BackdropFit::Tile };
         let mut v: serde_json::Value = serde_json::to_value(&c).unwrap();
         assert_eq!(serde_json::from_value::<Category>(v.clone()).unwrap().backdrop, c.backdrop);
         v.as_object_mut().unwrap().remove("backdrop");

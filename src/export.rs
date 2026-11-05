@@ -310,7 +310,7 @@ mod tests {
         std::fs::write(media_a.join("2.svg"), b"<svg/>").unwrap();
         let mut a = demo::board();
         a.categories[1].stickers[0].image = Some("1.png".into());
-        a.categories[1].backdrop = Backdrop { pattern: Pattern::Grid, tint: Tint::Warm, image: Some("2.svg".into()), soften: true };
+        a.categories[1].backdrop = Backdrop { pattern: Pattern::Grid, tint: Tint::Warm, image: Some("2.svg".into()), soften: true, fit: BackdropFit::Tile };
         let file = dir.join("Trip.folio");
         export_folio(&[&a.categories[1]], &media_a, &file).unwrap();
 
