@@ -112,6 +112,12 @@ impl WindowsWindowInner {
             WM_QUERYENDSESSION => Some(1),
             WM_ENDSESSION => self.handle_end_session_msg(wparam),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
+            // A pen's pressure is noted, then the message goes on to become
+            // the mouse move or press it always was.
+            WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP => {
+                note_pen_pressure(wparam, msg == WM_POINTERUP);
+                None
+            }
             WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
             // Treat double click as a second single click, since we track the double clicks ourselves.
@@ -1861,4 +1867,26 @@ fn notify_frame_changed(handle: HWND) {
         )
         .log_err();
     }
+}
+
+/// Notes how hard the pen behind a pointer message presses (or that it's
+/// lifted, or not a pen).
+fn note_pen_pressure(wparam: WPARAM, up: bool) {
+    use std::sync::atomic::Ordering;
+    use windows::Win32::UI::Input::Pointer::{GetPointerPenInfo, GetPointerType, POINTER_PEN_INFO};
+    use windows::Win32::UI::WindowsAndMessaging::{POINTER_INPUT_TYPE, PT_PEN};
+    let id = (wparam.0 & 0xffff) as u32;
+    let mut kind = POINTER_INPUT_TYPE::default();
+    let mut pressure = -1f32;
+    // SAFETY: the out-parameters live through each call.
+    unsafe {
+        if !up && GetPointerType(id, &mut kind).is_ok() && kind == PT_PEN {
+            let mut info = POINTER_PEN_INFO::default();
+            if GetPointerPenInfo(id, &mut info).is_ok() {
+                // 0 to 1024; a pen that reports none says 0.
+                pressure = if info.pressure == 0 { 0.5 } else { (info.pressure as f32 / 1024.).clamp(0., 1.) };
+            }
+        }
+    }
+    crate::PEN_PRESSURE.store(pressure.to_bits(), Ordering::Relaxed);
 }

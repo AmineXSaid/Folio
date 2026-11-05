@@ -845,9 +845,71 @@ pub struct Stroke {
     #[serde(default)]
     pub marker: bool,
     pub points: Vec<Vec2>,
+    /// How hard a pen pressed at each point (0 to 1); empty when drawn with
+    /// a mouse, or a pen that reports none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pressure: Vec<f32>,
 }
 
 impl Stroke {
+    /// A line of `width`, drawn with a mouse (no pressure).
+    pub fn new(id: Id, ink: Ink, width: f32, marker: bool, points: Vec<Vec2>) -> Stroke {
+        Stroke { id, ink, width, marker, points, pressure: Vec::new() }
+    }
+
+    /// How wide the line is at point `i`: its width, made thinner or
+    /// thicker by the pen's pressure there (a third of it to half again).
+    pub fn width_at(&self, i: usize) -> f32 {
+        match self.pressure.get(i) {
+            Some(p) => self.width * (0.35 + 1.15 * p.clamp(0., 1.)),
+            None => self.width,
+        }
+    }
+
+    /// A pressed line's outline, to fill: each point pushed out to both
+    /// sides by half its width there, round the line and back. None for a
+    /// line of one width (drawn as a plain stroke).
+    pub fn outline(&self) -> Option<Vec<Vec2>> {
+        let n = self.points.len();
+        if self.pressure.len() != n || n < 2 {
+            return None;
+        }
+        let mut left = Vec::with_capacity(n);
+        let mut right = Vec::with_capacity(n);
+        for i in 0..n {
+            let (a, b) = (self.points[i.saturating_sub(1)], self.points[(i + 1).min(n - 1)]);
+            let d = b.sub(a);
+            let len = d.len().max(1e-4);
+            let (nx, ny) = (-d.y / len, d.x / len);
+            let h = self.width_at(i) / 2.;
+            let p = self.points[i];
+            left.push(v2(p.x + nx * h, p.y + ny * h));
+            right.push(v2(p.x - nx * h, p.y - ny * h));
+        }
+        right.reverse();
+        left.extend(right);
+        Some(left)
+    }
+
+    /// Keeps the pressure of the points `kept` (a subset of the points, in
+    /// order, as `simplify` leaves them).
+    pub fn keep_pressure(&mut self, kept: &[Vec2]) {
+        if self.pressure.len() != self.points.len() {
+            self.points = kept.to_vec();
+            self.pressure.clear();
+            return;
+        }
+        let mut out = Vec::with_capacity(kept.len());
+        let mut j = 0;
+        for k in kept {
+            while j < self.points.len() && self.points[j] != *k {
+                j += 1;
+            }
+            out.push(self.pressure.get(j).copied().unwrap_or(0.5));
+        }
+        self.points = kept.to_vec();
+        self.pressure = out;
+    }
     pub fn bounds(&self) -> Rect {
         let pad = self.width / 2.;
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
@@ -2882,8 +2944,8 @@ mod tests {
     #[test]
     fn eraser_removes_only_strokes_it_touches() {
         let mut c = Category::new(1, "t", Accent::Amber);
-        c.strokes.push(Stroke { id: 2, ink: Ink::Graphite, width: 2., marker: false, points: vec![v2(0., 0.), v2(100., 0.)] });
-        c.strokes.push(Stroke { id: 3, ink: Ink::Graphite, width: 2., marker: false, points: vec![v2(0., 50.), v2(100., 50.)] });
+        c.strokes.push(Stroke::new(2, Ink::Graphite, 2., false, vec![v2(0., 0.), v2(100., 0.)]));
+        c.strokes.push(Stroke::new(3, Ink::Graphite, 2., false, vec![v2(0., 50.), v2(100., 50.)]));
         assert!(c.erase_at(v2(50., 4.), 4.));
         assert_eq!(c.strokes.len(), 1);
         assert!(!c.erase_at(v2(50., 30.), 4.));
@@ -3208,10 +3270,25 @@ mod tests {
     fn a_lasso_catches_the_lines_mostly_inside_it() {
         let lasso = vec![v2(0., 0.), v2(100., 0.), v2(100., 100.), v2(0., 100.)];
         assert!(point_in(v2(50., 50.), &lasso) && !point_in(v2(150., 50.), &lasso));
-        let mut s = Stroke { id: 1, ink: Ink::Graphite, width: 2., marker: false, points: vec![v2(10., 10.), v2(50., 50.), v2(90., 90.)] };
+        let mut s = Stroke::new(1, Ink::Graphite, 2., false, vec![v2(10., 10.), v2(50., 50.), v2(90., 90.)]);
         assert!(s.within(&lasso));
         s.translate(v2(80., 0.));
         assert!(!s.within(&lasso));
+    }
+
+    #[test]
+    fn a_pressed_line_is_thicker_where_the_pen_pressed() {
+        let mut s = Stroke::new(1, Ink::Graphite, 4., false, vec![v2(0., 0.), v2(10., 0.), v2(20., 0.)]);
+        assert!(s.outline().is_none());
+        s.pressure = vec![0., 1., 0.5];
+        assert!(s.width_at(1) > s.width_at(2) && s.width_at(2) > s.width_at(0));
+        let o = s.outline().unwrap();
+        assert_eq!(o.len(), 6);
+        // Above and below the middle point by half its width.
+        assert!((o[1].y - s.width_at(1) / 2.).abs() < 1e-4 && (o[4].y + s.width_at(1) / 2.).abs() < 1e-4);
+        // Simplifying keeps each kept point's own pressure.
+        s.keep_pressure(&[v2(0., 0.), v2(20., 0.)]);
+        assert_eq!(s.pressure, vec![0., 0.5]);
     }
 
     #[test]

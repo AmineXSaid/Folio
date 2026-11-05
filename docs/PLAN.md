@@ -289,10 +289,15 @@ and the notes, text and shapes whose middle is, are picked; picked ink
 shows a soft band, moves with the pointer, and its right-click menu
 recolours or deletes it. A line of ink is also picked by clicking it with
 Select, or by a selection box drawn round it.
-**Not possible yet:** pen pressure. GPUI's pointer events carry no pressure
-on Windows or Linux (only a trackpad's force-click stage on macOS), so it
-needs pressure added to the vendored Windows platform's pointer messages
-and to GPUI's mouse events first.
+**Pen pressure** (done, Windows): the vendored Windows platform reads a
+pen's pressure from `WM_POINTERDOWN`/`WM_POINTERUPDATE`
+(`GetPointerPenInfo`) before the message goes on to become the usual mouse
+message, and keeps it for the app (`gpui_windows::pen_pressure`); the Pen
+tool stores it per point, and a pressed line is drawn (and exported) as a
+filled outline, from a third of its width to half again
+(`Stroke::outline`). The marker stays even; a mouse draws as before. The
+drawing was checked here with a line given pressures by hand, not with a
+real pen (no Windows or tablet here).
 
 ---
 

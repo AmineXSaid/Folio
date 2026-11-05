@@ -63,6 +63,8 @@ struct InkPath {
     /// points and width, and the zoom), so its tessellation can be kept
     /// and only shifted as the sheet pans.
     key: Option<(Id, u64)>,
+    /// A pressed line's outline on screen, filled instead of stroked.
+    outline: Option<Vec<gpui::Point<Pixels>>>,
 }
 
 /// Tessellated lines of ink, kept between frames: what each was built from,
@@ -79,6 +81,9 @@ fn ink_key(s: &Stroke, zoom: f32) -> u64 {
         p.y.to_bits().hash(&mut h);
     }
     s.width.to_bits().hash(&mut h);
+    for p in &s.pressure {
+        p.to_bits().hash(&mut h);
+    }
     zoom.to_bits().hash(&mut h);
     h.finish()
 }
@@ -111,7 +116,7 @@ impl Folio {
         let mut paths: Vec<InkPath> = Vec::new();
         // Picked lines of ink: a soft band of the brand colour under each.
         for s in sheet.strokes.iter().filter(|s| self.is_selected(Selection::Stroke(s.id)) && s.bounds().intersects(&view)) {
-            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color: t.colors.brand.opacity(0.28), width: (s.width + 8.) * cam.zoom, key: None });
+            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color: t.colors.brand.opacity(0.28), width: (s.width + 8.) * cam.zoom, key: None, outline: None });
         }
         // The loop being drawn with the lasso, closed back to where it began.
         if let Gesture::Lasso { points } = &self.gesture {
@@ -119,21 +124,21 @@ impl Folio {
             if let Some(first) = run.first().copied() {
                 run.push(first);
             }
-            paths.push(InkPath { points: run, color: t.colors.brand.opacity(0.8), width: 1.5, key: None });
+            paths.push(InkPath { points: run, color: t.colors.brand.opacity(0.8), width: 1.5, key: None, outline: None });
         }
         for s in sheet.strokes.iter().filter(|s| s.bounds().intersects(&view)) {
             let mut color = t.ink(s.ink);
             if s.marker {
                 color = color.opacity(if t.is_dark { 0.35 } else { 0.3 });
             }
-            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color, width: s.width * cam.zoom, key: Some((s.id, ink_key(s, cam.zoom))) });
+            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color, width: s.width * cam.zoom, key: Some((s.id, ink_key(s, cam.zoom))), outline: s.outline().map(|o| o.into_iter().map(screen).collect()) });
         }
         if let Gesture::Draw(s) = &self.gesture {
             let mut color = t.ink(s.ink);
             if s.marker {
                 color = color.opacity(0.3);
             }
-            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color, width: s.width * cam.zoom, key: None });
+            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color, width: s.width * cam.zoom, key: None, outline: s.outline().map(|o| o.into_iter().map(screen).collect()) });
         }
         // Links: their runs on screen, colour, dashed or not, arrowheads,
         // and a dot where a plain one ends.
@@ -1499,7 +1504,12 @@ impl Folio {
             Tool::Pen | Tool::Marker => {
                 let marker = self.tool == Tool::Marker;
                 let id = self.board.fresh_id();
-                self.gesture = Gesture::Draw(Stroke { id, ink: self.ink, width: if marker { 16. } else { 2.5 }, marker, points: vec![world] });
+                let mut s = Stroke::new(id, self.ink, if marker { 16. } else { 2.5 }, marker, vec![world]);
+                // A pen's pressure shapes the pen's line (the marker stays even).
+                if let Some(p) = crate::desktop::pen_pressure().filter(|_| !marker) {
+                    s.pressure.push(p);
+                }
+                self.gesture = Gesture::Draw(s);
             }
             Tool::Text => {
                 self.gesture = Gesture::None;
@@ -1699,6 +1709,9 @@ impl Folio {
                 let last = *stroke.points.last().unwrap();
                 if world.sub(last).len() * cam.zoom >= 1.0 {
                     stroke.points.push(world);
+                    if !stroke.pressure.is_empty() {
+                        stroke.pressure.push(crate::desktop::pen_pressure().unwrap_or(0.5));
+                    }
                 }
             }
             Gesture::Erase { erased } => {
@@ -1933,10 +1946,14 @@ impl Folio {
                 }
             }
             Gesture::Draw(mut stroke) => {
-                stroke.points = simplify(&stroke.points, 0.35 / self.sheet().camera.zoom);
+                let kept = simplify(&stroke.points, 0.35 / self.sheet().camera.zoom);
+                stroke.keep_pressure(&kept);
                 if stroke.points.len() == 1 {
                     let p = stroke.points[0];
                     stroke.points.push(v2(p.x + 0.1, p.y));
+                    if let Some(&q) = stroke.pressure.first() {
+                        stroke.pressure.push(q);
+                    }
                 }
                 self.board.sheet_mut().strokes.push(stroke);
             }
@@ -2168,6 +2185,11 @@ fn shifted(p: &gpui::Path<Pixels>, d: gpui::Point<Pixels>) -> gpui::Path<Pixels>
 
 /// A line of ink tessellated: smoothed through its points' midpoints.
 fn stroke_path(ink: &InkPath, origin: gpui::Point<Pixels>) -> Option<gpui::Path<Pixels>> {
+    if let Some(o) = &ink.outline {
+        let mut b = PathBuilder::fill();
+        b.add_polygon(&o.iter().map(|p| *p + origin).collect::<Vec<_>>(), true);
+        return b.build().ok();
+    }
     let pts = &ink.points;
     if pts.is_empty() {
         return None;

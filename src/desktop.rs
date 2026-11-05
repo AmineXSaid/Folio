@@ -511,3 +511,16 @@ pub fn clipboard_html() -> Option<String> {
 pub fn clipboard_html() -> Option<String> {
     None
 }
+
+/// How hard a pen presses right now (0 to 1); None for a mouse or a touchpad,
+/// and away from Windows.
+pub fn pen_pressure() -> Option<f32> {
+    #[cfg(windows)]
+    {
+        gpui_windows::pen_pressure()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}

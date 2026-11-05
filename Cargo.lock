@@ -1846,6 +1846,7 @@ dependencies = [
  "getrandom 0.2.17",
  "global-hotkey",
  "gpui-kit",
+ "gpui-pre-windows",
  "image",
  "miniz_oxide 0.8.9",
  "percent-encoding",

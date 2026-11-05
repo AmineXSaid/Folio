@@ -22,3 +22,8 @@ This is `gpui-pre-windows` 0.3.8 (Apache-2.0, `LICENSE-APACHE`), used through
   display scale with `WM_SETICON`, again when the scale changes. Upstream
   only sets the class icon, one size, which Windows stretches for the
   taskbar and title bar (blurry at 125 % and up).
+- Folio's own: `src/events.rs` (`note_pen_pressure`), `src/gpui_windows.rs`
+  (`pen_pressure`): a pen's pressure is read from `WM_POINTERDOWN` /
+  `WM_POINTERUPDATE` (`GetPointerPenInfo`) before the message goes on to
+  `DefWindowProc` (which makes it the usual mouse message), and kept for
+  the app to read.

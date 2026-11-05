@@ -40,6 +40,8 @@ rusqlite = { version = "=0.32.1", features = ["bundled"] }
 
 # Windows: the tray icon and its menu, and reminder notifications.
 [target.'cfg(windows)'.dependencies]
+# The Windows platform (vendored, see [patch]) for the pen's pressure.
+gpui-pre-windows = "=0.3.8"
 # Reading rich text (HTML) off the clipboard, and Folio's own name in
 # notifications. MIT or Apache-2.0.
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Registry", "Win32_UI_Shell"] }

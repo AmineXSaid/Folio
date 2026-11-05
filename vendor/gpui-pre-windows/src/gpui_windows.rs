@@ -40,4 +40,15 @@ pub(crate) use wrapper::*;
 
 pub use platform::WindowsPlatform;
 
+/// How hard a pen pressed at its last move or touch, from 0 to 1, read
+/// from the pointer messages before they're passed on as mouse moves; None
+/// while the pointer isn't a pen. Folio's ink reads it (`FOLIO-CHANGES.md`).
+pub fn pen_pressure() -> Option<f32> {
+    let p = f32::from_bits(PEN_PRESSURE.load(std::sync::atomic::Ordering::Relaxed));
+    (p >= 0.).then_some(p)
+}
+
+/// The last pen pressure, as `f32` bits; negative for none.
+pub(crate) static PEN_PRESSURE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0xbf80_0000);
+
 pub(crate) use windows::Win32::Foundation::HWND;

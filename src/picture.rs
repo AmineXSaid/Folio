@@ -1481,6 +1481,12 @@ fn draw(sheet: &Category, t: &Theme, media: &Path, blur: bool) -> String {
     }
     for s in &sheet.strokes {
         let Some(first) = s.points.first() else { continue };
+        // A pressed line: its outline, filled.
+        if let Some(o) = s.outline() {
+            let d: String = o.iter().enumerate().map(|(i, p)| format!("{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y))).collect();
+            let _ = writeln!(svg.body, r#"<path d="{d}Z" {}/>"#, rgba(t.ink(s.ink)).attr("fill"));
+            continue;
+        }
         let mut d = format!("M{} {}", n(first.x), n(first.y));
         if s.points.len() == 2 {
             let _ = write!(d, "L{} {}", n(s.points[1].x), n(s.points[1].y));

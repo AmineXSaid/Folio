@@ -96,7 +96,7 @@ pub fn board() -> Board {
             v2(466. + t * 300., 526. + (t * 9.).sin() * 2.5 + t * 4.)
         })
         .collect();
-    sheet.strokes = vec![Stroke { id: stroke, ink: Ink::Coral, width: 2.5, marker: false, points }];
+    sheet.strokes = vec![Stroke::new(stroke, Ink::Coral, 2.5, false, points)];
 
     b.add_sheet("Personal");
     let a = note(&mut b, (0., 0., 240., 160.), Paper::Sage, "This week", "- [ ] Call the bank\n- [ ] Book dentist\n- [x] Water the plants");
@@ -221,7 +221,7 @@ pub fn board() -> Board {
             v2(346. + t * 200., 446. + (t * 7.).sin() * 2. + t * 3.)
         })
         .collect();
-    sheet.strokes = vec![Stroke { id: stroke, ink: Ink::Coral, width: 2.5, marker: false, points }];
+    sheet.strokes = vec![Stroke::new(stroke, Ink::Coral, 2.5, false, points)];
 
     b.categories[0].pinned = true;
     b.categories[0].icon = "🎨".into();
