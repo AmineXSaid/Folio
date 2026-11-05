@@ -4,7 +4,7 @@
 //! which keeps a crowded sheet legible and cheap to draw.
 
 use gpui::component::text::{TextView, TextViewStyle};
-use gpui::{canvas, div, img, prelude::*, px, AnyElement, App, Context, MouseButton, ObjectFit, StyledImage, Window};
+use gpui::{canvas, div, img, prelude::*, px, AnyElement, App, Context, MouseButton, Window};
 
 use super::app::{Folio, Gesture, Selection};
 use crate::markdown::{blocks, Block};
@@ -387,17 +387,13 @@ impl Folio {
         // What reaches a corner rounds it itself: the note clips its
         // contents to a rectangle, inside its 1px edge.
         let (it, ib) = ((rt - 1.).max(0.), (rb - 1.).max(0.));
-        let picture = s.image.as_ref().map(|name| {
+        let picture = s.image.as_ref().map(|_| {
             let has_text = !s.title.is_empty() || !s.body.is_empty();
-            // The id gives the picture frame state, so an animated GIF plays.
-            img(self.image_path(name))
-                .id(("picture", s.id))
-                .w_full()
-                .rounded_t(px(it))
-                .when(has_text || !s.fixed, |i| i.h(px((s.rect.w * 0.62).min(s.rect.h) * z)))
-                .when(!has_text && s.fixed, |i| i.h(px(s.rect.h * z)).rounded_b(px(ib)))
-                .object_fit(ObjectFit::Cover)
+            let full = !has_text && s.fixed;
+            let h = if full { s.rect.h * z } else { (s.rect.w * 0.62).min(s.rect.h) * z };
+            div()
                 .flex_none()
+                .child(self.picture_frame(s, w - 2., h, it, if full { ib } else { 0. }, z, t, cx))
                 // A picture just added fades in.
                 .opacity(self.exits.notes.picture_showing(s.id, &t.motion).unwrap_or(1.))
         });

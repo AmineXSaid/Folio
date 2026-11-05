@@ -970,15 +970,23 @@ impl Folio {
         let bar = super::motion::rise_in(self.edit_bar(s, t, cx), ("edit-bar", id as usize), t);
         let (rt, rb) = super::sticker::radii(s.style);
         let (rt, rb) = (rt * z, rb * z);
-        let picture = s.image.as_ref().map(|name| {
-            gpui::img(self.image_path(name))
-                .id(("edit-picture", s.id))
-                .w_full()
-                .h(px((s.rect.w * 0.62).min(s.rect.h) * z))
-                .object_fit(gpui::ObjectFit::Cover)
-                .rounded_t(px(rt))
+        // The picture as it's kept (without its caption: that's typed under
+        // it here), and the caption's field.
+        let picture = s.image.as_ref().map(|_| {
+            let bare = Sticker { caption: String::new(), ..s.clone() };
+            let frame = self.picture_frame(&bare, r.w * z - 4., (s.rect.w * 0.62).min(s.rect.h) * z, (rt - 2.).max(0.), 0., z, t, cx);
+            div()
+                .flex()
+                .flex_col()
+                .child(frame)
+                .child(
+                    div()
+                        .px(px(6. * z))
+                        .italic()
+                        .text_color(t.colors.text_muted)
+                        .child(rem_scaled(px(11.5 * z / 0.875), Input::new(&self.caption_input).appearance(false).small())),
+                )
         });
-        use gpui::StyledImage;
         // The title and text are typed where they're drawn, the same size:
         // nothing jumps as the note opens for typing. The fields' own text
         // is 0.875 rem and they inset it by INSET, so the rem is set to give
@@ -1247,6 +1255,11 @@ impl Folio {
         }
         if self.shape_edit.is_some() {
             self.finish_shape_text(cx);
+            return;
+        }
+        // Clicking away from a picture being cropped keeps the crop.
+        if self.crop_edit.is_some() {
+            self.finish_crop(true, cx);
             return;
         }
         self.finish_edit(cx);

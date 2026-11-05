@@ -512,6 +512,10 @@ pub struct Folio {
     /// The OS's light/dark, when the theme follows it.
     pub system_dark: bool,
     pub title_input: Entity<InputState>,
+    /// The words under a note's picture, typed with the note.
+    pub caption_input: Entity<InputState>,
+    /// A note's picture being cropped in place.
+    pub crop_edit: Option<super::crop::CropEdit>,
     pub body_input: Entity<TextareaState>,
     pub search_input: Entity<InputState>,
     pub palette_input: Entity<InputState>,
@@ -594,6 +598,7 @@ impl Folio {
         let palette_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Type a command, a sheet or a note…"));
         let dialog_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
+        let caption_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add a caption…"));
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name this sheet"));
         let client_input = cx.new(|cx| InputState::new(window, cx).placeholder("1234567890-abc….apps.googleusercontent.com"));
         let secret_input = cx.new(|cx| InputState::new(window, cx).placeholder("GOCSPX-…").masked(true));
@@ -767,6 +772,8 @@ impl Folio {
             saved: true,
             system_dark: is_dark(window.appearance()),
             title_input,
+            caption_input,
+            crop_edit: None,
             body_input,
             search_input,
             palette_input,
@@ -1580,7 +1587,7 @@ impl Folio {
             self.notify("This note is locked · unlock it from its menu", cx);
             return;
         }
-        let (title, body) = (s.title.clone(), s.body.clone());
+        let (title, body, caption) = (s.title.clone(), s.body.clone(), s.caption.clone());
         let hint = match s.style {
             NoteStyle::Cheat => "Key terms in **bold** · > for a Remember box · | for a table",
             NoteStyle::Index => "One thing per line · - [ ] for a task",
@@ -1590,6 +1597,7 @@ impl Folio {
             self.before = Some(Before::open(&self.board));
         }
         self.title_input.update(cx, |i, cx| i.set_value(title.clone(), window, cx));
+        self.caption_input.update(cx, |i, cx| i.set_value(caption, window, cx));
         // The cursor goes to the end of the text, ready to add to it.
         let end = body.len();
         self.body_input.update(cx, |i, cx| {
@@ -1619,6 +1627,7 @@ impl Folio {
         self.edit_papers = false;
         let title = self.title_input.read(cx).value().trim().to_string();
         let body = self.body_input.read(cx).value().trim_end().to_string();
+        let caption = self.caption_input.read(cx).value().trim().to_string();
         let mut before = self.before.take().unwrap_or_else(|| Before::open(&self.board));
         let t = now();
         let empty = title.is_empty() && body.trim().is_empty();
@@ -1631,9 +1640,12 @@ impl Folio {
                 sheet.remove_sticker(ed.id);
                 self.selection.clear();
             } else if let Some(s) = sheet.sticker_mut(ed.id) {
-                if s.title != title || s.body != body {
+                if s.title != title || s.body != body || (s.image.is_some() && s.caption != caption) {
                     s.title = title;
                     s.body = body;
+                    if s.image.is_some() {
+                        s.caption = caption;
+                    }
                     s.edited = t;
                 }
             }
@@ -2829,6 +2841,8 @@ impl Render for Folio {
                 } else if this.label_edit.is_some() {
                     this.finish_label(cx);
                     window.focus(&this.focus, cx);
+                } else if this.crop_edit.is_some() {
+                    this.finish_crop(false, cx);
                 } else if this.shape_edit.is_some() {
                     this.finish_shape_text(cx);
                     window.focus(&this.focus, cx);

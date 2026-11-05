@@ -256,6 +256,13 @@ impl Folio {
                             .on_click(cx.listener(move |this, _, _, cx| this.pick_image(id, cx)))
                             .into_any_element(),
                     );
+                    if s.image.is_some() {
+                        items.push(
+                            row("m-crop", "icons/crop.svg", "Crop picture", None, &t)
+                                .on_click(cx.listener(move |this, _, _, cx| this.start_crop(id, cx)))
+                                .into_any_element(),
+                        );
+                    }
                 }
                 let remind = match s.due {
                     Some(d) => format!("Reminder · {}", time::due_label(d, now())),

@@ -93,7 +93,7 @@ impl Piece for Sticker {
     fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
         let later = r.edited > l.edited;
         // Every field, so a new one can't be left out of merging.
-        let Sticker { id, rect, paper, title, body, image, text_size, edited, due, reminded, locked, fixed, font, style, pin, link, popped, snoozed, repeat } = l;
+        let Sticker { id, rect, paper, title, body, image, crop, caption, text_size, edited, due, reminded, locked, fixed, font, style, pin, link, popped, snoozed, repeat } = l;
         Sticker {
             id: *id,
             rect: field(base.map(|b| &b.rect), rect, &r.rect, later),
@@ -101,6 +101,8 @@ impl Piece for Sticker {
             title: merge_title(base.map(|b| b.title.as_str()), title, &r.title, later),
             body: merge_text(base.map(|b| b.body.as_str()), body, &r.body, later),
             image: field(base.map(|b| &b.image), image, &r.image, later),
+            crop: field(base.map(|b| &b.crop), crop, &r.crop, later),
+            caption: merge_title(base.map(|b| b.caption.as_str()), caption, &r.caption, later),
             text_size: field(base.map(|b| &b.text_size), text_size, &r.text_size, later),
             edited: (*edited).max(r.edited),
             due: field(base.map(|b| &b.due), due, &r.due, later),

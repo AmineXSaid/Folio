@@ -992,8 +992,20 @@ fn lay_note(s: &Sticker, t: &Theme, look: &Look, media: &Path, blur: bool) -> La
         let ph = if has_text || !s.fixed { (w * 0.62).min(s.rect.h) } else { s.rect.h };
         let inner = (rt - 1.).max(0.);
         let clip = rrect(0., 0., w, ph, inner, if has_text || !s.fixed { 0. } else { inner });
-        svg.image(&media.join(name).to_string_lossy(), 0., 0., w, ph, Some(clip));
+        let path = media.join(name);
+        // The part kept by its crop, covering the frame.
+        let at = match (s.crop.filter(|c| !c.is_all()), crate::store::picture_size(&path)) {
+            (Some(c), Some(natural)) => crop_place(natural, (w, ph), c),
+            _ => Rect { x: 0., y: 0., w, h: ph },
+        };
+        svg.image(&path.to_string_lossy(), at.x, at.y, at.w, at.h, Some(clip));
         y += ph;
+        // Its caption, small and slanted.
+        if !s.caption.trim().is_empty() {
+            let cap = Set { family: fam, size: 11.5 * k, lh: 15. * k, weight: 400, italic: true, color: look.muted, align: 0. };
+            y += 6. * k;
+            y += paragraph(&mut svg, &s.caption, 12. * k, y, w - 24. * k, &cap, look);
+        }
     }
 
     // Where the words go, by type.

@@ -524,6 +524,12 @@ pub struct Sticker {
     /// A picture shown above the text: a file in the media folder.
     #[serde(default)]
     pub image: Option<String>,
+    /// The part of the picture shown, as fractions of it; None for all.
+    #[serde(default)]
+    pub crop: Option<Crop>,
+    /// Words under the picture.
+    #[serde(default)]
+    pub caption: String,
     #[serde(default)]
     pub text_size: TextSize,
     /// Unix seconds of the last edit.
@@ -1761,6 +1767,45 @@ pub const TEXT_COLOURS: [(&str, Ink); 7] = [
     ("grey", Ink::Slate),
 ];
 
+/// The part of a picture shown: its left, top, width and height as
+/// fractions of the whole picture.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Crop {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Crop {
+    pub const ALL: Crop = Crop { x: 0., y: 0., w: 1., h: 1. };
+    /// The smallest part that can be kept, across or down.
+    pub const LEAST: f32 = 0.05;
+
+    /// Kept inside the picture and no smaller than `LEAST`.
+    pub fn clamped(self) -> Crop {
+        let w = self.w.clamp(Self::LEAST, 1.);
+        let h = self.h.clamp(Self::LEAST, 1.);
+        Crop { x: self.x.clamp(0., 1. - w), y: self.y.clamp(0., 1. - h), w, h }
+    }
+
+    /// The whole picture.
+    pub fn is_all(self) -> bool {
+        self.x <= 0.001 && self.y <= 0.001 && self.w >= 0.999 && self.h >= 0.999
+    }
+}
+
+/// Where a picture `natural` in size is drawn, relative to a frame of
+/// `frame`, so the part `crop` covers the frame (centred, cut evenly where
+/// the shapes differ): its left, top, width and height.
+pub fn crop_place(natural: (f32, f32), frame: (f32, f32), crop: Crop) -> Rect {
+    let (nw, nh) = (natural.0.max(1.), natural.1.max(1.));
+    let (cw, ch) = (crop.w * nw, crop.h * nh);
+    let k = (frame.0 / cw).max(frame.1 / ch);
+    let (w, h) = (nw * k, nh * k);
+    Rect { x: -crop.x * w + (frame.0 - cw * k) / 2., y: -crop.y * h + (frame.1 - ch * k) / 2., w, h }
+}
+
 /// The quick note's shortcut until you choose another.
 pub const QUICK_KEYS: &str = "Ctrl+Alt+N";
 
@@ -2941,6 +2986,18 @@ mod tests {
         let (w, _, many) = tiles(2., 2., v2(0., 0.), 1000., 1000., 24.);
         assert_eq!(w, 24.);
         assert!(many.len() < 2000);
+    }
+
+    #[test]
+    fn a_crop_fills_its_frame() {
+        // The right half of a 200×100 picture in a 100×100 frame.
+        let r = crop_place((200., 100.), (100., 100.), Crop { x: 0.5, y: 0., w: 0.5, h: 1. });
+        assert_eq!((r.x, r.y, r.w, r.h), (-100., 0., 200., 100.));
+        // All of it in a wide frame: cut top and bottom evenly.
+        let r = crop_place((100., 100.), (200., 100.), Crop::ALL);
+        assert_eq!((r.x, r.y, r.w, r.h), (0., -50., 200., 200.));
+        let c = Crop { x: 0.9, y: -0.2, w: 0.5, h: 0.01 }.clamped();
+        assert_eq!((c.x, c.y, c.w, c.h), (0.5, 0., 0.5, Crop::LEAST));
     }
 
     #[test]

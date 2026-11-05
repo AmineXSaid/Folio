@@ -3,6 +3,7 @@
 pub mod app;
 mod board;
 mod bin;
+mod crop;
 mod dialog;
 mod drawer;
 mod emoji;
