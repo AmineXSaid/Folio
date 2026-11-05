@@ -325,9 +325,10 @@ and to GPUI's mouse events first.
 
 ### 5.3 Next steps, in order of payoff
 
-1. **Spatial index.** Hit tests and culling are linear scans. That's fine
-   into the low thousands; past that, keep an `rstar` R-tree per sheet,
-   updated on move.
+1. **Spatial index.** Measured instead of built: a hit test is a linear
+   scan, and over 10,000 notes it takes 7.5 µs (release build), far under
+   a frame. An R-tree (`rstar`), updated on every move, would cost more in
+   upkeep than it saves until sheets are much larger than anyone keeps.
 2. **Cache tessellated ink.** Each stroke is re-tessellated by lyon every
    frame. Cache the `Path` per stroke in screen space and rebuild it only
    when zoom changes (pan is a translation), or rasterise settled ink into
