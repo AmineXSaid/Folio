@@ -61,3 +61,4 @@ codegen-units = 1
 # vendor/gpui-pre-windows/FORGE-CHANGES.md. Apache-2.0.
 [patch.crates-io]
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
+gpui-base = { path = "vendor/gpui-base" }

@@ -28,7 +28,7 @@ and what is still to come.
 | Remember boxes and tables | ✅ `>` lines draw as a Remember box, labelled by a first line such as `**Tip:**` or `[!NOTE]`; tables draw on the paper with small-caps headers and dashed rules | |
 | Tasks | ✅ `- [ ]` lines are real checkboxes you tick with a click, with a done/total chip; a Tasks page (drawer, palette) lists every task on every sheet grouped by sheet, Open / Done / All: tick one there (it's ticked in its note, one undo step) or click its words to go to the note (`Board::tasks`, `ui/tasks.rs`) | |
 | Links between notes | ✅ `[[name]]` in a note links to the note with that title (on the same sheet first, then any other), or else the sheet with that name; it draws as a link and a click goes there (Alt+← comes back); a note's menu has Link to a note… (pick it in the palette: the link is written at the end) and, when others link to it, Linked from; a "2 linked here" chip on the note opens that list (`model::link_names`, `Board::resolve`, `Board::backlinks`, cached per edit). Renaming a note (its title, or the first line of an untitled one) or a sheet rewrites every `[[old name]]` that meant it to the new name, in the same undo step; links that meant something else by that name stay (`Board::relinked`) | |
-| Coloured text | ✅ highlights (`<mark color="green">`), in tasks too | foreground colour (§4.1) |
+| Coloured text | ✅ words in seven colours (red, orange, green, blue, purple, pink, grey): pick them while typing, then a colour dot on the bar's second row (again to take it off); kept as `<font color="red">…</font>`, drawn in that ink's shade for the theme, in pictures and PDFs too | |
 | Tables, images, GIFs, SVG | ✅ as before; link cards from a pasted address: the page's title, site icon and preview picture | crop, captions; animated SVG (§4.2) |
 | Reminders | ✅ presets (in an hour, this evening, tomorrow morning, Monday); Windows notification + in-app toast; Today strip on the home screen; overdue in red; any day and time, picked with a day and a time stepper (15-minute steps) on the Remind page; repeats: once, every day, weekdays, every week, every month, at the same time (a monthly one on the 31st falls on the month's last day) | |
 | Search | ✅ every note on every sheet, by text, `#tag` (the tags on the home screen) or note colour (`paper:sage`); jumps to the note; Ctrl+K palette for commands, sheets and notes (the search field shows it on hover) | |
@@ -244,12 +244,13 @@ Folio maps seven colour names (yellow, green, blue, red, pink, purple,
 orange) to its own light and dark shades (`ui/sticker.rs::tint_marks`), so
 highlights stay readable in both themes.
 
-**Coloured foreground text.** The Markdown view supports highlight colour
-but not text colour. **Assumption:** `{red}text{/}` (or
-`<span style="color:…">`) is an acceptable way to write it. **Plan:** a
-`MarkdownPlugin` / inline-HTML hook in gpui-component's parser (its
-`MarkdownExtensions` API exists for this) that emits a text-colour run.
-Until then, highlights carry colour.
+**Coloured foreground text.** Done. Words are kept as
+`<font color="red">…</font>` (a colour name from `model::TEXT_COLOURS`),
+turned into the ink's hex for the theme before drawing
+(`ui/sticker.rs::tint_fonts`). gpui-component's Markdown view had no text
+colour, so `gpui-base` is vendored (`vendor/gpui-base`, Apache-2.0, see its
+`FOLIO-CHANGES.md`): its `TextMark` gained a `color`, and inline `<font
+color>` / `<span style="color:…">` set it.
 
 **WYSIWYG.** Phase 3 replaces "edit in a dialog" with editing in place on
 the sticker: a rope-backed buffer with styled runs, rendered with GPUI's

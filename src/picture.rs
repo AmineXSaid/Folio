@@ -201,6 +201,8 @@ impl Rgba {
 /// The colours a sheet is drawn in, from the theme.
 struct Look {
     dark: bool,
+    /// The colours words can be written in, by name, in this theme.
+    inks: [(&'static str, Rgba); 7],
     text: Rgba,
     body: Rgba,
     muted: Rgba,
@@ -227,6 +229,7 @@ impl Look {
         let c = &t.colors;
         Look {
             dark: t.is_dark,
+            inks: crate::model::TEXT_COLOURS.map(|(name, ink)| (name, rgba(t.ink(ink)))),
             text: rgba(c.text),
             body: rgba(c.text_body),
             muted: rgba(c.text_muted),
@@ -251,6 +254,17 @@ impl Look {
 
     /// A highlight's colour: a name from the theme's set, `#rrggbb`, or
     /// yellow when none is given.
+    /// A word colour by name, or `#rrggbb`, as bytes.
+    fn text_ink(&self, color: &str) -> Option<(u8, u8, u8)> {
+        let c = color.trim();
+        let rgba = if let Some(h) = c.strip_prefix('#').filter(|h| h.len() == 6) {
+            u32::from_str_radix(h, 16).ok().map(hex)?
+        } else {
+            self.inks.iter().find(|(n, _)| n.eq_ignore_ascii_case(c))?.1
+        };
+        Some((rgba.r, rgba.g, rgba.b))
+    }
+
     fn mark(&self, color: Option<&str>) -> Rgba {
         let named = |name: &str| crate::theme::MARKS.iter().find(|m| m.0 == name).map(|m| hex(if self.dark { m.2 } else { m.1 }));
         match color.map(str::trim) {
@@ -543,6 +557,8 @@ struct Style {
     strike: bool,
     link: bool,
     mark: Option<(u8, u8, u8, u8)>,
+    /// The words' own colour (`<font color>`).
+    ink: Option<(u8, u8, u8)>,
 }
 
 struct Run {
@@ -632,6 +648,22 @@ fn runs(md: &str, look: &Look) -> Vec<Run> {
                 continue;
             }
         }
+        if at(i, "<font") {
+            if let Some(end) = s[i..].find('>') {
+                let tag = &s[i..i + end];
+                let color = tag.split("color=").nth(1).map(|v| v.trim_matches(|c| c == '"' || c == '\'' || c == ' ' || c == '/'));
+                flush(&mut buf, &mut out, style);
+                style.ink = color.and_then(|c| look.text_ink(c));
+                i += end + 1;
+                continue;
+            }
+        }
+        if at(i, "</font>") {
+            flush(&mut buf, &mut out, style);
+            style.ink = None;
+            i += "</font>".len();
+            continue;
+        }
         if at(i, "</mark>") {
             flush(&mut buf, &mut out, style);
             style.mark = None;
@@ -671,7 +703,7 @@ fn runs(md: &str, look: &Look) -> Vec<Run> {
 }
 
 /// HTML tags a note may hold that are left out of the picture.
-const TAGS: [&str; 16] = ["br", "u", "b", "i", "em", "strong", "s", "del", "ins", "sub", "sup", "span", "small", "kbd", "p", "div"];
+const TAGS: [&str; 17] = ["br", "u", "b", "i", "em", "strong", "s", "del", "ins", "sub", "sup", "span", "small", "kbd", "p", "div", "font"];
 
 fn merge(a: Style, b: Style) -> Style {
     Style {
@@ -681,6 +713,7 @@ fn merge(a: Style, b: Style) -> Style {
         strike: a.strike || b.strike,
         link: a.link || b.link,
         mark: b.mark.or(a.mark),
+        ink: b.ink.or(a.ink),
     }
 }
 
@@ -791,7 +824,11 @@ fn draw_lines(svg: &mut Svg, lines: &[Vec<Piece>], x: f32, y: f32, set: &Set, lo
                 let h = set.size * 1.3;
                 svg.rect(px - 2., top + (set.lh - h) / 2., p.w + 4., h, 3., look.wash);
             }
-            let color = if p.style.link { look.brand } else { set.color };
+            let color = match p.style.ink {
+                _ if p.style.link => look.brand,
+                Some((r, g, b)) => Rgba { r, g, b, a: 1. },
+                None => set.color,
+            };
             svg.text(px, base, &p.text, font, color);
             let thick = (set.size / 14.).max(0.75);
             if p.style.strike {

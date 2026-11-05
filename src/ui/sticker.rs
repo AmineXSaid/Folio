@@ -81,7 +81,7 @@ pub fn band(title: Option<AnyElement>, paper: Paper, z: f32, t: &Theme) -> gpui:
 }
 
 pub(super) fn md_view(id: u64, text: &str, t: &Theme) -> TextView {
-    TextView::markdown(("md", id), tint_marks(text, t.is_dark)).selectable(false).style(markdown_style(t)).on_link_click(follow)
+    TextView::markdown(("md", id), tint_marks(&tint_fonts(text, t), t.is_dark)).selectable(false).style(markdown_style(t)).on_link_click(follow)
 }
 
 /// A link clicked in a note: one to a note or a sheet (`folio:`) is
@@ -702,6 +702,21 @@ fn markdown_style(t: &Theme) -> TextViewStyle {
 }
 
 /// Rewrites named highlight colours to this theme's shades.
+/// Coloured words take their ink's shade in this theme: `<font
+/// color="red">` becomes the ruby ink's colour, light or dark.
+pub fn tint_fonts(body: &str, t: &Theme) -> String {
+    if !body.contains("<font") {
+        return body.to_string();
+    }
+    let mut out = body.to_string();
+    for (name, ink) in crate::model::TEXT_COLOURS {
+        let c: gpui::Rgba = t.ink(ink).into();
+        let hex = format!("<font color=\"#{:02x}{:02x}{:02x}\">", (c.r * 255.).round() as u8, (c.g * 255.).round() as u8, (c.b * 255.).round() as u8);
+        out = out.replace(&format!("<font color=\"{name}\">"), &hex).replace(&format!("<font color='{name}'>"), &hex);
+    }
+    out
+}
+
 pub fn tint_marks(body: &str, dark: bool) -> String {
     if !body.contains("<mark") {
         return body.to_string();

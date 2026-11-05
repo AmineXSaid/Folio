@@ -289,6 +289,31 @@ pub fn toggle_mark(text: &str, sel: Range<usize>, color: &str) -> (String, Range
     (s, sel.start + tag.len()..sel.end + tag.len())
 }
 
+const FONT_CLOSE: &str = "</font>";
+
+/// Writes the selection (or the word at the caret) in `color`: wrapped in
+/// `<font color="…">`. Already in that colour, the colour comes off; in
+/// another, it changes.
+pub fn toggle_font(text: &str, sel: Range<usize>, color: &str) -> (String, Range<usize>) {
+    let sel = clamp(text, sel);
+    let sel = if sel.is_empty() { word_at(text, sel.start).unwrap_or(sel) } else { trimmed(text, sel) };
+    let before = &text[..sel.start];
+    let open = before.rfind("<font").filter(|&i| before[i..].ends_with('>') && !before[i..].contains('\n'));
+    if let Some(open) = open.filter(|_| text[sel.end..].starts_with(FONT_CLOSE)) {
+        let same = text[open..sel.start].contains(&format!("\"{color}\""));
+        let gone = sel.start - open;
+        let bare = format!("{}{}{}", &text[..open], &text[sel.clone()], &text[sel.end + FONT_CLOSE.len()..]);
+        let sel = sel.start - gone..sel.end - gone;
+        if same {
+            return (bare, sel);
+        }
+        return toggle_font(&bare, sel, color);
+    }
+    let tag = format!("<font color=\"{color}\">");
+    let s = format!("{}{tag}{}{FONT_CLOSE}{}", &text[..sel.start], &text[sel.clone()], &text[sel.end..]);
+    (s, sel.start + tag.len()..sel.end + tag.len())
+}
+
 fn line_start(text: &str, at: usize) -> usize {
     text[..at].rfind('\n').map_or(0, |i| i + 1)
 }
@@ -879,5 +904,16 @@ mod tests {
         assert!(once.contains("```\n• code\n```"));
         assert!(looks_structured(raw));
         assert!(!looks_structured("Just a sentence, nothing more."));
+    }
+
+    #[test]
+    fn words_take_a_colour_change_it_and_lose_it() {
+        let (s, r) = toggle_font("a big day", 2..5, "red");
+        assert_eq!(s, "a <font color=\"red\">big</font> day");
+        assert_eq!(&s[r.clone()], "big");
+        let (s2, r2) = toggle_font(&s, r.clone(), "blue");
+        assert_eq!(s2, "a <font color=\"blue\">big</font> day");
+        let (s3, _) = toggle_font(&s2, r2, "blue");
+        assert_eq!(s3, "a big day");
     }
 }

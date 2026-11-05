@@ -1749,6 +1749,18 @@ impl PdfPage {
     }
 }
 
+/// The colours words in a note can be written in, by the name a note
+/// keeps (`<font color="red">`), and the ink each is drawn in.
+pub const TEXT_COLOURS: [(&str, Ink); 7] = [
+    ("red", Ink::Ruby),
+    ("orange", Ink::Tangerine),
+    ("green", Ink::Forest),
+    ("blue", Ink::Cobalt),
+    ("purple", Ink::Violet),
+    ("pink", Ink::Pink),
+    ("grey", Ink::Slate),
+];
+
 /// The quick note's shortcut until you choose another.
 pub const QUICK_KEYS: &str = "Ctrl+Alt+N";
 

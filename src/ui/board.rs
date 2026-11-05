@@ -824,6 +824,23 @@ impl Folio {
             .children(fonts)
             .child(divider())
             .children(sizes)
+            .child(divider())
+            // Words in a colour: pick them, then a colour (again to undo).
+            .children(crate::model::TEXT_COLOURS.iter().map(|&(name, ink)| {
+                let c = t.ink(ink);
+                div()
+                    .id(gpui::ElementId::Name(format!("e-ink-{name}").into()))
+                    .size(px(22.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(t.radius.full)
+                    .cursor_pointer()
+                    .hover(|d| d.bg(t.colors.hover))
+                    .child(div().size(px(12.)).rounded(t.radius.full).bg(c))
+                    .tooltip(move |window, cx| super::tip(format!("Words in {name}"), window, cx))
+                    .on_click(cx.listener(move |this, _, window, cx| this.format_editing(Format::Colour(name), window, cx)))
+            }))
             .child(div().flex_1())
             .child(
                 super::primary_face(div().id("e-done"), &t)
