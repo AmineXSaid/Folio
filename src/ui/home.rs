@@ -306,7 +306,7 @@ impl Folio {
         let name = c.name.clone();
         let pinned = c.pinned && !c.inbox;
         let shadow = t.shadow_card(0.6);
-        super::drawer::movable(div().id(("card", ix)), ix, name.clone(), t, cx)
+        super::drawer::movable(div().id(("card", ix)).role(gpui::Role::ListItem).aria_label(format!("Sheet {name}")).aria_description(when.clone()), ix, name.clone(), t, cx)
             .w(px(w))
             .p(px(10.))
             .flex()

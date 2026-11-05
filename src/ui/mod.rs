@@ -163,6 +163,17 @@ pub fn shortcut(key: &str) -> String {
 pub fn icon_button(id: impl Into<gpui::ElementId>, path: &'static str, t: &Theme) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .role(gpui::Role::Button)
+        // Named after what it does, by its picture.
+        .aria_label(match path {
+            "icons/x.svg" => "Close".to_string(),
+            "icons/scan.svg" => "Zoom to fit".to_string(),
+            p => {
+                let words = p.trim_start_matches("icons/").trim_end_matches(".svg").replace('-', " ");
+                let mut c = words.chars();
+                c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+            }
+        })
         .size(t.size.control)
         .flex_none()
         .flex()
@@ -188,7 +199,8 @@ pub fn primary_face(d: gpui::Stateful<gpui::Div>, t: &Theme) -> gpui::Stateful<g
 
 /// The outlined button for a view's one main action.
 pub fn primary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>, t: &Theme) -> gpui::Stateful<gpui::Div> {
-    primary_face(div().id(id), t)
+    let label: SharedString = label.into();
+    primary_face(div().id(id).role(gpui::Role::Button).aria_label(label.clone()), t)
         .h(t.size.control)
         .px(t.space.md)
         .flex()
@@ -198,12 +210,15 @@ pub fn primary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedStr
         .text_size(t.text.caption)
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .cursor_pointer()
-        .child(label.into())
+        .child(label)
 }
 
 pub fn secondary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>, t: &Theme) -> gpui::Stateful<gpui::Div> {
+    let label: SharedString = label.into();
     div()
         .id(id)
+        .role(gpui::Role::Button)
+        .aria_label(label.clone())
         .h(t.size.control)
         .px(t.space.md)
         .flex()
@@ -217,7 +232,7 @@ pub fn secondary_button(id: impl Into<gpui::ElementId>, label: impl Into<SharedS
         .text_size(t.text.caption)
         .font_weight(gpui::FontWeight::MEDIUM)
         .cursor_pointer()
-        .child(label.into())
+        .child(label)
 }
 
 /// Google's "G", in its own colours: four tinted pieces laid on each other.

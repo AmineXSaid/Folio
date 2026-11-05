@@ -11,8 +11,12 @@ use crate::theme::{theme, Theme};
 use crate::time::{self, now};
 
 fn row(id: impl Into<SharedString>, path: &'static str, label: impl Into<SharedString>, hint: Option<String>, t: &Theme) -> Stateful<Div> {
+    let label: SharedString = label.into();
     div()
         .id(gpui::ElementId::Name(id.into()))
+        .role(gpui::Role::MenuItem)
+        .aria_label(label.clone())
+        .when_some(hint.clone().filter(|h| !h.contains('›')), |d, h| d.aria_keyshortcuts(h))
         .h(px(32.))
         .px(t.space.sm)
         .flex()
@@ -23,7 +27,7 @@ fn row(id: impl Into<SharedString>, path: &'static str, label: impl Into<SharedS
         .text_size(t.text.body)
         .hover(|d| d.bg(t.colors.hover))
         .child(icon(path, t.size.icon_sm, t.colors.text_muted))
-        .child(div().flex_1().child(label.into()))
+        .child(div().flex_1().child(label))
         .children(hint.map(|h| div().text_size(t.text.micro).text_color(t.colors.text_subtle).child(h)))
 }
 

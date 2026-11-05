@@ -451,8 +451,13 @@ cached ink tessellation; picture mipmaps. Done: reorder sheets by drag.
 **v0.4: richer content.** Coloured text; WYSIWYG while typing; connectors between shapes; animated SVG player; image crop; custom reminder times and repeats.
 
 **v1.0: ship.** Windows installer and signed build (with its own
-notification identity), export (PNG/PDF/Markdown), screen-reader labels.
-Done: a crash log (`crash.log` in the data folder, newest 64 KB, written
+notification identity), export (PNG/PDF/Markdown).
+Done: screen-reader labels through GPUI's AccessKit tree (notes as notes,
+named by their title with their type, first words and reminder as the
+description; menu items with their shortcuts; the tool dock's tools with
+their keys and which is in use; the top bar's buttons; the shared buttons;
+sheet cards with their counts; shape tiles), not yet tried with a real
+screen reader. A crash log (`crash.log` in the data folder, newest 64 KB, written
 by a panic hook with the message, place and stack).
 
 ---

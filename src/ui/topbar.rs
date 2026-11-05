@@ -64,6 +64,9 @@ impl Folio {
         let key = |id: &'static str, glyph: gpui::AnyElement, tip: String, live: bool| {
             div()
                 .id(id)
+                .role(gpui::Role::Button)
+                // The tip, less its shortcut, names it.
+                .aria_label(tip.split("  ").next().unwrap_or("").to_string())
                 .group(id)
                 .relative()
                 .size(t.size.bar_control - px(6.))
@@ -233,7 +236,7 @@ impl Folio {
 
         // The screen's main action: the one coloured thing in the bar.
         let new_button = |id: &'static str, label: &'static str, tip: String| {
-            super::primary_face(div().id(id), &t)
+            super::primary_face(div().id(id).role(gpui::Role::Button).aria_label(format!("New {}", label.to_lowercase())), &t)
                 .occlude()
                 .h(t.size.bar_control)
                 .pl(px(10.))
@@ -258,6 +261,8 @@ impl Folio {
             let at = self.export_at.clone();
             div()
                 .id("export")
+                .role(gpui::Role::Button)
+                .aria_label("Export this sheet")
                 .occlude()
                 .relative()
                 .h(t.size.bar_control)

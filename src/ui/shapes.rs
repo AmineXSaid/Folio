@@ -1127,6 +1127,8 @@ impl Folio {
         let zoom = self.sheet().camera.zoom;
         div()
             .id(gpui::ElementId::Name(format!("shape-tile-{key}").into()))
+            .role(gpui::Role::Button)
+            .aria_label(format!("Add {name}"))
             .size(t.size.shape_tile)
             .rounded(t.radius.button)
             .border_1()

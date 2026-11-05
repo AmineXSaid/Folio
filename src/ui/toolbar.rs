@@ -16,6 +16,9 @@ impl Folio {
             let tip = format!("{}   {}", tool.name(), tool.key());
             div()
                 .id(tool.name())
+                .role(gpui::Role::Button)
+                .aria_label(format!("{} tool{}", tool.name(), if active { ", in use" } else { "" }))
+                .aria_keyshortcuts(tool.key())
                 .relative()
                 .size(px(38.))
                 .flex()

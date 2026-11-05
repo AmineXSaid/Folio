@@ -356,7 +356,7 @@ impl Folio {
         let n = c.stickers.len();
         let name = c.name.clone();
         let meta = format!("{n} note{} · {}", if n == 1 { "" } else { "s" }, time::ago(c.opened.max(c.edited), now()));
-        movable(div().id(("drawer-card", ix)), ix, name.clone(), t, cx)
+        movable(div().id(("drawer-card", ix)).role(gpui::Role::ListItem).aria_label(format!("Sheet {name}")).aria_description(meta.clone()), ix, name.clone(), t, cx)
             .flex_none()
             .flex()
             .items_center()

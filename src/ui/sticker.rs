@@ -609,6 +609,11 @@ impl Folio {
                 .bg(gpui::linear_gradient(180., gpui::linear_color_stop(t.colors.curl.opacity(0.), 0.), gpui::linear_color_stop(t.colors.curl, 1.)))
         });
         div()
+            // A screen reader reads a note by its name, and what it holds.
+            .id(("note-a11y", s.id))
+            .role(gpui::Role::Note)
+            .aria_label(if s.name().is_empty() { "Untitled note".to_string() } else { s.name() })
+            .aria_description(a11y_summary(s))
             .absolute()
             .left(px(at.x))
             .top(px(at.y + lift + settle))
@@ -698,6 +703,21 @@ fn markdown_style(t: &Theme) -> TextViewStyle {
 }
 
 /// Rewrites named highlight colours to this theme's shades.
+/// What a screen reader says after a note's name: its type, its first
+/// words, and a reminder if it has one.
+fn a11y_summary(s: &Sticker) -> String {
+    let words: String = s.body.lines().map(str::trim).filter(|l| !l.is_empty()).take(2).collect::<Vec<_>>().join(" · ");
+    let mut out = format!("{} note", s.style.label());
+    if !words.is_empty() {
+        out.push_str(": ");
+        out.push_str(&words.chars().take(160).collect::<String>());
+    }
+    if let Some(d) = s.due {
+        out.push_str(&format!(". Reminder {}", time::due_label(d, now())));
+    }
+    out
+}
+
 /// Coloured words take their ink's shade in this theme: `<font
 /// color="red">` becomes the ruby ink's colour, light or dark.
 pub fn tint_fonts(body: &str, t: &Theme) -> String {
