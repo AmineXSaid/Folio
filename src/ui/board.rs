@@ -126,15 +126,18 @@ impl Folio {
             if let (Some(ra), Some(rb)) = (self.end_rect(l.from), self.end_rect(l.to)) {
                 if ra.union(&rb).intersects(&view) {
                     let selected = self.is_selected(Selection::Link(l.id));
-                    add_link(link_path(&ra, &rb, l.style), t.ink(l.ink).opacity(0.85), l.style, l.ends, selected);
+                    if let Some(run) = self.link_run_of(l) {
+                        add_link(run, t.ink(l.ink).opacity(0.85), l.style, l.ends, selected);
+                    }
                 }
             }
         }
-        if let Gesture::Connect { from, to } = &self.gesture {
+        if let Gesture::Connect { from, to, side } = &self.gesture {
             if let Some(a) = self.end_rect(*from) {
                 let target = Rect { x: to.x - 1., y: to.y - 1., w: 2., h: 2. };
                 let (style, ends) = self.link_look(*from, None);
-                add_link(link_path(&a, &target, style), t.ink(self.ink), style, ends, false);
+                let l = Link { style, ends, from_side: *side, ..Link::new(0, *from, 0, self.ink) };
+                add_link(link_run(&l, &a, &target, &[]), t.ink(self.ink), style, ends, false);
             }
         }
         // Rubber bands: the selection box or the area being drawn.
@@ -519,6 +522,7 @@ impl Folio {
             .children(self.render_name_field(&t))
             .children(self.render_label_edit(&t, cx))
             .children(self.render_shape_edit(&t, cx))
+            .children(self.render_ports(&t))
             .children(edit_layer)
             .children(edit_bar_leaving)
             .children(self.render_shapes_panel(cx))
@@ -1424,7 +1428,11 @@ impl Folio {
                 return;
             }
             Tool::Connect => match self.note_at(world).or_else(|| self.shape_at(world)) {
-                Some(from) => self.gesture = Gesture::Connect { from, to: world },
+                Some(from) => {
+                    // Pressed on the middle of a side: the link is fixed there.
+                    let side = self.end_rect(from).and_then(|r| Side::near(&r, world, self.side_reach()));
+                    self.gesture = Gesture::Connect { from, to: world, side };
+                }
                 None => self.gesture = pan,
             },
             Tool::Frame => self.gesture = Gesture::MakeFrame { start: world, now: world },
@@ -1809,12 +1817,21 @@ impl Folio {
                 }
                 self.board.sheet_mut().strokes.push(stroke);
             }
-            Gesture::Connect { from, to } => {
+            Gesture::Connect { from, to, side } => {
                 if let Some(to_id) = self.note_at(to).or_else(|| self.shape_at(to)).filter(|t| *t != from) {
                     let id = self.board.fresh_id();
                     let ink = self.ink;
-                    let (style, ends) = self.link_look(from, Some(to_id));
+                    let (mut style, ends) = self.link_look(from, Some(to_id));
+                    let to_side = self.end_rect(to_id).and_then(|r| Side::near(&r, to, self.side_reach()));
+                    // Fixed to sides at both ends: a diagram's right-angled run.
+                    if side.is_some() && to_side.is_some() {
+                        style = LinkStyle::Elbow;
+                    }
                     let linked = self.board.sheet_mut().toggle_link_styled(id, from, to_id, ink, style, ends);
+                    if let Some(l) = self.board.sheet_mut().links.iter_mut().find(|l| l.id == id) {
+                        l.from_side = side;
+                        l.to_side = to_side;
+                    }
                     self.notify(if linked { "Linked" } else { "Link removed" }, cx);
                 }
             }

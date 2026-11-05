@@ -315,7 +315,8 @@ pub enum Gesture {
     Marquee { start: Vec2, now: Vec2, additive: bool },
     Draw(Stroke),
     Erase { erased: bool },
-    Connect { from: Id, to: Vec2 },
+    /// A link being drawn from `from` (fixed to `side` of it, if picked).
+    Connect { from: Id, to: Vec2, side: Option<Side> },
     MakeFrame { start: Vec2, now: Vec2 },
     /// Setting where text on the sheet wraps, from its right edge: the
     /// pointer's x and the width at the press (world units).

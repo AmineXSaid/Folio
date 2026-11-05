@@ -271,13 +271,75 @@ impl Folio {
         }
     }
 
+    /// The run link `l` takes on the sheet: from the sides it's fixed to;
+    /// an elbow one round the notes and shapes in its way.
+    pub fn link_run_of(&self, l: &Link) -> Option<Vec<Vec2>> {
+        let (a, b) = (self.end_rect(l.from)?, self.end_rect(l.to)?);
+        let around: Vec<Rect> = if l.style == LinkStyle::Elbow {
+            let c = self.sheet();
+            c.shapes.iter().filter(|s| s.id != l.from && s.id != l.to && !s.geom.is_line()).map(Shape::bounds).chain(c.stickers.iter().filter(|s| s.id != l.from && s.id != l.to).map(|s| self.note_rect(s))).collect()
+        } else {
+            Vec::new()
+        };
+        Some(link_run(l, &a, &b, &around))
+    }
+
     /// The link under `p` (world), within a few pixels of its run.
     pub fn link_at(&self, p: Vec2) -> Option<Id> {
         let reach = 6. / self.sheet().camera.zoom;
         self.sheet().links.iter().rev().find_map(|l| {
-            let run = link_path(&self.end_rect(l.from)?, &self.end_rect(l.to)?, l.style);
+            let run = self.link_run_of(l)?;
             run.windows(2).any(|w| segment_distance(p, w[0], w[1]) <= reach).then_some(l.id)
         })
+    }
+
+    /// How near (world units at this zoom) a side's middle a press must be
+    /// to fix a link there.
+    pub fn side_reach(&self) -> f32 {
+        14. / self.sheet().camera.zoom
+    }
+
+    /// The four points a link can be fixed to on what's under the pointer
+    /// while connecting (and on where a link being drawn started), the one
+    /// within reach shown larger.
+    pub(super) fn render_ports(&self, t: &Theme) -> Vec<gpui::AnyElement> {
+        if self.tool != Tool::Connect {
+            return Vec::new();
+        }
+        let cam = self.sheet().camera;
+        let at = cam.to_world(self.cursor);
+        let mut ids: Vec<Id> = Vec::new();
+        if let Gesture::Connect { from, .. } = &self.gesture {
+            ids.push(*from);
+        }
+        if let Some(id) = self.shape_at(at).or_else(|| self.note_at(at)) {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        let mut out = Vec::new();
+        for id in ids {
+            let Some(r) = self.end_rect(id) else { continue };
+            let near = Side::near(&r, at, self.side_reach());
+            for side in Side::ALL {
+                let p = cam.to_screen(side.point(&r));
+                let on = near == Some(side) || matches!(&self.gesture, Gesture::Connect { from, side: Some(sd), .. } if *from == id && *sd == side);
+                let d = if on { 12. } else { 8. };
+                out.push(
+                    div()
+                        .absolute()
+                        .left(px(p.x - d / 2.))
+                        .top(px(p.y - d / 2.))
+                        .size(px(d))
+                        .rounded_full()
+                        .border_2()
+                        .border_color(t.colors.brand)
+                        .bg(if on { t.colors.brand } else { t.colors.surface })
+                        .into_any_element(),
+                );
+            }
+        }
+        out
     }
 
     /// The front-most shape under `p` (world).

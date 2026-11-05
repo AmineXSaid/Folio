@@ -993,13 +993,157 @@ pub struct Link {
     pub style: LinkStyle,
     #[serde(default)]
     pub ends: Ends,
+    /// The side of each end it's fixed to (the middle of that side); None
+    /// leaves from wherever faces the other end.
+    #[serde(default)]
+    pub from_side: Option<Side>,
+    #[serde(default)]
+    pub to_side: Option<Side>,
 }
 
 impl Link {
     /// A curve with no arrowheads, as links between notes are drawn.
     pub fn new(id: Id, from: Id, to: Id, ink: Ink) -> Link {
-        Link { id, from, to, ink, style: LinkStyle::Curve, ends: Ends::None }
+        Link { id, from, to, ink, style: LinkStyle::Curve, ends: Ends::None, from_side: None, to_side: None }
     }
+}
+
+/// A side of a box, where a link can be fixed: at its middle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Side {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+impl Side {
+    pub const ALL: [Side; 4] = [Side::Top, Side::Right, Side::Bottom, Side::Left];
+
+    /// The middle of this side of `r`.
+    pub fn point(self, r: &Rect) -> Vec2 {
+        match self {
+            Side::Top => v2(r.x + r.w / 2., r.y),
+            Side::Right => v2(r.x + r.w, r.y + r.h / 2.),
+            Side::Bottom => v2(r.x + r.w / 2., r.y + r.h),
+            Side::Left => v2(r.x, r.y + r.h / 2.),
+        }
+    }
+
+    /// The way out of the box from this side.
+    pub fn out(self) -> Vec2 {
+        match self {
+            Side::Top => v2(0., -1.),
+            Side::Right => v2(1., 0.),
+            Side::Bottom => v2(0., 1.),
+            Side::Left => v2(-1., 0.),
+        }
+    }
+
+    /// The side of `r` facing `to`.
+    pub fn facing(r: &Rect, to: Vec2) -> Side {
+        let d = to.sub(r.center());
+        if d.x.abs() * r.h >= d.y.abs() * r.w {
+            if d.x >= 0. {
+                Side::Right
+            } else {
+                Side::Left
+            }
+        } else if d.y >= 0. {
+            Side::Bottom
+        } else {
+            Side::Top
+        }
+    }
+
+    /// The side of `r` whose middle is within `reach` of `p`, if any.
+    pub fn near(r: &Rect, p: Vec2, reach: f32) -> Option<Side> {
+        Side::ALL.into_iter().map(|s| (s, s.point(r).sub(p).len())).filter(|(_, d)| *d <= reach).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(s, _)| s)
+    }
+}
+
+/// The run of link `l` from box `a` to box `b`: from the sides it's fixed
+/// to, if any; an elbow link turns at right angles and goes round the
+/// boxes in `around` (other things on the sheet) where it can.
+pub fn link_run(l: &Link, a: &Rect, b: &Rect, around: &[Rect]) -> Vec<Vec2> {
+    if l.from_side.is_none() && l.to_side.is_none() && l.style != LinkStyle::Elbow {
+        return link_path(a, b, l.style);
+    }
+    let sa = l.from_side.unwrap_or_else(|| Side::facing(a, b.center()));
+    let sb = l.to_side.unwrap_or_else(|| Side::facing(b, a.center()));
+    let (pa, pb) = (sa.point(a), sb.point(b));
+    match l.style {
+        LinkStyle::Straight => vec![pa, pb],
+        LinkStyle::Curve => {
+            let k = (pb.sub(pa).len() * 0.4).max(40.);
+            let (c1, c2) = (v2(pa.x + sa.out().x * k, pa.y + sa.out().y * k), v2(pb.x + sb.out().x * k, pb.y + sb.out().y * k));
+            (0..=24)
+                .map(|i| {
+                    let t = i as f32 / 24.;
+                    let u = 1. - t;
+                    let (k0, k1, k2, k3) = (u * u * u, 3. * u * u * t, 3. * u * t * t, t * t * t);
+                    v2(k0 * pa.x + k1 * c1.x + k2 * c2.x + k3 * pb.x, k0 * pa.y + k1 * c1.y + k2 * c2.y + k3 * pb.y)
+                })
+                .collect()
+        }
+        LinkStyle::Elbow => elbow_route(pa, sa, pb, sb, a, b, around),
+    }
+}
+
+/// How far a right-angled link runs straight out of a side before turning.
+const STUB: f32 = 18.;
+
+/// A right-angled run from `pa` (leaving by `sa`) to `pb` (arriving by
+/// `sb`) that crosses as few boxes as it can: its own two ends' and those
+/// in `around`. Among equally clear runs, the shortest with fewest turns.
+fn elbow_route(pa: Vec2, sa: Side, pb: Vec2, sb: Side, a: &Rect, b: &Rect, around: &[Rect]) -> Vec<Vec2> {
+    let s0 = v2(pa.x + sa.out().x * STUB, pa.y + sa.out().y * STUB);
+    let s1 = v2(pb.x + sb.out().x * STUB, pb.y + sb.out().y * STUB);
+    // Lines to turn on: the stubs' own, midway, and just outside each box.
+    let mut xs = vec![s0.x, s1.x, (s0.x + s1.x) / 2.];
+    let mut ys = vec![s0.y, s1.y, (s0.y + s1.y) / 2.];
+    for r in around.iter().chain([a, b]) {
+        xs.extend([r.x - STUB, r.x + r.w + STUB]);
+        ys.extend([r.y - STUB, r.y + r.h + STUB]);
+    }
+    let mut runs: Vec<Vec<Vec2>> = vec![vec![s0, v2(s1.x, s0.y), s1], vec![s0, v2(s0.x, s1.y), s1]];
+    for &x in &xs {
+        runs.push(vec![s0, v2(x, s0.y), v2(x, s1.y), s1]);
+    }
+    for &y in &ys {
+        runs.push(vec![s0, v2(s0.x, y), v2(s1.x, y), s1]);
+    }
+    let boxes: Vec<&Rect> = around.iter().chain([a, b]).collect();
+    let cost = |run: &Vec<Vec2>| {
+        let crossings = run.windows(2).map(|w| boxes.iter().filter(|r| crosses(w[0], w[1], r)).count()).sum::<usize>();
+        let length: f32 = run.windows(2).map(|w| w[1].sub(w[0]).len()).sum();
+        crossings as f32 * 1e6 + length + run.len() as f32 * 30.
+    };
+    let best = runs.into_iter().min_by(|x, y| cost(x).total_cmp(&cost(y))).unwrap_or_default();
+    let mut out = vec![pa];
+    for p in best.into_iter().chain([pb]) {
+        // No repeats, and no point in the middle of a straight stretch.
+        if out.last().is_some_and(|q: &Vec2| q.sub(p).len() < 0.01) {
+            continue;
+        }
+        if out.len() >= 2 {
+            let (q0, q1) = (out[out.len() - 2], out[out.len() - 1]);
+            if ((q0.x - q1.x).abs() < 0.01 && (q1.x - p.x).abs() < 0.01) || ((q0.y - q1.y).abs() < 0.01 && (q1.y - p.y).abs() < 0.01) {
+                out.pop();
+            }
+        }
+        out.push(p);
+    }
+    out
+}
+
+/// Whether the level or upright segment `p`–`q` runs through the inside
+/// of `r` (touching its edge doesn't count).
+fn crosses(p: Vec2, q: Vec2, r: &Rect) -> bool {
+    let (x0, x1) = (p.x.min(q.x), p.x.max(q.x));
+    let (y0, y1) = (p.y.min(q.y), p.y.max(q.y));
+    let e = 0.5;
+    x1 > r.x + e && x0 < r.x + r.w - e && y1 > r.y + e && y0 < r.y + r.h - e
 }
 
 /// How a link runs from one end to the other.
@@ -2652,6 +2796,25 @@ mod tests {
         c.toggle_link(13, 2, 3, Ink::Forest);
         c.remove_sticker(3);
         assert!(c.links.is_empty());
+    }
+
+    #[test]
+    fn an_elbow_link_goes_round_what_is_in_its_way() {
+        let a = Rect { x: 0., y: 0., w: 100., h: 60. };
+        let b = Rect { x: 400., y: 0., w: 100., h: 60. };
+        let wall = Rect { x: 180., y: -40., w: 120., h: 140. };
+        let l = Link { style: LinkStyle::Elbow, from_side: Some(Side::Right), to_side: Some(Side::Left), ..Link::new(1, 2, 3, Ink::Graphite) };
+        let run = link_run(&l, &a, &b, &[wall]);
+        assert_eq!(run[0], v2(100., 30.));
+        assert_eq!(*run.last().unwrap(), v2(400., 30.));
+        assert!(run.windows(2).all(|w| !crosses(w[0], w[1], &wall)), "{run:?}");
+        // Every turn is a right angle.
+        assert!(run.windows(2).all(|w| (w[0].x - w[1].x).abs() < 0.01 || (w[0].y - w[1].y).abs() < 0.01));
+        // Fixed to the top of one and the bottom of the other.
+        let up = Link { style: LinkStyle::Straight, from_side: Some(Side::Top), to_side: Some(Side::Bottom), ..l };
+        assert_eq!(link_run(&up, &a, &b, &[]), vec![v2(50., 0.), v2(450., 60.)]);
+        assert_eq!(Side::near(&a, v2(98., 33.), 8.), Some(Side::Right));
+        assert_eq!(Side::near(&a, v2(50., 30.), 8.), None);
     }
 
     #[test]

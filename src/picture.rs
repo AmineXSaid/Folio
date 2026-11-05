@@ -1444,7 +1444,19 @@ fn draw(sheet: &Category, t: &Theme, media: &Path, blur: bool) -> String {
             sheet.stickers.iter().zip(&laid).find(|(s, _)| s.id == id).map(|(s, l)| rect_of(s, l)).or_else(|| sheet.shapes.iter().find(|s| s.id == id).map(Shape::bounds))
         };
         if let (Some(a), Some(b)) = (find(l.from), find(l.to)) {
-            let run = link_path(&a, &b, l.style);
+            // Round what's in its way, as on the sheet.
+            let around: Vec<Rect> = if l.style == LinkStyle::Elbow {
+                sheet
+                    .shapes
+                    .iter()
+                    .filter(|s| s.id != l.from && s.id != l.to && !s.geom.is_line())
+                    .map(Shape::bounds)
+                    .chain(sheet.stickers.iter().zip(&laid).filter(|(s, _)| s.id != l.from && s.id != l.to).map(|(s, l)| rect_of(s, l)))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let run = link_run(l, &a, &b, &around);
             let color = rgba(t.ink(l.ink)).alpha(0.85);
             let d: String = run.iter().enumerate().map(|(i, p)| format!("{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y))).collect();
             let dash = if l.style == LinkStyle::Curve && l.ends == Ends::None { r#" stroke-dasharray="6 6""# } else { "" };

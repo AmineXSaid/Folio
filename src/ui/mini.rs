@@ -120,7 +120,7 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &T
         .iter()
         .filter_map(|l| {
             let end = |id: Id| c.sticker(id).map(|s| s.rect).or_else(|| c.shapes.iter().find(|s| s.id == id).map(Shape::bounds));
-            Some(link_path(&end(l.from)?, &end(l.to)?, l.style))
+            Some(link_run(l, &end(l.from)?, &end(l.to)?, &[]))
         })
         .map(|run| run.into_iter().map(|p| (ox + p.x * k, oy + p.y * k)).collect())
         .collect();

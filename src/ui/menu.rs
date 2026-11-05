@@ -1196,7 +1196,10 @@ impl Folio {
                 items.push(sep(&t).into_any_element());
                 items.push(
                     row("m-link-swap", "icons/arrow-right-left.svg", "Reverse", None, &t)
-                        .on_click(cx.listener(set(|l, _, _, _| std::mem::swap(&mut l.from, &mut l.to), link.style, link.ends, link.ink)))
+                        .on_click(cx.listener(set(|l, _, _, _| {
+                            std::mem::swap(&mut l.from, &mut l.to);
+                            std::mem::swap(&mut l.from_side, &mut l.to_side);
+                        }, link.style, link.ends, link.ink)))
                         .into_any_element(),
                 );
                 items.push(
