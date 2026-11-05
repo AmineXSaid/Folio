@@ -1318,6 +1318,34 @@ impl Folio {
                         .child(div().text_size(t.text.micro).text_color(t.colors.text_subtle).child(format!("{}°  [ ]", shape.rot.round() as i32)))
                         .into_any_element(),
                 );
+                // Flip: an arrow that points the other way.
+                items.push(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(2.))
+                        .px(t.space.sm)
+                        .py(px(2.))
+                        .child({
+                            let ids = turn_ids.clone();
+                            chip("m-flip-x".into(), shape.flip_x)
+                                .gap(px(4.))
+                                .child(icon("icons/flip-h.svg", px(13.), t.colors.text_muted))
+                                .child("Flip across")
+                                .on_click(cx.listener(move |this, _, _, cx| this.flip_shapes(&ids, true, cx)))
+                        })
+                        .child({
+                            let ids = turn_ids.clone();
+                            chip("m-flip-y".into(), shape.flip_y)
+                                .gap(px(4.))
+                                .child(icon("icons/flip-v.svg", px(13.), t.colors.text_muted))
+                                .child("Flip up/down")
+                                .on_click(cx.listener(move |this, _, _, cx| this.flip_shapes(&ids, false, cx)))
+                        })
+                        .child(div().flex_1())
+                        .child(div().text_size(t.text.micro).text_color(t.colors.text_subtle).child("Shift+H / V"))
+                        .into_any_element(),
+                );
                 items.push(sep(&t).into_any_element());
                 let starred = self.board.settings.shape_favourites.contains(&shape.geom);
                 let geom = shape.geom;

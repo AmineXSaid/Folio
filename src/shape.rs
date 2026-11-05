@@ -598,6 +598,12 @@ pub struct Shape {
     pub text: String,
     #[serde(default)]
     pub locked: bool,
+    /// Mirrored left to right, and top to bottom: an arrow that points
+    /// the other way. The words stay as they read.
+    #[serde(default)]
+    pub flip_x: bool,
+    #[serde(default)]
+    pub flip_y: bool,
 }
 
 impl Shape {
@@ -616,6 +622,8 @@ impl Shape {
             dashed: false,
             text: String::new(),
             locked: false,
+            flip_x: false,
+            flip_y: false,
         }
     }
 
@@ -634,13 +642,19 @@ impl Shape {
         rotate(p, self.center(), -self.rot)
     }
 
-    /// The outline as it lies on the sheet, turned.
+    /// `p` in the box mirrored as the shape is flipped (its own undoing).
+    pub fn mirror(&self, p: Vec2) -> Vec2 {
+        let c = self.center();
+        v2(if self.flip_x { 2. * c.x - p.x } else { p.x }, if self.flip_y { 2. * c.y - p.y } else { p.y })
+    }
+
+    /// The outline as it lies on the sheet, flipped and turned.
     pub fn outlines(&self) -> Vec<Outline> {
         let mut out = self.geom.outlines(self.rect);
-        if self.rot != 0. {
+        if self.rot != 0. || self.flip_x || self.flip_y {
             for o in &mut out {
                 for p in &mut o.points {
-                    *p = self.turn(*p);
+                    *p = self.turn(self.mirror(*p));
                 }
             }
         }
@@ -659,7 +673,7 @@ impl Shape {
         logos::regions(id)
             .iter()
             .map(|g| {
-                let rings = g.rings.iter().map(|ring| ring.iter().map(|p| self.turn(v2(ox + p.x * k, oy + p.y * k))).collect()).collect();
+                let rings = g.rings.iter().map(|ring| ring.iter().map(|p| self.turn(self.mirror(v2(ox + p.x * k, oy + p.y * k)))).collect()).collect();
                 (rings, g.even_odd, g.rgba)
             })
             .collect()
@@ -704,7 +718,7 @@ impl Shape {
     /// Whether `p` (on the sheet) is on the shape: inside its body, or
     /// within `radius` of a line.
     pub fn hit(&self, p: Vec2, radius: f32) -> bool {
-        let local = self.unturn(p);
+        let local = self.mirror(self.unturn(p));
         let outlines = self.geom.outlines(self.rect);
         let reach = radius + self.line.units() / 2.;
         let near = |o: &Outline| {
@@ -871,5 +885,27 @@ mod tests {
         let json = r#"{"id":4,"geom":"Diamond","rect":{"x":0,"y":0,"w":10,"h":10},"ink":"Cobalt"}"#;
         let s: Shape = serde_json::from_str(json).unwrap();
         assert_eq!((s.rot, s.fill, s.line, s.dashed, s.locked), (0., None, LineWidth::Regular, false, false));
+    }
+
+    #[test]
+    fn a_flipped_arrow_points_the_other_way() {
+        let mut s = Shape::new(1, Geom::Arrow, v2(100., 50.));
+        let tip = |s: &Shape| s.outlines().iter().flat_map(|o| o.points.clone()).fold(f32::MIN, |m, p| m.max(p.x));
+        let left = |s: &Shape| s.outlines().iter().flat_map(|o| o.points.clone()).fold(f32::MAX, |m, p| m.min(p.x));
+        let (a, b) = (left(&s), tip(&s));
+        s.flip_x = true;
+        // The same box, mirrored.
+        assert!((left(&s) - a).abs() < 0.01 && (tip(&s) - b).abs() < 0.01);
+        let head = |s: &Shape| {
+            let pts: Vec<Vec2> = s.outlines().iter().flat_map(|o| o.points.clone()).collect();
+            pts.iter().filter(|p| p.x > s.center().x).count() as i32 - pts.iter().filter(|p| p.x < s.center().x).count() as i32
+        };
+        let flipped = head(&s);
+        s.flip_x = false;
+        assert_eq!(head(&s), -flipped);
+        // It's still found where it's drawn.
+        s.flip_x = true;
+        let p = s.outlines()[0].points[1];
+        assert!(s.hit(p, 2.));
     }
 }

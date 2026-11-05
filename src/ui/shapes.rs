@@ -389,6 +389,20 @@ impl Folio {
         self.change_shapes(&ids, cx, |s| s.rot = to(s.rot).rem_euclid(360.));
     }
 
+    /// Mirrors the shapes left to right (`across`) or top to bottom.
+    pub fn flip_shapes(&mut self, ids: &[Id], across: bool, cx: &mut Context<Self>) {
+        if ids.is_empty() {
+            return;
+        }
+        self.change_shapes(ids, cx, |s| {
+            if across {
+                s.flip_x = !s.flip_x;
+            } else {
+                s.flip_y = !s.flip_y;
+            }
+        });
+    }
+
     /// Turns the shapes `by` degrees, from the nearest 15°.
     pub fn turn_shapes(&mut self, ids: &[Id], by: f32, cx: &mut Context<Self>) {
         self.set_turn(ids, cx, |r| (r / 15.).round() * 15. + by);

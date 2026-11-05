@@ -363,6 +363,8 @@ impl Folio {
             .on_action(cx.listener(|this, _: &ToggleShapes, window, cx| this.toggle_shapes_panel(window, cx)))
             .on_action(cx.listener(|this, _: &TurnLeft, _, cx| this.turn_shapes(&this.selected_shapes(), -15., cx)))
             .on_action(cx.listener(|this, _: &TurnRight, _, cx| this.turn_shapes(&this.selected_shapes(), 15., cx)))
+            .on_action(cx.listener(|this, _: &FlipAcross, _, cx| this.flip_shapes(&this.selected_shapes(), true, cx)))
+            .on_action(cx.listener(|this, _: &FlipUpDown, _, cx| this.flip_shapes(&this.selected_shapes(), false, cx)))
             .on_action(cx.listener(|this, _: &EditSelection, window, cx| match this.selection.first().copied() {
                 Some(Selection::Sticker(id)) => this.begin_edit(id, false, window, cx),
                 Some(Selection::Label(id)) => this.edit_label(id, false, window, cx),

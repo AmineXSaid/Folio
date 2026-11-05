@@ -92,6 +92,8 @@ gpui::actions!(
         ToggleShapes,
         TurnLeft,
         TurnRight,
+        FlipAcross,
+        FlipUpDown,
         SaveNote,
         // Writing in a note: the edit bar's first row.
         Bold,

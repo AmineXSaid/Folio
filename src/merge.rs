@@ -148,7 +148,7 @@ impl Piece for Shape {
         self.id
     }
     fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
-        let Shape { id, geom, rect, rot, fill, ink, line, dashed, text, locked } = l;
+        let Shape { id, geom, rect, rot, fill, ink, line, dashed, text, locked, flip_x, flip_y } = l;
         Shape {
             id: *id,
             geom: field(base.map(|b| &b.geom), geom, &r.geom, false),
@@ -160,6 +160,8 @@ impl Piece for Shape {
             dashed: field(base.map(|b| &b.dashed), dashed, &r.dashed, false),
             text: merge_text(base.map(|b| b.text.as_str()), text, &r.text, false),
             locked: field(base.map(|b| &b.locked), locked, &r.locked, false),
+            flip_x: field(base.map(|b| &b.flip_x), flip_x, &r.flip_x, false),
+            flip_y: field(base.map(|b| &b.flip_y), flip_y, &r.flip_y, false),
         }
     }
 }

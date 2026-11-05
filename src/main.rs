@@ -85,6 +85,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-s", ToggleShapes, Some("Board")),
         KeyBinding::new("[", TurnLeft, Some("Board")),
         KeyBinding::new("]", TurnRight, Some("Board")),
+        KeyBinding::new("shift-h", FlipAcross, Some("Board")),
+        KeyBinding::new("shift-v", FlipUpDown, Some("Board")),
         KeyBinding::new("secondary-shift-t", ToMarkdown, Some("Board")),
         KeyBinding::new("secondary-shift-v", PasteMarkdown, Some("Board")),
         // Typing into a note, a dialog, the palette: ahead of the text
