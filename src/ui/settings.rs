@@ -147,6 +147,12 @@ impl Folio {
                 &t,
             ))
             .child(setting(
+                "Tilted notes",
+                "Each note sits a little askew, like paper pinned up",
+                switch("s-tilt", s.tilt, &t).on_click(cx.listener(|this, _, _, cx| this.set_setting(cx, |s| s.tilt = !s.tilt))),
+                &t,
+            ))
+            .child(setting(
                 "Alignment guides",
                 "Notes snap to each other's edges as you drag",
                 switch("s-snap", s.snap, &t).on_click(cx.listener(|this, _, _, cx| this.set_setting(cx, |s| s.snap = !s.snap))),
@@ -239,7 +245,7 @@ impl Folio {
             .child(setting(
                 "Data folder",
                 self.dir.display().to_string(),
-                secondary_button("s-open-dir", "Open folder", &t).on_click(move |_, _, cx| cx.reveal_path(&dir.join("board.json"))),
+                secondary_button("s-open-dir", "Open folder", &t).on_click(move |_, _, cx| cx.reveal_path(&crate::db::db_file(&dir))),
                 &t,
             ))
             .child(setting(

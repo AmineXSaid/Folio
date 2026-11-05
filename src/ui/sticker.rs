@@ -590,6 +590,10 @@ impl Folio {
         };
         let edge = if t.is_dark { t.colors.border } else { gpui::hsla(0., 0., 0., 0.04) };
         let paper = t.paper(s.paper);
+        // Askew, when notes are tilted: the paper and its shadow are drawn
+        // turned (GPUI can't turn an element), the words stay upright. A
+        // note being picked, moved or typed in sits straight.
+        let tilt = (self.board.settings.tilt && !selected && !lifted && s.pin.is_none()).then(|| tilt_of(s.id)).filter(|a| *a != 0.);
 
         // A faint sheen, lighter at the top, so the paper isn't flat; index
         // cards are flat card stock.
@@ -623,10 +627,10 @@ impl Folio {
             .when(!s.fixed, |d| d.min_h(px(r.h * z)))
             .rounded_t(px(rt))
             .rounded_b(px(rb))
-            .bg(gpui::linear_gradient(180., gpui::linear_color_stop(top, 0.), gpui::linear_color_stop(paper, 0.6)))
-            .border_1()
-            .border_color(edge)
-            .shadow(shadow)
+            .when(tilt.is_none(), |d| {
+                d.bg(gpui::linear_gradient(180., gpui::linear_color_stop(top, 0.), gpui::linear_color_stop(paper, 0.6))).border_1().border_color(edge).shadow(shadow.clone())
+            })
+            .when_some(tilt, |d, deg| d.child(tilted_paper(deg, rt.max(rb), paper, edge, t.is_dark)))
             .font_family(t.note_font(s.font))
             .child(div().size_full().rounded_t(px(rt)).rounded_b(px(rb)).overflow_hidden().children(curl).child(inner))
             .when(cut, |d| {
@@ -703,6 +707,62 @@ fn markdown_style(t: &Theme) -> TextViewStyle {
 }
 
 /// Rewrites named highlight colours to this theme's shades.
+/// A note's paper turned by `deg`: its shadow, then the paper with a fine
+/// edge, filling the note's box, drawn behind its words.
+fn tilted_paper(deg: f32, radius: f32, paper: gpui::Hsla, edge: gpui::Hsla, dark: bool) -> gpui::Canvas<()> {
+    canvas(
+        |_, _, _| {},
+        move |b, _, window, _| {
+            let (x, y, w, h) = (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height));
+            let (cx, cy) = (x + w / 2., y + h / 2.);
+            let (sin, cos) = deg.to_radians().sin_cos();
+            let turn = |px_: f32, py: f32| {
+                let (dx, dy) = (px_ - cx, py - cy);
+                gpui::point(px(cx + dx * cos - dy * sin), px(cy + dx * sin + dy * cos))
+            };
+            // A rounded box as a polygon, its corners in a few steps.
+            let r = radius.min(w / 2.).min(h / 2.);
+            let mut ring = Vec::new();
+            for (ccx, ccy, a0) in [(x + w - r, y + r, -90f32), (x + w - r, y + h - r, 0.), (x + r, y + h - r, 90.), (x + r, y + r, 180.)] {
+                for i in 0..=4 {
+                    let a = (a0 + i as f32 * 22.5).to_radians();
+                    ring.push((ccx + r * a.cos(), ccy + r * a.sin()));
+                }
+            }
+            let shape = |dx: f32, dy: f32, grow: f32| -> Vec<gpui::Point<gpui::Pixels>> {
+                ring.iter()
+                    .map(|&(px_, py)| {
+                        let (ox, oy) = ((px_ - cx) * (1. + grow / w), (py - cy) * (1. + grow / h));
+                        turn(cx + ox + dx, cy + oy + dy)
+                    })
+                    .collect()
+            };
+            // A soft shadow: a few faint layers, further and wider.
+            let a = if dark { 0.22 } else { 0.035 };
+            for (dy, grow, alpha) in [(1., 0., a * 1.4), (3., 3., a * 0.7), (7., 10., a * 0.35)] {
+                let mut p = gpui::PathBuilder::fill();
+                p.add_polygon(&shape(0., dy, grow), true);
+                if let Ok(p) = p.build() {
+                    window.paint_path(p, gpui::hsla(150. / 360., 0.18, 0.08, alpha));
+                }
+            }
+            let body = shape(0., 0., 0.);
+            let mut p = gpui::PathBuilder::fill();
+            p.add_polygon(&body, true);
+            if let Ok(p) = p.build() {
+                window.paint_path(p, paper);
+            }
+            let mut e = gpui::PathBuilder::stroke(px(1.));
+            e.add_polygon(&body, true);
+            if let Ok(e) = e.build() {
+                window.paint_path(e, edge);
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
+}
+
 /// What a screen reader says after a note's name: its type, its first
 /// words, and a reminder if it has one.
 fn a11y_summary(s: &Sticker) -> String {

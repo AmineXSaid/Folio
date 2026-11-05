@@ -598,6 +598,13 @@ fn yes() -> bool {
     true
 }
 
+/// How far a note sits askew when notes are tilted (degrees): small, its
+/// own for each note, and the same every time.
+pub fn tilt_of(id: Id) -> f32 {
+    let k = (id.wrapping_mul(2_654_435_761) >> 7) % 7;
+    (k as f32 - 3.) * 0.5
+}
+
 impl Sticker {
     /// Makes it `style`; an index card without a pin gets its round one.
     pub fn set_style(&mut self, style: NoteStyle) {
@@ -2019,12 +2026,15 @@ pub struct Settings {
     pub shape_hidden: Vec<String>,
     /// The page a PDF export is laid on.
     pub pdf_page: PdfPage,
+    /// Notes sit a little askew, each its own way, like paper pinned up.
+    pub tilt: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             pdf_page: PdfPage::Fit,
+            tilt: false,
             theme: ThemeMode::Light,
             open_on: OpenOn::Home,
             start_with_windows: false,
