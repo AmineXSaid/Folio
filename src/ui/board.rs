@@ -59,6 +59,28 @@ struct InkPath {
     points: Vec<gpui::Point<Pixels>>,
     color: Hsla,
     width: f32,
+    /// A settled line of ink: its id and what its shape depends on (its
+    /// points and width, and the zoom), so its tessellation can be kept
+    /// and only shifted as the sheet pans.
+    key: Option<(Id, u64)>,
+}
+
+/// Tessellated lines of ink, kept between frames: what each was built from,
+/// where the sheet's origin was on screen then, and the path.
+pub type InkCache = std::rc::Rc<std::cell::RefCell<std::collections::HashMap<Id, (u64, gpui::Point<Pixels>, gpui::Path<Pixels>)>>>;
+
+/// What a line of ink's tessellation depends on, at this zoom.
+fn ink_key(s: &Stroke, zoom: f32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.points.len().hash(&mut h);
+    for p in &s.points {
+        p.x.to_bits().hash(&mut h);
+        p.y.to_bits().hash(&mut h);
+    }
+    s.width.to_bits().hash(&mut h);
+    zoom.to_bits().hash(&mut h);
+    h.finish()
 }
 
 impl Folio {
@@ -89,7 +111,7 @@ impl Folio {
         let mut paths: Vec<InkPath> = Vec::new();
         // Picked lines of ink: a soft band of the brand colour under each.
         for s in sheet.strokes.iter().filter(|s| self.is_selected(Selection::Stroke(s.id)) && s.bounds().intersects(&view)) {
-            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color: t.colors.brand.opacity(0.28), width: (s.width + 8.) * cam.zoom });
+            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color: t.colors.brand.opacity(0.28), width: (s.width + 8.) * cam.zoom, key: None });
         }
         // The loop being drawn with the lasso, closed back to where it began.
         if let Gesture::Lasso { points } = &self.gesture {
@@ -97,21 +119,21 @@ impl Folio {
             if let Some(first) = run.first().copied() {
                 run.push(first);
             }
-            paths.push(InkPath { points: run, color: t.colors.brand.opacity(0.8), width: 1.5 });
+            paths.push(InkPath { points: run, color: t.colors.brand.opacity(0.8), width: 1.5, key: None });
         }
         for s in sheet.strokes.iter().filter(|s| s.bounds().intersects(&view)) {
             let mut color = t.ink(s.ink);
             if s.marker {
                 color = color.opacity(if t.is_dark { 0.35 } else { 0.3 });
             }
-            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color, width: s.width * cam.zoom });
+            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color, width: s.width * cam.zoom, key: Some((s.id, ink_key(s, cam.zoom))) });
         }
         if let Gesture::Draw(s) = &self.gesture {
             let mut color = t.ink(s.ink);
             if s.marker {
                 color = color.opacity(0.3);
             }
-            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color, width: s.width * cam.zoom });
+            paths.push(InkPath { points: s.points.iter().map(|p| screen(*p)).collect(), color, width: s.width * cam.zoom, key: None });
         }
         // Links: their runs on screen, colour, dashed or not, arrowheads,
         // and a dot where a plain one ends.
@@ -173,6 +195,10 @@ impl Folio {
         let grid = t.size.dot_grid;
         let pattern = sheet.backdrop.pattern;
         let bounds_cell = self.viewport.clone();
+        let ink_cache = self.ink_cache.clone();
+        let world_origin = point(px(cam.pan.x), px(cam.pan.y));
+        // Lines gone from the sheet leave the cache.
+        ink_cache.borrow_mut().retain(|id, _| sheet.strokes.iter().any(|s| s.id == *id));
         let underlay = canvas(
             move |bounds, _, _| bounds_cell.set(bounds),
             move |bounds, _, window, _| {
@@ -212,8 +238,23 @@ impl Folio {
                         }
                     }
                 }
+                let anchor = world_origin + o;
+                let mut cache = ink_cache.borrow_mut();
                 for ink in &paths {
-                    paint_stroke(ink, o, window);
+                    match ink.key {
+                        Some((id, key)) => {
+                            let fresh = cache.get(&id).is_none_or(|(k, _, _)| *k != key);
+                            if fresh {
+                                if let Some(p) = stroke_path(ink, o) {
+                                    cache.insert(id, (key, anchor, p));
+                                }
+                            }
+                            if let Some((_, at, p)) = cache.get(&id) {
+                                window.paint_path(shifted(p, anchor - *at), ink.color);
+                            }
+                        }
+                        None => paint_stroke(ink, o, window),
+                    }
                 }
             },
         )
@@ -2108,9 +2149,28 @@ fn paint_dots(bounds: gpui::Bounds<Pixels>, cam: Camera, grid: f32, color: Hsla,
 }
 
 fn paint_stroke(ink: &InkPath, origin: gpui::Point<Pixels>, window: &mut Window) {
+    if let Some(p) = stroke_path(ink, origin) {
+        window.paint_path(p, ink.color);
+    }
+}
+
+/// A kept path moved by `d`: a pan only shifts what's already tessellated.
+fn shifted(p: &gpui::Path<Pixels>, d: gpui::Point<Pixels>) -> gpui::Path<Pixels> {
+    let mut p = p.clone();
+    if d.x != px(0.) || d.y != px(0.) {
+        for v in &mut p.vertices {
+            v.xy_position = v.xy_position + d;
+        }
+        p.bounds.origin = p.bounds.origin + d;
+    }
+    p
+}
+
+/// A line of ink tessellated: smoothed through its points' midpoints.
+fn stroke_path(ink: &InkPath, origin: gpui::Point<Pixels>) -> Option<gpui::Path<Pixels>> {
     let pts = &ink.points;
     if pts.is_empty() {
-        return;
+        return None;
     }
     let mut b = PathBuilder::stroke(px(ink.width.max(0.75)));
     b.move_to(pts[0] + origin);
@@ -2124,9 +2184,7 @@ fn paint_stroke(ink: &InkPath, origin: gpui::Point<Pixels>, window: &mut Window)
         }
         b.line_to(*pts.last().unwrap() + origin);
     }
-    if let Ok(p) = b.build() {
-        window.paint_path(p, ink.color);
-    }
+    b.build().ok()
 }
 
 fn empty_state(t: &Theme) -> impl IntoElement {

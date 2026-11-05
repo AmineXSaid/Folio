@@ -493,6 +493,8 @@ pub struct Folio {
     pub viewport: Rc<Cell<Bounds<Pixels>>>,
     /// Each note's natural height (world units), measured as it's drawn.
     pub heights: Rc<RefCell<HashMap<Id, f32>>>,
+    /// Lines of ink as last tessellated (`board.rs`).
+    pub ink_cache: super::board::InkCache,
     /// The edit bar's size as last drawn (screen px), to find it a place.
     pub edit_bar_size: Rc<Cell<(f32, f32)>>,
     /// Where the top bar's "folio." sits (window px): the opening's
@@ -774,6 +776,7 @@ impl Folio {
             cursor: v2(0., 0.),
             viewport: Rc::new(Cell::new(Bounds::default())),
             heights: Rc::new(RefCell::new(HashMap::new())),
+            ink_cache: Default::default(),
             edit_bar_size: Rc::new(Cell::new((700., 76.))),
             mark_at: Rc::default(),
             export_at: Rc::default(),
