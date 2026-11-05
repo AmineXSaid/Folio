@@ -450,8 +450,11 @@ cached ink tessellation; picture mipmaps. Done: reorder sheets by drag.
 
 **v0.4: richer content.** Coloured text; WYSIWYG while typing; connectors between shapes; animated SVG player; image crop; custom reminder times and repeats.
 
-**v1.0: ship.** Windows installer and signed build (with its own
-notification identity), export (PNG/PDF/Markdown).
+**v1.0: ship.** A signed build (it needs a code-signing certificate),
+export (PNG/PDF/Markdown). Done: the Windows installer (`installer/`, NSIS,
+per user, no admin), and Folio's own notification identity (AppUserModelID
+`Folio.Folio`, registered with its name and logo by the installer and by
+the app at start, so toasts say Folio instead of PowerShell).
 Done: screen-reader labels through GPUI's AccessKit tree (notes as notes,
 named by their title with their type, first words and reminder as the
 description; menu items with their shortcuts; the tool dock's tools with

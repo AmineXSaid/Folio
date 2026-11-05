@@ -10,6 +10,7 @@ cargo build --release --target x86_64-pc-windows-gnu
 mkdir -p dist
 cp target/x86_64-pc-windows-gnu/release/folio.exe dist/Folio.exe
 x86_64-w64-mingw32-strip dist/Folio.exe
+cp assets/brand/folio-128.png dist/folio-logo.png
 # The welcome page's side picture (164x314) and the header (150x57).
 convert -size 164x314 gradient:'#f4588a'-'#b8285a' \
   \( assets/brand/folio-256.png -resize 104x104 \) -gravity center -geometry +0-30 -composite \

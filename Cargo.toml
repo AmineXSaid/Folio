@@ -37,8 +37,9 @@ miniz_oxide = "=0.8.9"
 
 # Windows: the tray icon and its menu, and reminder notifications.
 [target.'cfg(windows)'.dependencies]
-# Reading rich text (HTML) off the clipboard. MIT or Apache-2.0.
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory"] }
+# Reading rich text (HTML) off the clipboard, and Folio's own name in
+# notifications. MIT or Apache-2.0.
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Registry", "Win32_UI_Shell"] }
 tray-icon = { version = "=0.26.1", default-features = false }
 tauri-winrt-notification = "=0.8.1"
 # The tray icon's pixels, from the logo PNG (already in GPUI's tree).

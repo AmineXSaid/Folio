@@ -335,13 +335,49 @@ pub fn set_start_with_windows(on: bool) -> Result<(), String> {
     Err("Starting with the system isn't available here".into())
 }
 
+/// Folio's identity on Windows: notifications, the taskbar and the Start
+/// menu group under it, and show Folio's name and logo.
+#[cfg(windows)]
+pub const APP_ID: &str = "Folio.Folio";
+
+/// Claims Folio's identity for this run: registered for this user (name
+/// and logo, under `HKCU\Software\Classes\AppUserModelId`, so a
+/// notification says it's from Folio even without the installer) and set
+/// on the process. Best effort.
+pub fn claim_identity() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
+        use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        // The logo as a file the notification can show.
+        let dir = crate::store::data_dir();
+        let logo = dir.join("folio-logo.png");
+        if !logo.exists() {
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(&logo, include_bytes!("../assets/brand/folio-128.png"));
+        }
+        let key = wide(&format!("Software\\Classes\\AppUserModelId\\{APP_ID}"));
+        let set = |name: &str, value: &str| {
+            let (n, v) = (wide(name), wide(value));
+            // SAFETY: both strings end in a nul and live through the call.
+            unsafe { RegSetKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), n.as_ptr(), REG_SZ, v.as_ptr().cast(), (v.len() * 2) as u32) };
+        };
+        set("DisplayName", "Folio");
+        set("IconUri", &logo.to_string_lossy());
+        let id = wide(APP_ID);
+        // SAFETY: a nul-ended string, read during the call.
+        unsafe { SetCurrentProcessExplicitAppUserModelID(id.as_ptr()) };
+    }
+}
+
 /// A system notification. Best effort: nothing happens where there's no
 /// notification service.
 pub fn notify(title: &str, body: &str) {
     #[cfg(windows)]
     {
         use tauri_winrt_notification::Toast;
-        let _ = Toast::new(Toast::POWERSHELL_APP_ID).title(title).text1(body).show();
+        let _ = Toast::new(APP_ID).title(title).text1(body).show();
     }
     #[cfg(target_os = "linux")]
     {

@@ -159,6 +159,7 @@ fn log_crashes() {
 
 fn main() {
     log_crashes();
+    desktop::claim_identity();
     // Started with Windows: open, then tuck the window away.
     let background = std::env::args().any(|a| a == "--background");
     gpui::application().with_assets(assets::Assets).run(move |cx: &mut App| {
