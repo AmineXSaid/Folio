@@ -15,7 +15,7 @@ and what is still to come.
 
 | Capability | Built (v0.2) | Planned |
 |---|---|---|
-| Categories as sheets, each with its own content and camera | ✅ home screen of sheet cards with live miniatures (real note titles, on the sheet's own background), Recent/A–Z, pinned first; Trash and Archive, with their counts, held in the window's bottom-right corner; an emoji from a picker of about 200 (sheets have no colours of their own), rename, duplicate, archive, trash; templates (Kanban, weekly planner, brainstorm, meeting notes, reading list); the drawer (hidden sidebar, Ctrl+B); Ctrl+Tab | reorder by drag |
+| Categories as sheets, each with its own content and camera | ✅ home screen of sheet cards with live miniatures (real note titles, on the sheet's own background), Recent/A–Z, pinned first; Trash and Archive, with their counts, held in the window's bottom-right corner; an emoji from a picker of about 200 (sheets have no colours of their own), rename, duplicate, archive, trash; templates (Kanban, weekly planner, brainstorm, meeting notes, reading list); the drawer (hidden sidebar, Ctrl+B); Ctrl+Tab; reorder by dragging a sheet's card onto another, in the drawer or on the home screen (which then shows **Yours**, the order you made, beside Recent and A–Z), as one undo step | |
 | Getting a thought down fast | ✅ Ctrl+Alt+N (or keys chosen in Settings: click the keys, press new ones; a hint if they lack Ctrl, Alt or the Windows key, or another app holds them; a warning where Ctrl+Alt may type letters) from any app opens a quick-note card (rounded, floating with its shadow in a see-through window): large borderless writing, and at its foot one button naming the sheet it goes to (the Inbox first; click for the list of sheets, or Alt+←/→) beside Save; the sheet picked is offered next time (`Settings::quick_sheet`); tray icon (Windows); start with Windows | a phone companion |
 | Notes visible outside the app | ✅ pin a note to the desktop: its own always-on-top window, ticks sync both ways, remembers where it was; see-through mode (solid again under the pointer) | |
 | Freeform canvas | ✅ pan (wheel, Space+drag, middle-drag, Hand), zoom at the cursor, zoom to fit; box select, Ctrl- or Shift-click to add or take out (a tick on each), group move; with several notes selected a bar above the dock (count, lock, duplicate, move to a sheet, archive, trash, more, clear) and a selected note's menu act on all of them, hiding what fits one note only (edit, picture, desktop); alignment guides; snap to the dot grid (Settings); areas that carry their notes; tidy up; arrow keys between notes; a map in the corner; drag notes to the left edge to drop them on another sheet; notes lift while dragged and settle with a small bounce | |
@@ -438,8 +438,7 @@ optional Google Drive sync with merging, and export to Markdown or a
 Folio file.
 
 **v0.3: data and scale.** SQLite store with full-text search; R-tree;
-cached ink tessellation; picture mipmaps; reorder
-sheets by drag.
+cached ink tessellation; picture mipmaps. Done: reorder sheets by drag.
 
 **v0.4: richer content.** Coloured text; WYSIWYG while typing; connectors between shapes; animated SVG player; image crop; custom reminder times and repeats.
 

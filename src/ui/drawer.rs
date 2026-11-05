@@ -11,7 +11,60 @@ use super::*;
 use crate::theme::{theme, Theme};
 use crate::time::{self, now};
 
+/// A sheet picked up in the drawer or on the home screen, to move it.
+#[derive(Clone)]
+pub struct SheetDrag {
+    pub ix: usize,
+    name: String,
+    look: (Hsla, Hsla, Hsla),
+}
+
+impl SheetDrag {
+    pub fn new(ix: usize, name: String, t: &Theme) -> Self {
+        SheetDrag { ix, name, look: (t.colors.surface, t.colors.brand, t.colors.text) }
+    }
+}
+
+/// What follows the pointer while a sheet is moved: its name on a card.
+pub struct SheetGhost(SheetDrag);
+
+impl Render for SheetGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let (bg, edge, ink) = self.0.look;
+        div()
+            .px(px(12.))
+            .py(px(7.))
+            .rounded(px(10.))
+            .bg(bg)
+            .border_1()
+            .border_color(edge)
+            .text_color(ink)
+            .text_size(px(13.))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .opacity(0.92)
+            .child(self.0.name.clone())
+    }
+}
+
+/// A sheet card that can be picked up and dropped on another to take
+/// its place; the card it would land on is outlined.
+pub(super) fn movable(card: gpui::Stateful<gpui::Div>, ix: usize, name: String, t: &Theme, cx: &mut Context<Folio>) -> gpui::Stateful<gpui::Div> {
+    let (edge, wash) = (t.colors.brand, t.colors.brand_tint);
+    card.on_drag(SheetDrag::new(ix, name, t), |d, _, _, cx| cx.new(|_| SheetGhost(d.clone())))
+        .drag_over::<SheetDrag>(move |s, _, _, _| s.border_color(edge).bg(wash))
+        .on_drop(cx.listener(move |this, d: &SheetDrag, _, cx| this.reorder_sheet(d.ix, ix, cx)))
+}
+
 impl Folio {
+    /// Moves sheet `from` to where sheet `to` is, as one undo step.
+    pub fn reorder_sheet(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from != to {
+            self.change(cx, |b| b.move_sheet(from, to));
+            // The home screen shows the order just made.
+            self.sort = super::app::Sort::Yours;
+        }
+    }
+
     /// The open drawer: it slides in fast and settles as the window behind
     /// dims; a click on the dimmed part closes it.
     pub(super) fn render_drawer(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -303,8 +356,7 @@ impl Folio {
         let n = c.stickers.len();
         let name = c.name.clone();
         let meta = format!("{n} note{} · {}", if n == 1 { "" } else { "s" }, time::ago(c.opened.max(c.edited), now()));
-        div()
-            .id(("drawer-card", ix))
+        movable(div().id(("drawer-card", ix)), ix, name.clone(), t, cx)
             .flex_none()
             .flex()
             .items_center()

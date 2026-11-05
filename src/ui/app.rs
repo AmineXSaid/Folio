@@ -380,6 +380,8 @@ pub enum Dialog {
 pub enum Sort {
     Recent,
     Name,
+    /// The order you put them in, by dragging.
+    Yours,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

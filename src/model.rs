@@ -2297,6 +2297,21 @@ impl Board {
         self.categories.len() - 1
     }
 
+    /// Moves the sheet at `from` to stand where the sheet at `to` stands,
+    /// the open sheet staying open.
+    pub fn move_sheet(&mut self, from: usize, to: usize) {
+        let n = self.categories.len();
+        if from >= n || to >= n || from == to {
+            return;
+        }
+        let open = self.categories.get(self.active).map(|c| c.id);
+        let c = self.categories.remove(from);
+        self.categories.insert(to, c);
+        if let Some(ix) = open.and_then(|id| self.categories.iter().position(|c| c.id == id)) {
+            self.active = ix;
+        }
+    }
+
     /// Sheets for lists: pinned first (Inbox first of those), then the rest
     /// in their own order.
     pub fn ordered(&self) -> Vec<usize> {
@@ -2827,6 +2842,25 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!(b.search("#garden"), vec![Hit { sheet: 0, note: 10 }]);
         assert_eq!(b.all_tags(), vec![("garden".to_string(), 1)]);
+    }
+
+    #[test]
+    fn a_sheet_moves_and_the_open_one_stays_open() {
+        let mut b = Board::empty();
+        for name in ["B", "C", "D"] {
+            b.add_sheet(name);
+        }
+        let names = |b: &Board| b.categories.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
+        let first = names(&b)[0].clone();
+        b.active = 2; // "C"
+        b.move_sheet(3, 0);
+        assert_eq!(names(&b), vec!["D".to_string(), first.clone(), "B".into(), "C".into()]);
+        assert_eq!(b.categories[b.active].name, "C");
+        b.move_sheet(0, 3);
+        assert_eq!(names(&b), vec![first, "B".to_string(), "C".into(), "D".into()]);
+        assert_eq!(b.categories[b.active].name, "C");
+        b.move_sheet(0, 9);
+        assert_eq!(b.categories.len(), 4);
     }
 
     #[test]

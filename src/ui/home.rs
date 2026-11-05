@@ -65,10 +65,10 @@ impl Folio {
             .when(q.is_empty(), |d| {
                 d.child(segmented(
                     "sort",
-                    &[("Recent", sort == Sort::Recent), ("A–Z", sort == Sort::Name)],
+                    &[("Recent", sort == Sort::Recent), ("A–Z", sort == Sort::Name), ("Yours", sort == Sort::Yours)],
                     &t,
                     cx.listener(|this, ix: &usize, _, cx| {
-                        this.sort = if *ix == 0 { Sort::Recent } else { Sort::Name };
+                        this.sort = [Sort::Recent, Sort::Name, Sort::Yours][(*ix).min(2)];
                         cx.notify();
                     }),
                 ))
@@ -117,16 +117,17 @@ impl Folio {
                     })),
             ));
             let mut order = self.board.ordered();
-            if self.sort == Sort::Name {
-                order.sort_by_key(|&i| {
+            match self.sort {
+                Sort::Name => order.sort_by_key(|&i| {
                     let c = &self.board.categories[i];
                     (!c.inbox, !c.pinned, c.name.to_lowercase())
-                });
-            } else {
-                order.sort_by_key(|&i| {
+                }),
+                Sort::Recent => order.sort_by_key(|&i| {
                     let c = &self.board.categories[i];
                     (!c.inbox, !c.pinned, std::cmp::Reverse(c.opened.max(c.edited)))
-                });
+                }),
+                // As they stand, the order the drawer shows.
+                Sort::Yours => {}
             }
             // The cards arrive one after another.
             let cards: Vec<_> = order
@@ -305,8 +306,7 @@ impl Folio {
         let name = c.name.clone();
         let pinned = c.pinned && !c.inbox;
         let shadow = t.shadow_card(0.6);
-        div()
-            .id(("card", ix))
+        super::drawer::movable(div().id(("card", ix)), ix, name.clone(), t, cx)
             .w(px(w))
             .p(px(10.))
             .flex()
