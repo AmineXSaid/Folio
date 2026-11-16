@@ -584,6 +584,7 @@ impl Folio {
             .children(self.render_label_edit(&t, cx))
             .children(self.render_shape_edit(&t, cx))
             .children(self.render_ports(&t))
+            .children(self.render_many_box(&t))
             .children(edit_layer)
             .children(edit_bar_leaving)
             .children(self.render_shapes_panel(cx))
@@ -1370,7 +1371,10 @@ impl Folio {
                 self.gesture = Gesture::LabelWidth { id, start: world.x, w };
             }
             Tool::Select => {
-                if let Some((id, g)) = self.shape_grip_at(at) {
+                if let Some((anchor, corner)) = self.many_grip_at(at) {
+                    // A corner of a mixed selection's box: all of it resizes.
+                    self.start_scale_many(anchor, corner);
+                } else if let Some((id, g)) = self.shape_grip_at(at) {
                     self.gesture = match (g, self.sheet().shapes.iter().find(|s| s.id == id).cloned()) {
                         (ShapeGrip::Corner(grip), Some(was)) => Gesture::ResizeShape { start: world, was, grip },
                         _ => Gesture::TurnShape { id },
@@ -1646,6 +1650,10 @@ impl Folio {
                 if let Some(s) = self.board.sheet_mut().sticker_mut(id) {
                     s.rect = r;
                 }
+            }
+            Gesture::ScaleMany { anchor, start, was } => {
+                let (anchor, start, was) = (*anchor, *start, was.clone());
+                self.scale_many(anchor, start, &was, world);
             }
             Gesture::ResizeShape { start, was, grip } => {
                 // The pull, in the upright box's terms; the opposite corner

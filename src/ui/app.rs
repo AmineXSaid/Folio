@@ -375,6 +375,19 @@ pub enum Gesture {
     ResizeShape { start: Vec2, was: Shape, grip: Grip },
     /// Turning a shape by its handle.
     TurnShape { id: Id },
+    /// Resizing everything picked from a corner of its box: the corner
+    /// that stays put, where the pointer started, and each thing as it was.
+    ScaleMany { anchor: Vec2, start: Vec2, was: Vec<Picked> },
+}
+
+/// One picked thing as it was when a resize of the selection began.
+#[derive(Clone, Debug)]
+pub enum Picked {
+    Note(Sticker),
+    Shape(Shape),
+    Label(Label),
+    Stroke(Stroke),
+    Frame(Frame),
 }
 
 /// The note being typed into, on the sheet.

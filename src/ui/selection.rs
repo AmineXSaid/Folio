@@ -29,7 +29,147 @@ fn kind_of(s: &Selection) -> Option<(usize, &'static str, &'static str)> {
 const WRAP_PAD: f32 = 32.;
 const WRAP_TITLE: f32 = 40.;
 
+/// How far out from what's picked its box is drawn (px), and how near a
+/// corner of it a press takes that corner.
+const BOX_OUT: f32 = 10.;
+const CORNER_REACH: f32 = 9.;
+
 impl Folio {
+    /// The box round two or more picked things (world), while they can be
+    /// resized together.
+    pub(super) fn many_box(&self) -> Option<Rect> {
+        let busy = matches!(self.gesture, Gesture::Move { moved: true, .. } | Gesture::Marquee { .. } | Gesture::Lasso { .. });
+        if self.tool != Tool::Select || busy || self.editing.is_some() {
+            return None;
+        }
+        let boxes = self.picked_boxes();
+        if boxes.len() < 2 {
+            return None;
+        }
+        let z = self.sheet().camera.zoom;
+        let all = boxes.into_iter().map(|p| p.1).reduce(|a, b| a.union(&b))?;
+        let out = BOX_OUT / z;
+        Some(Rect { x: all.x - out, y: all.y - out, w: all.w + 2. * out, h: all.h + 2. * out })
+    }
+
+    /// The corner of the selection's box under `at` (screen): the opposite
+    /// corner, which stays put, and that corner (world).
+    pub(super) fn many_grip_at(&self, at: Vec2) -> Option<(Vec2, Vec2)> {
+        let r = self.many_box()?;
+        let cam = self.sheet().camera;
+        let corners = [(r.x, r.y), (r.x + r.w, r.y), (r.x, r.y + r.h), (r.x + r.w, r.y + r.h)];
+        corners.iter().enumerate().find_map(|(i, &(x, y))| {
+            let s = cam.to_screen(Vec2 { x, y });
+            (s.sub(at).len() <= CORNER_REACH).then(|| {
+                let (ox, oy) = corners[3 - i];
+                (Vec2 { x: ox, y: oy }, Vec2 { x, y })
+            })
+        })
+    }
+
+    /// Starts resizing the picked things from a corner of their box.
+    pub(super) fn start_scale_many(&mut self, anchor: Vec2, start: Vec2) {
+        use super::app::Picked;
+        let c = self.sheet();
+        let was: Vec<Picked> = self
+            .selection
+            .iter()
+            .filter_map(|s| match *s {
+                Selection::Sticker(id) => c.sticker(id).filter(|n| !n.locked).cloned().map(|mut n| {
+                    n.rect = self.note_rect(&n);
+                    Picked::Note(n)
+                }),
+                Selection::Shape(id) => c.shapes.iter().find(|x| x.id == id && !x.locked).cloned().map(Picked::Shape),
+                Selection::Label(id) => c.labels.iter().find(|x| x.id == id).cloned().map(Picked::Label),
+                Selection::Stroke(id) => c.strokes.iter().find(|x| x.id == id).cloned().map(Picked::Stroke),
+                Selection::Frame(id) => c.frames.iter().find(|x| x.id == id).cloned().map(Picked::Frame),
+                Selection::Link(_) => None,
+            })
+            .collect();
+        self.gesture = Gesture::ScaleMany { anchor, start, was };
+    }
+
+    /// The picked things scaled about `anchor` by how far the pointer is
+    /// from it now, against where it started (the same both ways, so
+    /// nothing is squashed).
+    pub(super) fn scale_many(&mut self, anchor: Vec2, start: Vec2, was: &[super::app::Picked], world: Vec2) {
+        use super::app::Picked;
+        let k = (world.sub(anchor).len() / start.sub(anchor).len().max(1.)).clamp(0.15, 8.);
+        let at = |p: Vec2| Vec2 { x: anchor.x + (p.x - anchor.x) * k, y: anchor.y + (p.y - anchor.y) * k };
+        let scaled = |r: Rect| {
+            let p = at(Vec2 { x: r.x, y: r.y });
+            Rect { x: p.x, y: p.y, w: r.w * k, h: r.h * k }
+        };
+        let c = self.board.sheet_mut();
+        for p in was {
+            match p {
+                Picked::Note(n) => {
+                    if let Some(x) = c.sticker_mut(n.id) {
+                        let r = scaled(n.rect);
+                        x.rect = Rect { w: r.w.max(80.), h: r.h.max(48.), ..r };
+                    }
+                }
+                Picked::Shape(s) => {
+                    if let Some(x) = c.shapes.iter_mut().find(|x| x.id == s.id) {
+                        let r = scaled(s.rect);
+                        x.rect = Rect { w: r.w.max(8.), h: r.h.max(8.), ..r };
+                    }
+                }
+                Picked::Label(l) => {
+                    if let Some(x) = c.labels.iter_mut().find(|x| x.id == l.id) {
+                        x.at = at(l.at);
+                        x.width = l.width.map(|w| (w * k).max(80.));
+                    }
+                }
+                Picked::Stroke(s) => {
+                    if let Some(x) = c.strokes.iter_mut().find(|x| x.id == s.id) {
+                        x.points = s.points.iter().map(|p| at(*p)).collect();
+                        x.width = (s.width * k).max(0.5);
+                    }
+                }
+                Picked::Frame(f) => {
+                    if let Some(x) = c.frames.iter_mut().find(|x| x.id == f.id) {
+                        x.rect = scaled(f.rect);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The box round a mixed selection and its four corner handles.
+    pub(super) fn render_many_box(&self, t: &Theme) -> Vec<gpui::AnyElement> {
+        let Some(r) = self.many_box() else { return Vec::new() };
+        let cam = self.sheet().camera;
+        let a = cam.to_screen(Vec2 { x: r.x, y: r.y });
+        let (w, h) = (r.w * cam.zoom, r.h * cam.zoom);
+        let mut out = vec![div()
+            .absolute()
+            .left(px(a.x))
+            .top(px(a.y))
+            .w(px(w))
+            .h(px(h))
+            .border_1()
+            .border_dashed()
+            .border_color(t.colors.brand.opacity(0.7))
+            .rounded(t.radius.small)
+            .into_any_element()];
+        for (x, y) in [(a.x, a.y), (a.x + w, a.y), (a.x, a.y + h), (a.x + w, a.y + h)] {
+            out.push(
+                div()
+                    .absolute()
+                    .left(px(x - 5.))
+                    .top(px(y - 5.))
+                    .size(px(10.))
+                    .rounded(px(2.))
+                    .bg(t.colors.surface)
+                    .border_1()
+                    .border_color(t.colors.brand)
+                    .into_any_element(),
+            );
+        }
+        out
+    }
+
     /// Each picked thing that has a place on the sheet, and its box there.
     pub(super) fn picked_boxes(&self) -> Vec<(Selection, Rect)> {
         let c = self.sheet();

@@ -442,7 +442,7 @@ bar for any mix of things (what's picked, kind by kind, a kind clicked
 keeping only those; line up by an edge or the middles; spread three or more
 evenly; wrap in an area; group (Ctrl+G) and ungroup (Ctrl+Shift+G): a click
 on one picks its group, a box or the lasso widens to whole groups, copies
-make groups of their own). Next: scaling a mixed selection from its box;
+make groups of their own). a mixed selection resizes together from the corners of its dashed box (about the opposite corner, the same both ways). Next:
 a template gallery with previews that drops templates into the sheet
 (Retrospective, Brainwriting, Business Model Canvas, Ice breaker, User Story
 Map, Customer Journey, Product Roadmap, Flowchart); dot voting, a timer,
