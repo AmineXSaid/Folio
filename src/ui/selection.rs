@@ -129,6 +129,9 @@ impl Folio {
         }
         let ids = self.selected_notes();
         let notes_only = ids.len() == picked.len();
+        // All of one group already: the button takes them apart.
+        let first_group = picked.first().and_then(|s| self.group_of(*s));
+        let grouped = first_group.is_some() && picked.iter().filter(|s| !matches!(s, Selection::Frame(_))).all(|s| self.group_of(*s) == first_group);
         let button = |id: &'static str, path: &'static str, hint: String, danger: bool| {
             div()
                 .id(id)
@@ -234,6 +237,11 @@ impl Folio {
             .child(lines)
             .child(spreads)
             .child(button("sel-wrap", "icons/square-dashed.svg", "Wrap in an area".into(), false).on_click(cx.listener(|this, _, _, cx| this.wrap_in_area(cx))))
+            .child(if grouped {
+                button("sel-ungroup", "icons/ungroup.svg", format!("Ungroup   {}", shortcut("Shift+G")), false).on_click(cx.listener(|this, _, _, cx| this.group_selection(true, cx)))
+            } else {
+                button("sel-group", "icons/group.svg", format!("Group   {}", shortcut("G")), false).on_click(cx.listener(|this, _, _, cx| this.group_selection(false, cx)))
+            })
             .child(rule());
         if notes_only {
             // Notes only: what a note's menu does, to all of them.

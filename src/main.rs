@@ -84,6 +84,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("f", ToolFrame, Some("Board")),
         KeyBinding::new("e", ToolEraser, Some("Board")),
         KeyBinding::new("l", ToolLasso, Some("Board")),
+        KeyBinding::new("secondary-g", GroupSelection, Some("Board")),
+        KeyBinding::new("secondary-shift-g", UngroupSelection, Some("Board")),
         KeyBinding::new("s", CycleStyle, Some("Board")),
         KeyBinding::new("secondary-shift-s", ToggleShapes, Some("Board")),
         KeyBinding::new("[", TurnLeft, Some("Board")),

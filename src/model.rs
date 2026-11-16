@@ -566,6 +566,9 @@ pub struct Sticker {
     /// How the reminder comes back once it has gone off.
     #[serde(default)]
     pub repeat: Repeat,
+    /// The group it belongs to, picked and moved as one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<Id>,
 }
 
 /// A reminder that comes back: never, every day, on weekdays, every week
@@ -849,12 +852,14 @@ pub struct Stroke {
     /// a mouse, or a pen that reports none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pressure: Vec<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<Id>,
 }
 
 impl Stroke {
     /// A line of `width`, drawn with a mouse (no pressure).
     pub fn new(id: Id, ink: Ink, width: f32, marker: bool, points: Vec<Vec2>) -> Stroke {
-        Stroke { id, ink, width, marker, points, pressure: Vec::new() }
+        Stroke { id, ink, width, marker, points, pressure: Vec::new(), group: None }
     }
 
     /// How wide the line is at point `i`: its width, made thinner or
@@ -971,6 +976,8 @@ pub struct Label {
     pub italic: bool,
     #[serde(default)]
     pub align: Align,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<Id>,
 }
 
 /// Where the lines of text on the sheet sit across its width.
@@ -1024,7 +1031,7 @@ pub const LABEL_MAX_W: f32 = 2000.;
 impl Label {
     /// New text at `at`, upright, at the medium size.
     pub fn new(id: Id, at: Vec2, ink: Ink) -> Self {
-        Label { id, at, text: String::new(), ink, font: NoteFont::Sans, size: LabelSize::M, width: None, italic: false, align: Align::Left }
+        Label { id, at, text: String::new(), ink, font: NoteFont::Sans, size: LabelSize::M, width: None, italic: false, align: Align::Left, group: None }
     }
 }
 

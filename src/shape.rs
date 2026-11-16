@@ -645,6 +645,9 @@ pub struct Shape {
     pub flip_x: bool,
     #[serde(default)]
     pub flip_y: bool,
+    /// The group it belongs to, picked and moved as one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<Id>,
 }
 
 impl Shape {
@@ -665,6 +668,7 @@ impl Shape {
             locked: false,
             flip_x: false,
             flip_y: false,
+            group: None,
         }
     }
 

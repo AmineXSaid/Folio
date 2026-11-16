@@ -490,6 +490,8 @@ impl Folio {
             .on_action(cx.listener(|this, _: &ToolFrame, _, cx| this.set_tool(Tool::Frame, cx)))
             .on_action(cx.listener(|this, _: &ToolEraser, _, cx| this.set_tool(Tool::Eraser, cx)))
             .on_action(cx.listener(|this, _: &ToolLasso, _, cx| this.set_tool(Tool::Lasso, cx)))
+            .on_action(cx.listener(|this, _: &GroupSelection, _, cx| this.group_selection(false, cx)))
+            .on_action(cx.listener(|this, _: &UngroupSelection, _, cx| this.group_selection(true, cx)))
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                 if ev.keystroke.key == "space" && !this.space {
                     this.space = true;
@@ -1703,6 +1705,7 @@ impl Folio {
                     }
                 }
                 self.selection = sel;
+                self.widen_to_groups();
             }
             Gesture::MakeFrame { now, .. } => *now = world,
             Gesture::Draw(stroke) => {
@@ -1931,6 +1934,7 @@ impl Folio {
                 }
                 let n = sel.len();
                 self.selection = sel;
+                self.widen_to_groups();
                 // Picked, they're moved with the pointer.
                 if n > 0 {
                     self.tool = Tool::Select;

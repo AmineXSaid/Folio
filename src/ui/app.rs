@@ -1011,8 +1011,75 @@ impl Folio {
             .collect()
     }
 
+    /// Picks `s`, with the rest of its group if it's in one.
     pub fn select(&mut self, s: Selection) {
-        self.selection = vec![s];
+        self.selection = self.with_group(s);
+    }
+
+    /// The group `s` belongs to, if any.
+    pub fn group_of(&self, s: Selection) -> Option<Id> {
+        let c = self.sheet();
+        match s {
+            Selection::Sticker(id) => c.sticker(id).and_then(|x| x.group),
+            Selection::Shape(id) => c.shapes.iter().find(|x| x.id == id).and_then(|x| x.group),
+            Selection::Label(id) => c.labels.iter().find(|x| x.id == id).and_then(|x| x.group),
+            Selection::Stroke(id) => c.strokes.iter().find(|x| x.id == id).and_then(|x| x.group),
+            Selection::Frame(_) | Selection::Link(_) => None,
+        }
+    }
+
+    /// `s` and, if it's grouped, everything else in its group.
+    pub fn with_group(&self, s: Selection) -> Vec<Selection> {
+        let Some(g) = self.group_of(s) else { return vec![s] };
+        let c = self.sheet();
+        let mut out = vec![s];
+        out.extend(c.stickers.iter().filter(|x| x.group == Some(g)).map(|x| Selection::Sticker(x.id)));
+        out.extend(c.shapes.iter().filter(|x| x.group == Some(g)).map(|x| Selection::Shape(x.id)));
+        out.extend(c.labels.iter().filter(|x| x.group == Some(g)).map(|x| Selection::Label(x.id)));
+        out.extend(c.strokes.iter().filter(|x| x.group == Some(g)).map(|x| Selection::Stroke(x.id)));
+        out.dedup();
+        let first = out[0];
+        out.retain(|x| *x != first);
+        out.insert(0, first);
+        out
+    }
+
+    /// Adds to the picked things the rest of any group one of them is in
+    /// (after a box or the lasso picked part of a group).
+    pub fn widen_to_groups(&mut self) {
+        let mut out: Vec<Selection> = Vec::new();
+        for s in self.selection.clone() {
+            for x in self.with_group(s) {
+                if !out.contains(&x) {
+                    out.push(x);
+                }
+            }
+        }
+        self.selection = out;
+    }
+
+    /// Makes the picked things one group (Ctrl+G), or, with `apart`, takes
+    /// them out of their groups (Ctrl+Shift+G); one undo step.
+    pub fn group_selection(&mut self, apart: bool, cx: &mut Context<Self>) {
+        let picked = self.selection.clone();
+        let groupable = picked.iter().filter(|s| !matches!(s, Selection::Frame(_) | Selection::Link(_))).count();
+        if (!apart && groupable < 2) || groupable == 0 {
+            return;
+        }
+        self.change(cx, |b| {
+            let g = if apart { None } else { Some(b.fresh_id()) };
+            let c = b.sheet_mut();
+            for s in &picked {
+                match *s {
+                    Selection::Sticker(id) => c.stickers.iter_mut().filter(|x| x.id == id).for_each(|x| x.group = g),
+                    Selection::Shape(id) => c.shapes.iter_mut().filter(|x| x.id == id).for_each(|x| x.group = g),
+                    Selection::Label(id) => c.labels.iter_mut().filter(|x| x.id == id).for_each(|x| x.group = g),
+                    Selection::Stroke(id) => c.strokes.iter_mut().filter(|x| x.id == id).for_each(|x| x.group = g),
+                    Selection::Frame(_) | Selection::Link(_) => {}
+                }
+            }
+        });
+        self.notify(if apart { "Ungrouped" } else { "Grouped · they move as one" }, cx);
     }
 
     /// What an action on note `id` applies to: every selected note when
@@ -1028,11 +1095,16 @@ impl Folio {
     /// Adds `s` to the selection, or takes it out if it's there (Ctrl or
     /// Shift and a click). Says whether it's selected now.
     pub fn toggle_selected(&mut self, s: Selection) -> bool {
+        let all = self.with_group(s);
         if self.is_selected(s) {
-            self.selection.retain(|x| *x != s);
+            self.selection.retain(|x| !all.contains(x));
             false
         } else {
-            self.selection.push(s);
+            for x in all {
+                if !self.selection.contains(&x) {
+                    self.selection.push(x);
+                }
+            }
             true
         }
     }
@@ -2022,39 +2094,60 @@ impl Folio {
     pub fn duplicate_selection(&mut self, cx: &mut Context<Self>) {
         let ids = self.selected_notes();
         let shapes = self.selected_shapes();
-        if ids.is_empty() && shapes.is_empty() {
+        let labels: Vec<Id> = self.selection.iter().filter_map(|s| if let Selection::Label(id) = s { Some(*id) } else { None }).collect();
+        let strokes = self.selected_strokes();
+        if ids.is_empty() && shapes.is_empty() && labels.is_empty() && strokes.is_empty() {
             return;
         }
         let mut new = Vec::new();
         let mut arrived = Vec::new();
         let t = now();
         self.change(cx, |b| {
+            // The copies make groups of their own, as the originals did.
+            let mut groups: HashMap<Id, Id> = HashMap::new();
+            let mut regroup = |b: &mut Board, g: Option<Id>| g.map(|g| *groups.entry(g).or_insert_with(|| b.fresh_id()));
             for id in shapes {
                 let nid = b.fresh_id();
-                let sheet = b.sheet_mut();
-                if let Some(mut s) = sheet.shapes.iter().find(|s| s.id == id).cloned() {
-                    s.id = nid;
-                    s.rect.x += 24.;
-                    s.rect.y += 24.;
-                    sheet.shapes.push(s);
-                    new.push(Selection::Shape(nid));
-                    arrived.push(nid);
-                }
+                let Some(mut s) = b.sheet().shapes.iter().find(|s| s.id == id).cloned() else { continue };
+                s.id = nid;
+                s.rect.x += 24.;
+                s.rect.y += 24.;
+                s.group = regroup(b, s.group);
+                b.sheet_mut().shapes.push(s);
+                new.push(Selection::Shape(nid));
+                arrived.push(nid);
             }
             for id in ids {
                 let nid = b.fresh_id();
-                let sheet = b.sheet_mut();
-                if let Some(mut s) = sheet.sticker(id).cloned() {
-                    s.id = nid;
-                    s.rect.x += 24.;
-                    s.rect.y += 24.;
-                    s.edited = t;
-                    s.popped = None;
-                    s.due = None;
-                    s.reminded = false;
-                    sheet.stickers.push(s);
-                    new.push(Selection::Sticker(nid));
-                }
+                let Some(mut s) = b.sheet().sticker(id).cloned() else { continue };
+                s.id = nid;
+                s.rect.x += 24.;
+                s.rect.y += 24.;
+                s.edited = t;
+                s.popped = None;
+                s.due = None;
+                s.reminded = false;
+                s.group = regroup(b, s.group);
+                b.sheet_mut().stickers.push(s);
+                new.push(Selection::Sticker(nid));
+            }
+            for id in labels {
+                let nid = b.fresh_id();
+                let Some(mut l) = b.sheet().labels.iter().find(|l| l.id == id).cloned() else { continue };
+                l.id = nid;
+                l.at = l.at.add(v2(24., 24.));
+                l.group = regroup(b, l.group);
+                b.sheet_mut().labels.push(l);
+                new.push(Selection::Label(nid));
+            }
+            for id in strokes {
+                let nid = b.fresh_id();
+                let Some(mut l) = b.sheet().strokes.iter().find(|l| l.id == id).cloned() else { continue };
+                l.id = nid;
+                l.translate(v2(24., 24.));
+                l.group = regroup(b, l.group);
+                b.sheet_mut().strokes.push(l);
+                new.push(Selection::Stroke(nid));
             }
         });
         for id in arrived {

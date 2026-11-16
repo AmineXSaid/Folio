@@ -93,7 +93,7 @@ impl Piece for Sticker {
     fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
         let later = r.edited > l.edited;
         // Every field, so a new one can't be left out of merging.
-        let Sticker { id, rect, paper, title, body, image, crop, caption, text_size, edited, due, reminded, locked, fixed, font, style, pin, link, popped, snoozed, repeat } = l;
+        let Sticker { id, rect, paper, title, body, image, crop, caption, text_size, edited, due, reminded, locked, fixed, font, style, pin, link, popped, snoozed, repeat, group } = l;
         Sticker {
             id: *id,
             rect: field(base.map(|b| &b.rect), rect, &r.rect, later),
@@ -116,6 +116,7 @@ impl Piece for Sticker {
             popped: *popped,
             snoozed: (*snoozed).max(r.snoozed),
             repeat: field(base.map(|b| &b.repeat), repeat, &r.repeat, later),
+            group: field(base.map(|b| &b.group), group, &r.group, later),
         }
     }
 }
@@ -127,7 +128,7 @@ impl Piece for Label {
         self.id
     }
     fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
-        let Label { id, at, text, ink, font, size, width, italic, align } = l;
+        let Label { id, at, text, ink, font, size, width, italic, align, group } = l;
         Label {
             id: *id,
             at: field(base.map(|b| &b.at), at, &r.at, false),
@@ -138,6 +139,7 @@ impl Piece for Label {
             width: field(base.map(|b| &b.width), width, &r.width, false),
             italic: field(base.map(|b| &b.italic), italic, &r.italic, false),
             align: field(base.map(|b| &b.align), align, &r.align, false),
+            group: field(base.map(|b| &b.group), group, &r.group, false),
         }
     }
 }
@@ -150,7 +152,7 @@ impl Piece for Shape {
         self.id
     }
     fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
-        let Shape { id, geom, rect, rot, fill, ink, line, dashed, text, locked, flip_x, flip_y } = l;
+        let Shape { id, geom, rect, rot, fill, ink, line, dashed, text, locked, flip_x, flip_y, group } = l;
         Shape {
             id: *id,
             geom: field(base.map(|b| &b.geom), geom, &r.geom, false),
@@ -164,6 +166,7 @@ impl Piece for Shape {
             locked: field(base.map(|b| &b.locked), locked, &r.locked, false),
             flip_x: field(base.map(|b| &b.flip_x), flip_x, &r.flip_x, false),
             flip_y: field(base.map(|b| &b.flip_y), flip_y, &r.flip_y, false),
+            group: field(base.map(|b| &b.group), group, &r.group, false),
         }
     }
 }
@@ -807,6 +810,20 @@ mod tests {
         there.categories[0].stickers[0].title = "Big Plan".into();
         let (m, _) = merge(Some(&base), &here, &there);
         assert_eq!(titles(&m, 0)[0], "Big Plan v2");
+    }
+
+    #[test]
+    fn a_group_made_here_and_a_move_there_both_land() {
+        let base = base();
+        let mut here = base.clone();
+        here.categories[0].stickers[0].group = Some(77);
+        here.categories[0].stickers[0].edited = 50;
+        let mut there = base.clone();
+        there.categories[0].stickers[0].rect.x += 40.;
+        there.categories[0].stickers[0].edited = 60;
+        let (m, _) = merge(Some(&base), &here, &there);
+        let s = &m.categories[0].stickers[0];
+        assert_eq!((s.group, s.rect.x), (Some(77), base.categories[0].stickers[0].rect.x + 40.));
     }
 
     #[test]

@@ -437,6 +437,19 @@ holds that sheet, as the Trash does.
 
 ## 8. Roadmap
 
+**v0.5: workshops (from Miro's Web Whiteboard).** Done so far: a selection
+bar for any mix of things (what's picked, kind by kind, a kind clicked
+keeping only those; line up by an edge or the middles; spread three or more
+evenly; wrap in an area; group (Ctrl+G) and ungroup (Ctrl+Shift+G): a click
+on one picks its group, a box or the lasso widens to whole groups, copies
+make groups of their own). Next: scaling a mixed selection from its box;
+a template gallery with previews that drops templates into the sheet
+(Retrospective, Brainwriting, Business Model Canvas, Ice breaker, User Story
+Map, Customer Journey, Product Roadmap, Flowchart); dot voting, a timer,
+private writing, a grid of notes; area styles, present mode, a shortcuts
+panel and an optional tool rail on the left.
+
+
 **v0.1.** Sheets, canvas, stickers with Markdown, tables, highlights,
 pictures and GIFs, pen, marker, eraser, labels, links, undo, dark mode,
 autosave, the logo.
