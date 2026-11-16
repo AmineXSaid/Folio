@@ -2050,6 +2050,86 @@ pub fn crop_place(natural: (f32, f32), frame: (f32, f32), crop: Crop) -> Rect {
     Rect { x: -crop.x * w + (frame.0 - cw * k) / 2., y: -crop.y * h + (frame.1 - ch * k) / 2., w, h }
 }
 
+/// How picked things line up: by their left, middle or right edges, or
+/// their top, middle or bottom ones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineUp {
+    Left,
+    Centre,
+    Right,
+    Top,
+    Middle,
+    Bottom,
+}
+
+impl LineUp {
+    pub const ALL: [LineUp; 6] = [LineUp::Left, LineUp::Centre, LineUp::Right, LineUp::Top, LineUp::Middle, LineUp::Bottom];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LineUp::Left => "Align left edges",
+            LineUp::Centre => "Align centres across",
+            LineUp::Right => "Align right edges",
+            LineUp::Top => "Align tops",
+            LineUp::Middle => "Align middles down",
+            LineUp::Bottom => "Align bottoms",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            LineUp::Left => "icons/align-start-vertical.svg",
+            LineUp::Centre => "icons/align-center-vertical.svg",
+            LineUp::Right => "icons/align-end-vertical.svg",
+            LineUp::Top => "icons/align-start-horizontal.svg",
+            LineUp::Middle => "icons/align-center-horizontal.svg",
+            LineUp::Bottom => "icons/align-end-horizontal.svg",
+        }
+    }
+}
+
+/// How far each of `boxes` moves to line up as `how` says, against the
+/// box they make together (the leftmost edge, the middle of them all…).
+pub fn align_moves(boxes: &[Rect], how: LineUp) -> Vec<Vec2> {
+    let Some(all) = boxes.iter().copied().reduce(|a, b| a.union(&b)) else { return Vec::new() };
+    boxes
+        .iter()
+        .map(|r| match how {
+            LineUp::Left => v2(all.x - r.x, 0.),
+            LineUp::Centre => v2(all.x + all.w / 2. - (r.x + r.w / 2.), 0.),
+            LineUp::Right => v2(all.x + all.w - (r.x + r.w), 0.),
+            LineUp::Top => v2(0., all.y - r.y),
+            LineUp::Middle => v2(0., all.y + all.h / 2. - (r.y + r.h / 2.)),
+            LineUp::Bottom => v2(0., all.y + all.h - (r.y + r.h)),
+        })
+        .collect()
+}
+
+/// How far each of `boxes` moves so the gaps between them, across (or
+/// down), are all the same: the first and last stay, the rest share the
+/// room between them in the order they stand.
+pub fn distribute_moves(boxes: &[Rect], across: bool) -> Vec<Vec2> {
+    let mut moves = vec![v2(0., 0.); boxes.len()];
+    if boxes.len() < 3 {
+        return moves;
+    }
+    let lead = |r: &Rect| if across { r.x } else { r.y };
+    let size = |r: &Rect| if across { r.w } else { r.h };
+    let mut order: Vec<usize> = (0..boxes.len()).collect();
+    order.sort_by(|a, b| lead(&boxes[*a]).total_cmp(&lead(&boxes[*b])));
+    let (first, last) = (&boxes[order[0]], &boxes[*order.last().expect("three or more")]);
+    let span = lead(last) + size(last) - lead(first);
+    let filled: f32 = boxes.iter().map(size).sum();
+    let gap = (span - filled) / (boxes.len() - 1) as f32;
+    let mut at = lead(first);
+    for &i in &order {
+        let d = at - lead(&boxes[i]);
+        moves[i] = if across { v2(d, 0.) } else { v2(0., d) };
+        at += size(&boxes[i]) + gap;
+    }
+    moves
+}
+
 /// The quick note's shortcut until you choose another.
 pub const QUICK_KEYS: &str = "Ctrl+Alt+N";
 
@@ -3289,6 +3369,22 @@ mod tests {
         // Simplifying keeps each kept point's own pressure.
         s.keep_pressure(&[v2(0., 0.), v2(20., 0.)]);
         assert_eq!(s.pressure, vec![0., 0.5]);
+    }
+
+    #[test]
+    fn picked_things_line_up_and_spread_evenly() {
+        let r = |x: f32, y: f32, w: f32, h: f32| Rect { x, y, w, h };
+        let boxes = [r(10., 0., 20., 10.), r(50., 30., 40., 20.), r(0., 80., 10., 10.)];
+        assert_eq!(align_moves(&boxes, LineUp::Left), vec![v2(-10., 0.), v2(-50., 0.), v2(0., 0.)]);
+        assert_eq!(align_moves(&boxes, LineUp::Bottom), vec![v2(0., 80.), v2(0., 40.), v2(0., 0.)]);
+        // Centred across the whole: 0..90, middle 45.
+        assert_eq!(align_moves(&boxes, LineUp::Centre)[1], v2(-25., 0.));
+        // Down: 0..10, 30..50, 80..90 → gaps of 25.
+        let d = distribute_moves(&boxes, false);
+        assert_eq!(d[0], v2(0., 0.));
+        assert_eq!(d[1], v2(0., 5.));
+        assert_eq!(d[2], v2(0., 0.));
+        assert_eq!(distribute_moves(&boxes[..2], true), vec![v2(0., 0.); 2]);
     }
 
     #[test]
