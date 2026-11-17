@@ -2244,40 +2244,7 @@ pub struct Hit {
     pub note: Id,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Template {
-    Blank,
-    Kanban,
-    Week,
-    Brainstorm,
-    Meeting,
-    Reading,
-}
-
-impl Template {
-    pub const ALL: [Template; 6] =
-        [Template::Blank, Template::Kanban, Template::Week, Template::Brainstorm, Template::Meeting, Template::Reading];
-    pub fn name(self) -> &'static str {
-        match self {
-            Template::Blank => "Blank",
-            Template::Kanban => "Kanban",
-            Template::Week => "Weekly planner",
-            Template::Brainstorm => "Brainstorm",
-            Template::Meeting => "Meeting notes",
-            Template::Reading => "Reading list",
-        }
-    }
-    pub fn blurb(self) -> &'static str {
-        match self {
-            Template::Blank => "An empty sheet",
-            Template::Kanban => "To do, Doing, Done",
-            Template::Week => "A column for every day",
-            Template::Brainstorm => "One idea in the middle, thoughts around it",
-            Template::Meeting => "Agenda, notes, decisions, actions",
-            Template::Reading => "Books and articles to get to",
-        }
-    }
-}
+pub use crate::templates::{Family, Template};
 
 impl Board {
     pub fn fresh_id(&mut self) -> Id {
@@ -2769,73 +2736,11 @@ impl Board {
     /// A new sheet from a template, made active.
     pub fn add_from_template(&mut self, name: &str, t: Template, accent: Accent, now: u64) -> Id {
         let id = self.add_sheet(name);
-        let mut ids = (0..32).map(|_| 0).collect::<Vec<Id>>();
-        for x in ids.iter_mut() {
-            *x = self.fresh_id();
-        }
-        let mut next = ids.into_iter();
-        let mut id_ = || next.next().unwrap();
-        let note = |id: Id, x: f32, y: f32, w: f32, paper: Paper, title: &str, body: &str| Sticker {
-            id,
-            rect: Rect { x, y, w, h: 110. },
-            paper,
-            title: title.into(),
-            body: body.into(),
-            edited: now,
-            ..Default::default()
-        };
-        let frame = |id: Id, x: f32, y: f32, w: f32, h: f32, title: &str, accent: Accent| Frame {
-            id,
-            rect: Rect { x, y, w, h },
-            title: title.into(),
-            accent,
-        };
         let c = self.sheet_mut();
         c.accent = accent;
         c.opened = now;
         c.edited = now;
-        match t {
-            Template::Blank => {}
-            Template::Kanban => {
-                c.blurb = "To do · Doing · Done".into();
-                for (i, (t, a)) in [("To do", Accent::Slate), ("Doing", Accent::Amber), ("Done", Accent::Moss)].iter().enumerate() {
-                    c.frames.push(frame(id_(), i as f32 * 320., 0., 296., 560., t, *a));
-                }
-                c.stickers.push(note(id_(), 24., 64., 248., Paper::Sky, "First task", "Drag me to Doing when you start."));
-            }
-            Template::Week => {
-                c.blurb = "This week, day by day".into();
-                for (i, d) in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].iter().enumerate() {
-                    let a = if i >= 5 { Accent::Rose } else { Accent::Slate };
-                    c.frames.push(frame(id_(), (i % 4) as f32 * 280., (i / 4) as f32 * 360., 260., 340., d, a));
-                }
-            }
-            Template::Brainstorm => {
-                c.blurb = "One idea, many directions".into();
-                let centre = id_();
-                c.stickers.push(note(centre, 300., 220., 240., Paper::Blush, "The big question", "What are we trying to figure out?"));
-                let spots = [(0., 0.), (600., 0.), (0., 440.), (600., 440.)];
-                for (i, (x, y)) in spots.iter().enumerate() {
-                    let nid = id_();
-                    c.stickers.push(note(nid, *x, *y, 220., [Paper::Butter, Paper::Sage, Paper::Sky, Paper::Lilac][i], "", "An idea…"));
-                    let lid = id_();
-                    c.links.push(Link::new(lid, centre, nid, Ink::Forest));
-                }
-            }
-            Template::Meeting => {
-                c.blurb = "Agenda, notes, decisions, actions".into();
-                c.stickers.push(note(id_(), 0., 0., 260., Paper::Sky, "Agenda", "1. \n2. \n3. "));
-                c.stickers.push(note(id_(), 290., 0., 300., Paper::Plain, "Notes", ""));
-                c.stickers.push(note(id_(), 0., 200., 260., Paper::Sage, "Decisions", "- "));
-                c.stickers.push(note(id_(), 290., 200., 300., Paper::Butter, "Actions", "- [ ] \n- [ ] "));
-            }
-            Template::Reading => {
-                c.blurb = "Books and long reads".into();
-                c.stickers.push(note(id_(), 0., 0., 320., Paper::Plain, "Up next", "| Title | Author |\n|---|---|\n|  |  |"));
-                c.stickers.push(note(id_(), 350., 0., 240., Paper::Lilac, "Reading now", ""));
-                c.stickers.push(note(id_(), 350., 160., 240., Paper::Sage, "Finished", "- [x] "));
-            }
-        }
+        self.fill_from_template(t, now);
         id
     }
 }

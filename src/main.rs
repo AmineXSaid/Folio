@@ -21,6 +21,7 @@ mod picture;
 mod shape;
 mod store;
 mod svg_anim;
+mod templates;
 mod theme;
 mod time;
 mod ui;
@@ -88,6 +89,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-g", UngroupSelection, Some("Board")),
         KeyBinding::new("s", CycleStyle, Some("Board")),
         KeyBinding::new("secondary-shift-s", ToggleShapes, Some("Board")),
+        KeyBinding::new("secondary-shift-p", ToggleTemplates, Some("Board")),
         KeyBinding::new("[", TurnLeft, Some("Board")),
         KeyBinding::new("]", TurnRight, Some("Board")),
         KeyBinding::new("shift-h", FlipAcross, Some("Board")),

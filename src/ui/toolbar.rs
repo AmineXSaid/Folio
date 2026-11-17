@@ -60,7 +60,7 @@ impl Folio {
             self.exits.inks.leaving(m.pop_out).map(|(_, n)| super::motion::leave(self.ink_pill(&t, None, cx), ("inks-out", n), m.pop_out, m.sink))
         };
         // Centred on what's left of the sheet beside the shapes panel.
-        let right = if self.shapes_panel { t.size.shapes_panel } else { px(0.) };
+        let right = if self.right_panel() { t.size.shapes_panel } else { px(0.) };
         div()
             .absolute()
             .bottom(t.space.xl)
@@ -81,6 +81,7 @@ impl Folio {
                     .children(tools)
                     .child(div().w(px(1.)).h(px(22.)).mx(px(2.)).bg(t.colors.border))
                     .child(self.shapes_button(cx))
+                    .child(self.templates_button(cx))
                     .children(swatches),
             )
     }
@@ -204,7 +205,7 @@ impl Folio {
         let t = theme(cx).clone();
         let pct = format!("{}%", (self.sheet().camera.zoom * 100.).round());
         // Beside the shapes panel while it's open, not under it.
-        let right = if self.shapes_panel { t.space.xl + t.size.shapes_panel } else { t.space.xl };
+        let right = if self.right_panel() { t.space.xl + t.size.shapes_panel } else { t.space.xl };
         div()
             .id("zoom")
             .occlude()

@@ -114,6 +114,7 @@ pub struct Sizes {
     pub drawer: Pixels,    // 304: the sheets drawer
     pub shapes_panel: Pixels, // 300: the shapes panel, on the right
     pub shape_tile: Pixels, // 48: a shape to pick in it
+    pub template_card: Pixels, // 84: a template's picture in the gallery
     pub card_min: Pixels,  // 270: a home card's least width
     pub welcome: Pixels,   // 540: the welcome's note
     pub welcome_h: Pixels, // 380: the room it grows down into, so its pin stays put
@@ -267,6 +268,7 @@ const SIZE: Sizes = Sizes {
     drawer: px(304.),
     shapes_panel: px(300.),
     shape_tile: px(48.),
+    template_card: px(84.),
     card_min: px(270.),
     welcome: px(540.),
     welcome_h: px(380.),
@@ -638,7 +640,7 @@ impl Theme {
         let z = &mut self.size;
         for p in [
             &mut z.sidebar, &mut z.topbar, &mut z.control, &mut z.icon_sm, &mut z.icon, &mut z.icon_lg, &mut z.dot,
-            &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.shapes_panel, &mut z.shape_tile, &mut z.card_min,
+            &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.shapes_panel, &mut z.shape_tile, &mut z.template_card, &mut z.card_min,
             &mut z.search, &mut z.search_open, &mut z.welcome, &mut z.welcome_h, &mut z.avatar,
         ] {
             m(p);

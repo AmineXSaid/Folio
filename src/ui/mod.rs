@@ -20,6 +20,7 @@ pub mod quick;
 mod selection;
 mod settings;
 mod shapes;
+mod templates;
 mod tasks;
 mod sticker;
 mod sync;
@@ -94,6 +95,7 @@ gpui::actions!(
         UngroupSelection,
         // Shapes: the picker, and turning the selected ones.
         ToggleShapes,
+        ToggleTemplates,
         TurnLeft,
         TurnRight,
         FlipAcross,

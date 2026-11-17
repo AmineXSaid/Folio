@@ -45,9 +45,10 @@ enum Cmd {
     SavePng,
     SavePdf,
     Shapes,
+    Templates,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 26] = [
+const CMDS: [(Cmd, &str, &str, &str); 27] = [
     (Cmd::NewNote, "New note", "Ctrl N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl Shift N", "icons/plus.svg"),
     (Cmd::QuickNote, "Quick note to Inbox or any sheet", "Ctrl Alt N", "icons/inbox.svg"),
@@ -69,6 +70,7 @@ const CMDS: [(Cmd, &str, &str, &str); 26] = [
     (Cmd::Fit, "Zoom to fit", "Ctrl 0", "icons/scan.svg"),
     (Cmd::Tidy, "Tidy up the sheet", "", "icons/wand-sparkles.svg"),
     (Cmd::Shapes, "Show / hide the shapes panel", "Ctrl Shift S", "icons/shapes.svg"),
+    (Cmd::Templates, "Show / hide templates", "Ctrl Shift P", "icons/layout-grid.svg"),
     (Cmd::Map, "Show / hide the map", "", "icons/map.svg"),
     (Cmd::Profile, "Change your name and avatar", "", "icons/user-round-pen.svg"),
     (Cmd::Intro, "Play the opening again", "", "icons/play.svg"),
@@ -155,6 +157,7 @@ enum Target {
     SheetOf(String),
     /// A shape to add to the open sheet.
     Shape(crate::model::Geom),
+    Template(crate::model::Template),
 }
 
 #[derive(Clone)]
@@ -373,7 +376,7 @@ impl Folio {
     fn rows_all(&self) -> Vec<Row> {
         let mut out: Vec<Row> = CMDS
             .iter()
-            .filter(|(c, ..)| !matches!(c, Cmd::Rename | Cmd::SavePng | Cmd::SavePdf | Cmd::Shapes) || self.screen == Screen::Sheet)
+            .filter(|(c, ..)| !matches!(c, Cmd::Rename | Cmd::SavePng | Cmd::SavePdf | Cmd::Shapes | Cmd::Templates) || self.screen == Screen::Sheet)
             .map(|&(c, label, key, path)| Row {
                 label: label.into(),
                 group: "Commands",
@@ -481,6 +484,21 @@ impl Folio {
                     target: Target::Shape(e.geom),
                 };
                 scored.push((1000 - i as i32, row, Vec::new()));
+            }
+        }
+        // Templates to drop in, likewise.
+        if !q.is_empty() && self.screen == Screen::Sheet && matches!(scope, Scope::All | Scope::Commands) {
+            for (i, tp) in super::templates::find(q).into_iter().take(8).enumerate() {
+                let row = Row {
+                    label: format!("Add template: {}", tp.name()).into(),
+                    group: "Shapes",
+                    icon: super::dialog::template_icon(tp),
+                    hint: None,
+                    detail: Some(tp.family().name().into()),
+                    emoji: None,
+                    target: Target::Template(tp),
+                };
+                scored.push((900 - i as i32, row, Vec::new()));
             }
         }
         let mut counts = [0; 4];
@@ -648,8 +666,10 @@ impl Folio {
                 self.open_sheet(ix, window, cx);
             }
             Target::Shape(g) => self.add_shape(g, None, cx),
+            Target::Template(tp) => self.drop_template(tp, None, cx),
             Target::Cmd(c) => match c {
                 Cmd::Shapes => self.toggle_shapes_panel(window, cx),
+                Cmd::Templates => self.toggle_templates_panel(window, cx),
                 Cmd::NewNote => self.new_note(window, cx),
                 Cmd::NewSheet => self.new_sheet_dialog(window, cx),
                 Cmd::QuickNote => {

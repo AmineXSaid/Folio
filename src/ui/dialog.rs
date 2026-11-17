@@ -15,14 +15,26 @@ fn label(text: &'static str, t: &Theme) -> gpui::Div {
     div().text_size(t.text.micro).font_weight(gpui::FontWeight::MEDIUM).text_color(t.colors.text_muted).child(text)
 }
 
-fn template_icon(t: Template) -> &'static str {
+/// A template's icon: its own where it has one, else its family's.
+pub(super) fn template_icon(t: Template) -> &'static str {
     match t {
         Template::Blank => "icons/file.svg",
-        Template::Kanban => "icons/columns-3.svg",
-        Template::Week => "icons/calendar-days.svg",
-        Template::Brainstorm => "icons/lightbulb.svg",
-        Template::Meeting => "icons/users.svg",
-        Template::Reading => "icons/book-open.svg",
+        Template::Kanban | Template::Roadmap | Template::StoryMap => "icons/columns-3.svg",
+        Template::Week | Template::Habits | Template::Quarters => "icons/calendar-days.svg",
+        Template::Reading | Template::StudyPlan => "icons/book-open.svg",
+        Template::Rice | Template::DecisionLog | Template::Raci => "icons/table.svg",
+        Template::Timeline => "icons/clock.svg",
+        _ => match t.family() {
+            Family::Basics => "icons/file.svg",
+            Family::Retrospectives => "icons/rotate-ccw.svg",
+            Family::Brainstorming => "icons/lightbulb.svg",
+            Family::Strategy => "icons/map.svg",
+            Family::Product => "icons/layout-grid.svg",
+            Family::Research => "icons/user-round-pen.svg",
+            Family::Meetings => "icons/users.svg",
+            Family::Diagrams => "icons/spline.svg",
+            Family::Personal => "icons/star.svg",
+        },
     }
 }
 
@@ -100,7 +112,21 @@ impl Folio {
                     )
                     .child(
                         div().flex().flex_col().gap(t.space.xs).child(label("Start from", &t)).child(
-                            div().flex().flex_wrap().gap(t.space.sm).children(Template::ALL.iter().map(|&tp| {
+                            div()
+                                .id("d-templates")
+                                .max_h(px(320.))
+                                .overflow_y_scroll()
+                                .flex()
+                                .flex_col()
+                                .gap(t.space.sm)
+                                .children(Family::ALL.iter().map(|&fam| {
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(t.space.xs)
+                                        .child(div().text_size(t.text.micro).text_color(t.colors.text_subtle).child(fam.name()))
+                                        .child(div().flex().flex_wrap().gap(t.space.sm).children(
+                                            Template::ALL.iter().filter(move |tp| tp.family() == fam).map(|&tp| {
                                 let on = tp == template;
                                 div()
                                     .id(("d-template", tp as usize))
@@ -123,7 +149,9 @@ impl Folio {
                                         }
                                         cx.notify();
                                     }))
-                            })),
+                                            }),
+                                        ))
+                                })),
                         ),
                     );
             }

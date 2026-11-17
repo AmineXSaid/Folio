@@ -558,6 +558,7 @@ impl Folio {
     pub fn toggle_shapes_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.shapes_panel = !self.shapes_panel;
         if self.shapes_panel {
+            self.templates_panel = false;
             let input = self.shape_search.clone();
             window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
         } else {

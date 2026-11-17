@@ -439,6 +439,7 @@ impl Folio {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleShapes, window, cx| this.toggle_shapes_panel(window, cx)))
+            .on_action(cx.listener(|this, _: &ToggleTemplates, window, cx| this.toggle_templates_panel(window, cx)))
             .on_action(cx.listener(|this, _: &TurnLeft, _, cx| this.turn_shapes(&this.selected_shapes(), -15., cx)))
             .on_action(cx.listener(|this, _: &TurnRight, _, cx| this.turn_shapes(&this.selected_shapes(), 15., cx)))
             .on_action(cx.listener(|this, _: &FlipAcross, _, cx| this.flip_shapes(&this.selected_shapes(), true, cx)))
@@ -464,7 +465,7 @@ impl Folio {
             .on_action(cx.listener(|this, _: &CycleStyle, _, cx| this.cycle_style(cx)))
             .on_action(cx.listener(|this, _: &Escape, _, cx| {
                 // An open menu or the drawer goes first.
-                if this.menu.take().is_some() || std::mem::take(&mut this.drawer) || std::mem::take(&mut this.shapes_panel) {
+                if this.menu.take().is_some() || std::mem::take(&mut this.drawer) || std::mem::take(&mut this.shapes_panel) || std::mem::take(&mut this.templates_panel) {
                     cx.notify();
                     return;
                 }
@@ -532,6 +533,15 @@ impl Folio {
                 let wash = t.colors.brand.opacity(0.05);
                 move |d, _, _, _| d.bg(wash)
             })
+            .drag_over::<super::templates::TemplateDrag>({
+                let wash = t.colors.brand.opacity(0.05);
+                move |d, _, _, _| d.bg(wash)
+            })
+            .on_drop(cx.listener(|this, d: &super::templates::TemplateDrag, window, cx| {
+                let at = this.sheet().camera.to_world(this.local(window.mouse_position()));
+                this.drop_template(d.0, Some(at), cx);
+                window.focus(&this.focus, cx);
+            }))
             .on_drop(cx.listener(|this, d: &ShapeDrag, window, cx| {
                 let at = this.sheet().camera.to_world(this.local(window.mouse_position()));
                 this.add_shape(d.0, Some(at), cx);
@@ -568,7 +578,7 @@ impl Folio {
                     d.top(px(at)).left_0().right_0().h(px(1.))
                 }
             }))
-            .when(empty, |d| d.child(empty_state(&t)))
+            .when(empty, |d| d.child(empty_state(&t, cx)))
             .when(self.drop_tray, |d| d.child(self.render_tray(&t)));
 
         let edit_layer = self.render_edit_layer(&t, window, cx);
@@ -588,6 +598,7 @@ impl Folio {
             .children(edit_layer)
             .children(edit_bar_leaving)
             .children(self.render_shapes_panel(cx))
+            .children(self.render_templates_panel(cx))
             .child(self.render_toolbar(window, cx))
             .child(self.render_zoom(cx))
             .when(self.board.settings.minimap && !empty, |d| d.child(self.render_minimap(&t, cx)))
@@ -2221,7 +2232,7 @@ fn stroke_path(ink: &InkPath, origin: gpui::Point<Pixels>) -> Option<gpui::Path<
     b.build().ok()
 }
 
-fn empty_state(t: &Theme) -> impl IntoElement {
+fn empty_state(t: &Theme, cx: &mut Context<Folio>) -> impl IntoElement {
     div()
         .absolute()
         .inset_0()
@@ -2237,6 +2248,32 @@ fn empty_state(t: &Theme) -> impl IntoElement {
                 .text_size(t.text.caption)
                 .text_color(t.colors.text_subtle)
                 .child("Double-click anywhere for a note, drop a picture, or right-click for more"),
+        )
+        .child(
+            div()
+                .id("empty-templates")
+                .mt(t.space.xs)
+                .px(t.space.md)
+                .h(t.size.control)
+                .flex()
+                .items_center()
+                .gap(t.space.xs)
+                .rounded(t.radius.button)
+                .border_1()
+                .border_color(t.colors.border)
+                .bg(t.colors.surface)
+                .text_size(t.text.caption)
+                .text_color(t.colors.text_body)
+                .cursor_pointer()
+                .hover(|d| d.border_color(t.colors.brand).text_color(t.colors.brand))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if !this.templates_panel {
+                        this.toggle_templates_panel(window, cx);
+                    }
+                }))
+                .child(icon("icons/layout-grid.svg", t.size.icon_sm, t.colors.text_muted))
+                .child(format!("Start from a template   {}", shortcut("Shift+P"))),
         )
 }
 

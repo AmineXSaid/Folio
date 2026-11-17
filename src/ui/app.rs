@@ -531,6 +531,11 @@ pub struct Folio {
     pub shapes_panel: bool,
     /// The panel's search, and which of its families are open.
     pub shape_search: Entity<InputState>,
+    /// The templates gallery, on the right (in place of the shapes panel).
+    pub templates_panel: bool,
+    pub template_search: Entity<InputState>,
+    /// Each template as a sheet of its own, for its picture in the gallery.
+    pub template_pictures: std::collections::HashMap<Template, Category>,
     pub shape_open: std::collections::HashSet<&'static str>,
     /// The list of families to show is open at the panel's foot.
     pub shape_families: bool,
@@ -661,6 +666,8 @@ pub struct Exits {
     pub drawer: Exit<()>,
     /// The shapes panel, sliding back out to the right.
     pub shapes_panel: Exit<()>,
+    /// The templates gallery, likewise.
+    pub templates_panel: Exit<()>,
     pub palette: Exit<()>,
     pub notes: super::motion::NoteMotion,
     /// The edit bar, by the note being typed into.
@@ -703,7 +710,20 @@ impl Folio {
         let label_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 30).placeholder("Write…"));
         let shape_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 12).placeholder("Words…"));
         let shape_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search shapes: wifi, decision, arrow…"));
+        let template_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search templates: retro, canvas, flow…"));
         let subs = vec![
+            cx.subscribe_in(&template_search, window, |this, _, ev, window, cx| match ev {
+                InputEvent::Change => cx.notify(),
+                // Enter drops the first match.
+                InputEvent::PressEnter { .. } => {
+                    let q = this.template_search.read(cx).value().to_string();
+                    if let Some(&t) = super::templates::find(&q).first() {
+                        this.drop_template(t, None, cx);
+                        window.focus(&this.focus, cx);
+                    }
+                }
+                _ => {}
+            }),
             cx.subscribe_in(&shape_search, window, |this, _, ev, window, cx| match ev {
                 InputEvent::Change => cx.notify(),
                 // Enter adds the first match.
@@ -833,6 +853,9 @@ impl Folio {
             hover_shape_grip: None,
             shapes_panel: false,
             shape_search,
+            templates_panel: false,
+            template_search,
+            template_pictures: Default::default(),
             shape_open: ["favourites", "general", "flow", "arrows", "network"].into_iter().collect(),
             shape_families: false,
             hover_shape: None,
@@ -2988,6 +3011,10 @@ impl Folio {
         }
         let panel = self.shapes_panel && self.screen == Screen::Sheet;
         if self.exits.shapes_panel.track(panel.then_some(&())) {
+            gone.push(m.drawer_out);
+        }
+        let panel = self.templates_panel && self.screen == Screen::Sheet;
+        if self.exits.templates_panel.track(panel.then_some(&())) {
             gone.push(m.drawer_out);
         }
         if self.exits.palette.track(self.palette.then_some(&())) {
