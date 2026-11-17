@@ -400,6 +400,12 @@ impl Theme {
             Paper::Mint => (0xdff4e8, 0x1f3628),
             Paper::Sand => (0xf2ebdc, 0x35302a),
             Paper::Stone => (0xeceeed, 0x2b2f2e),
+            Paper::Lemon => (0xffe270, 0x6e5b14),
+            Paper::Azure => (0x8dbbf5, 0x29507f),
+            Paper::Leaf => (0x86dba0, 0x24683d),
+            Paper::Tangerine => (0xffb27d, 0x80431c),
+            Paper::Bubblegum => (0xf8a3d6, 0x7a2f5e),
+            Paper::Grape => (0xc0abf5, 0x4c3a85),
         };
         c(if self.is_dark { dark } else { light })
     }
@@ -432,6 +438,12 @@ impl Theme {
             Paper::Mint => (0xc7ebd7, 0x284633),
             Paper::Sand => (0xe6d9bf, 0x453e35),
             Paper::Stone => (0xdce0de, 0x373c3a),
+            Paper::Lemon => (0xf5cf3d, 0x82701f),
+            Paper::Azure => (0x6aa3ec, 0x335f94),
+            Paper::Leaf => (0x5fc882, 0x2d7a49),
+            Paper::Tangerine => (0xff9a55, 0x955026),
+            Paper::Bubblegum => (0xf283c6, 0x8f3a6f),
+            Paper::Grape => (0xa98cef, 0x5a479a),
         };
         c(if self.is_dark { dark } else { light })
     }
@@ -487,6 +499,18 @@ impl Theme {
             Accent::Moss => 0x8fb08f,
             Accent::Plum => 0xa992c4,
         })
+    }
+
+    /// A filled area's colour: a soft solid shade of its accent.
+    pub fn area_fill(&self, a: Accent) -> Hsla {
+        let (light, dark) = match a {
+            Accent::Amber => (0xf8e6a8, 0x3b3220),
+            Accent::Slate => (0xd8e4f3, 0x223040),
+            Accent::Rose => (0xf6d8d8, 0x3d2728),
+            Accent::Moss => (0xcfe8d8, 0x1f3527),
+            Accent::Plum => (0xe5dbf4, 0x302840),
+        };
+        c(if self.is_dark { dark } else { light })
     }
 
     /// A sticker at rest: a soft, wide lift.

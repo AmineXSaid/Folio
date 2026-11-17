@@ -196,7 +196,13 @@ impl Piece {
 
 /// An area's colour, and the paper its notes are on.
 const ACCENTS: [(Accent, Paper); 5] =
-    [(Accent::Moss, Paper::Mint), (Accent::Rose, Paper::Blush), (Accent::Amber, Paper::Butter), (Accent::Slate, Paper::Sky), (Accent::Plum, Paper::Lilac)];
+    [(Accent::Moss, Paper::Leaf), (Accent::Rose, Paper::Bubblegum), (Accent::Amber, Paper::Lemon), (Accent::Slate, Paper::Azure), (Accent::Plum, Paper::Grape)];
+
+/// The papers a grid of notes runs through, column by column.
+const GRID: [Paper; 7] = [Paper::Lemon, Paper::Azure, Paper::Sky, Paper::Leaf, Paper::Tangerine, Paper::Bubblegum, Paper::Grape];
+
+/// An idea note's side: templates' notes are square.
+const SQ: f32 = 150.;
 
 /// The height of an area's title bar, where nothing else goes.
 const BAR: f32 = 40.;
@@ -208,6 +214,8 @@ struct B<'a> {
     p: Piece,
     ids: &'a mut dyn FnMut() -> Id,
     now: u64,
+    /// How the areas it makes look.
+    style: AreaStyle,
 }
 
 impl B<'_> {
@@ -217,13 +225,32 @@ impl B<'_> {
 
     fn area(&mut self, x: f32, y: f32, w: f32, h: f32, title: &str, accent: Accent) {
         let id = self.id();
-        self.p.frames.push(Frame { id, rect: Rect { x, y, w, h }, title: title.into(), accent });
+        let style = self.style;
+        self.p.frames.push(Frame { id, rect: Rect { x, y, w, h }, title: title.into(), accent, style });
     }
 
     /// Small slanted words under an area's title saying what goes in it.
     fn hint(&mut self, x: f32, y: f32, w: f32, text: &str) {
         let id = self.id();
         self.p.labels.push(Label { text: text.into(), size: LabelSize::S, width: Some(w), italic: true, ..Label::new(id, v2(x, y), Ink::Slate) });
+    }
+
+    /// The same, centred under a filled area's centred title.
+    fn hint_centred(&mut self, x: f32, y: f32, w: f32, text: &str) {
+        let id = self.id();
+        self.p.labels.push(Label { text: text.into(), size: LabelSize::S, width: Some(w), italic: true, align: Align::Center, ..Label::new(id, v2(x, y), Ink::Slate) });
+    }
+
+    /// A white board with its title above it, and a grid of square notes.
+    fn board(&mut self, title: &str, cols: usize, rows: usize, side: f32, top: f32, title_of: impl Fn(usize, usize) -> String) {
+        let gap = 24.;
+        let w = cols as f32 * (side + gap) + gap;
+        let h = top + rows as f32 * (side + gap) + gap;
+        let was = self.style;
+        self.style = AreaStyle::Board;
+        self.area(0., 0., w, h, title, Accent::Slate);
+        self.style = was;
+        self.grid(gap, top + gap, cols, rows, side, side, title_of);
     }
 
     /// Words on the sheet, as a heading or a note to the reader.
@@ -263,10 +290,14 @@ impl B<'_> {
         let (accent, paper) = ACCENTS[k % ACCENTS.len()];
         self.area(x, y, w, h, title, accent);
         if !hint.is_empty() {
-            self.hint(x + 20., y + BAR + 10., w - 40., hint);
+            match self.style {
+                AreaStyle::Filled => self.hint_centred(x + 20., y + BAR + 4., w - 40., hint),
+                _ => self.hint(x + 20., y + BAR + 10., w - 40., hint),
+            }
         }
         if starter {
-            self.note(x + 20., y + BAR + 50., (w - 40.).min(220.), paper, "", "");
+            let side = (w - 48.).min(SQ);
+            self.note_sized(x + 24., y + BAR + 50., side, side, paper, "", "");
         }
     }
 
@@ -287,7 +318,7 @@ impl B<'_> {
 
     /// A grid of notes, each column in its own paper.
     fn grid(&mut self, x: f32, y: f32, cols: usize, rows: usize, w: f32, h: f32, title: impl Fn(usize, usize) -> String) {
-        let papers = [Paper::Butter, Paper::Sky, Paper::Mint, Paper::Blush, Paper::Lilac, Paper::Peach, Paper::Sand, Paper::Stone];
+        let papers = GRID;
         for r in 0..rows {
             for c in 0..cols {
                 let t = title(c, r);
@@ -332,7 +363,7 @@ impl B<'_> {
 
 /// Builds template `t` from (0, 0), taking new ids from `ids`.
 pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
-    let mut b = B { p: Piece::default(), ids, now };
+    let mut b = B { p: Piece::default(), ids, now, style: AreaStyle::Filled };
     b.p.blurb = t.blurb().to_string();
     let (s, l) = (LabelSize::S, LabelSize::L);
     match t {
@@ -414,21 +445,17 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             &[("Rose 🌹", "What went well?"), ("Thorn 🌵", "What hurt?"), ("Bud 🌱", "What could grow into something?")],
         ),
         // ---------- Brainstorming ----------
-        Template::Brainwriting => {
-            b.area(0., 0., 6. * 156. + 24., BAR + 24. + 6. * 136. + 8., "Brainwriting 6-3-5", Accent::Slate);
-            b.grid(20., BAR + 20., 6, 6, 140., 120., |c, r| match r {
-                0 => format!("Participant {}", c + 1),
-                1 => format!("Idea {}", (c % 3) + 1),
-                _ => String::new(),
-            });
-        }
+        Template::Brainwriting => b.board("Brainwriting 6-3-5", 6, 6, 120., 0., |c, r| match r {
+            0 => format!("Participant {}", c + 1),
+            1 if c < 3 => format!("Idea {}", c + 1),
+            _ => String::new(),
+        }),
         Template::Crazy8s => {
-            b.area(0., 0., 4. * 216. + 24., BAR + 60. + 2. * 216. + 8., "Crazy 8s", Accent::Amber);
-            b.hint(20., BAR + 10., 600., "Eight ideas in eight minutes: one a minute, rough is fine.");
-            b.grid(20., BAR + 56., 4, 2, 200., 200., |c, r| (r * 4 + c + 1).to_string());
+            b.board("Crazy 8s", 4, 2, 200., 40., |c, r| (r * 4 + c + 1).to_string());
+            b.hint(24., 12., 600., "Eight ideas in eight minutes: one a minute, rough is fine.");
         }
         Template::MindMap => {
-            let centre = b.note(420., 260., 240., Paper::Blush, "Main topic", "");
+            let centre = b.note(420., 260., 240., Paper::Bubblegum, "Main topic", "");
             let spots = [(0., 0.), (420., -40.), (840., 0.), (0., 520.), (420., 560.), (840., 520.)];
             for (i, (x, y)) in spots.iter().enumerate() {
                 let n = b.note(*x, *y, 220., ACCENTS[i % 5].1, &format!("Branch {}", i + 1), "");
@@ -444,15 +471,15 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             }
         }
         Template::Brainstorm => {
-            let centre = b.note(300., 220., 240., Paper::Blush, "The big question", "What are we trying to figure out?");
+            let centre = b.note(300., 220., 240., Paper::Tangerine, "The big question", "What are we trying to figure out?");
             let spots = [(0., 0.), (600., 0.), (0., 440.), (600., 440.)];
             for (i, (x, y)) in spots.iter().enumerate() {
-                let n = b.note(*x, *y, 220., [Paper::Butter, Paper::Sage, Paper::Sky, Paper::Lilac][i], "", "An idea…");
+                let n = b.note(*x, *y, 220., [Paper::Lemon, Paper::Leaf, Paper::Azure, Paper::Grape][i], "", "An idea…");
                 b.link(centre, n, LinkStyle::Curve, false);
             }
         }
         Template::HowMightWe => {
-            b.note(0., 0., 520., Paper::Blush, "The problem", "Write it as people feel it.");
+            b.note(0., 0., 520., Paper::Bubblegum, "The problem", "Write it as people feel it.");
             b.area(0., 150., 1060., 440., "How might we…?", Accent::Moss);
             b.hint(20., 150. + BAR + 10., 900., "Turn the problem into questions that start with \"How might we\".");
             b.grid(20., 150. + BAR + 56., 4, 2, 240., 130., |_, _| "How might we…".to_string());
@@ -538,10 +565,10 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             b.area(0., 0., 600., 560., "Value map", Accent::Plum);
             b.area(640., 0., 600., 560., "Customer profile", Accent::Moss);
             for (i, t) in ["Products & services", "Pain relievers", "Gain creators"].iter().enumerate() {
-                b.note(20., BAR + 20. + i as f32 * 160., 560., Paper::Lilac, t, "");
+                b.note(20., BAR + 20. + i as f32 * 160., 560., Paper::Grape, t, "");
             }
             for (i, t) in ["Customer jobs", "Pains", "Gains"].iter().enumerate() {
-                b.note(660., BAR + 20. + i as f32 * 160., 560., Paper::Mint, t, "");
+                b.note(660., BAR + 20. + i as f32 * 160., 560., Paper::Leaf, t, "");
             }
         }
         Template::Ansoff => {
@@ -564,14 +591,14 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             b.text(0., 0., None, l, "**User story map**");
             for i in 0..5 {
                 let x = i as f32 * 250.;
-                b.note(x, 70., 230., Paper::Sky, &format!("Activity {}", i + 1), "What the user wants to get done");
-                b.note(x, 200., 230., Paper::Butter, &format!("Step {}", i + 1), "");
+                b.note(x, 70., 230., Paper::Azure, &format!("Activity {}", i + 1), "What the user wants to get done");
+                b.note(x, 200., 230., Paper::Lemon, &format!("Step {}", i + 1), "");
             }
             for (r, t) in ["Release 1", "Release 2"].iter().enumerate() {
                 let y = 340. + r as f32 * 200.;
                 b.zone(0., y, 1230., 180., t, r + 2, "", false);
                 for i in 0..3 {
-                    b.note(20. + i as f32 * 250., y + BAR + 10., 230., Paper::Mint, "", "As a … I want … so that …");
+                    b.note(20. + i as f32 * 250., y + BAR + 10., 230., Paper::Leaf, "", "As a … I want … so that …");
                 }
             }
         }
@@ -591,7 +618,7 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             for (i, (t, a)) in [("To do", Accent::Slate), ("Doing", Accent::Amber), ("Done", Accent::Moss)].iter().enumerate() {
                 b.area(i as f32 * 320., 0., 296., 560., t, *a);
             }
-            b.note(24., 64., 248., Paper::Sky, "First task", "Drag me to Doing when you start.");
+            b.note_sized(24., 64., SQ, SQ, Paper::Lemon, "First task", "Drag me to Doing when you start.");
         }
         Template::ImpactEffort => {
             b.matrix(
@@ -626,15 +653,15 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             b.hint(0., 360., 760., "Score = Reach × Impact × Confidence ÷ Effort. The highest score goes first.");
         }
         Template::ReleasePlan => {
-            b.note(0., 0., 520., Paper::Blush, "Release goal", "What's true for users when it ships?");
+            b.note(0., 0., 520., Paper::Bubblegum, "Release goal", "What's true for users when it ships?");
             for i in 0..4 {
                 b.zone(i as f32 * 284., 150., 260., 420., &format!("Sprint {}", i + 1), i, "", false);
                 b.note(i as f32 * 284. + 20., 150. + BAR + 20., 220., ACCENTS[i].1, "", "");
             }
         }
         Template::SprintPlanning => {
-            b.note(0., 0., 400., Paper::Blush, "Sprint goal", "");
-            b.note(420., 0., 300., Paper::Sand, "Capacity", "People and days");
+            b.note(0., 0., 400., Paper::Bubblegum, "Sprint goal", "");
+            b.note(420., 0., 300., Paper::Tangerine, "Capacity", "People and days");
             b.columns(0., 150., 300., 460., &[("Backlog", "Ready to pick from"), ("In this sprint", "What we commit to"), ("Risks ⚠️", "What could get in the way")]);
         }
         // ---------- UX & research ----------
@@ -653,13 +680,13 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             }
         }
         Template::EmpathyMap => {
-            b.note(380., 0., 240., Paper::Blush, "Who", "The person, in a line");
+            b.note(380., 0., 240., Paper::Bubblegum, "Who", "The person, in a line");
             b.matrix(0., 150., 480., 320., [("Says 💬", "Their words"), ("Thinks 💭", "What's on their mind"), ("Does 🏃", "What they do"), ("Feels ❤️", "How they feel")]);
             b.zone(0., 850., 492., 260., "Pains", 1, "Fears, frustrations", false);
             b.zone(512., 850., 492., 260., "Gains", 0, "Wants, needs, hopes", false);
         }
         Template::Persona => {
-            b.note_sized(0., 0., 300., 260., Paper::Sand, "Name", "Age:\nJob:\nWhere they live:\n\nA line in their own words.");
+            b.note_sized(0., 0., 300., 260., Paper::Tangerine, "Name", "Age:\nJob:\nWhere they live:\n\nA line in their own words.");
             b.matrix(330., 0., 380., 260., [("Goals 🎯", "What they want"), ("Frustrations", "What gets in the way"), ("Motivations", "Why they act"), ("Habits & tools", "How they do it now")]);
         }
         Template::Blueprint => {
@@ -673,13 +700,13 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             }
         }
         Template::Interview => {
-            b.note(0., 0., 360., Paper::Sand, "Who and when", "Name:\nRole:\nDate:");
-            b.note_sized(0., 140., 360., 260., Paper::Sky, "Questions", "1. \n2. \n3. \n4. \n5. ");
+            b.note(0., 0., 360., Paper::Tangerine, "Who and when", "Name:\nRole:\nDate:");
+            b.note_sized(0., 140., 360., 260., Paper::Azure, "Questions", "1. \n2. \n3. \n4. \n5. ");
             b.columns(390., 0., 300., 400., &[("Quotes 💬", "Their words, as said"), ("Insights 💡", "What it tells us"), ("Follow-ups", "What to ask or do next")]);
         }
         Template::Jtbd => {
             for i in 0..3 {
-                b.note(i as f32 * 340., 0., 320., Paper::Butter, &format!("Job {}", i + 1), "When ___,\nI want to ___,\nso I can ___.");
+                b.note(i as f32 * 340., 0., 320., Paper::Lemon, &format!("Job {}", i + 1), "When ___,\nI want to ___,\nso I can ___.");
             }
             b.columns(0., 150., 312., 380., &[("Functional", "What they need to get done"), ("Emotional", "How they want to feel"), ("Social", "How they want to be seen")]);
         }
@@ -692,15 +719,14 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
         ),
         // ---------- Meetings & teams ----------
         Template::IceBreaker => {
-            b.area(0., 0., 4. * 236. + 24., BAR + 80. + 2. * 146., "Ice breaker", Accent::Amber);
-            b.text(20., BAR + 14., None, LabelSize::M, "**Two truths and a lie**: everyone writes three things, the others guess the lie.");
-            b.grid(20., BAR + 70., 4, 2, 220., 130., |_, _| "Name".to_string());
+            b.board("Ice breaker", 4, 2, 150., 50., |_, _| "Name".to_string());
+            b.text(24., 14., None, LabelSize::M, "**Two truths and a lie**: everyone writes three things, the others guess the lie.");
         }
         Template::Meeting => {
-            b.note(0., 0., 260., Paper::Sky, "Agenda", "1. \n2. \n3. ");
+            b.note(0., 0., 260., Paper::Azure, "Agenda", "1. \n2. \n3. ");
             b.note(290., 0., 300., Paper::Plain, "Notes", "");
-            b.note(0., 200., 260., Paper::Sage, "Decisions", "- ");
-            b.note(290., 200., 300., Paper::Butter, "Actions", "- [ ] \n- [ ] ");
+            b.note(0., 200., 260., Paper::Leaf, "Decisions", "- ");
+            b.note(290., 200., 300., Paper::Lemon, "Actions", "- [ ] \n- [ ] ");
         }
         Template::TeamSync => b.matrix(
             0.,
@@ -749,11 +775,11 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
         ),
         // ---------- Diagrams ----------
         Template::Flowchart => {
-            let start = b.shape(Geom::Terminator, 0., 20., 160., 64., "Start", Some(Paper::Mint), Ink::Forest);
-            let step = b.shape(Geom::Rect, 240., 12., 180., 80., "Do the thing", Some(Paper::Sky), Ink::Cobalt);
-            let ask = b.shape(Geom::Diamond, 500., 0., 180., 104., "Done?", Some(Paper::Butter), Ink::Marigold);
-            let end = b.shape(Geom::Terminator, 760., 20., 160., 64., "End", Some(Paper::Blush), Ink::Ruby);
-            let fix = b.shape(Geom::Rect, 500., 200., 180., 80., "Fix what's left", Some(Paper::Lilac), Ink::Violet);
+            let start = b.shape(Geom::Terminator, 0., 20., 160., 64., "Start", Some(Paper::Leaf), Ink::Forest);
+            let step = b.shape(Geom::Rect, 240., 12., 180., 80., "Do the thing", Some(Paper::Azure), Ink::Cobalt);
+            let ask = b.shape(Geom::Diamond, 500., 0., 180., 104., "Done?", Some(Paper::Lemon), Ink::Marigold);
+            let end = b.shape(Geom::Terminator, 760., 20., 160., 64., "End", Some(Paper::Bubblegum), Ink::Ruby);
+            let fix = b.shape(Geom::Rect, 500., 200., 180., 80., "Fix what's left", Some(Paper::Grape), Ink::Violet);
             b.link(start, step, LinkStyle::Straight, true);
             b.link(step, ask, LinkStyle::Straight, true);
             b.link(ask, end, LinkStyle::Straight, true);
@@ -763,10 +789,10 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             b.text(600., 130., None, s, "no");
         }
         Template::OrgChart => {
-            let top = b.shape(Geom::Rounded, 360., 0., 200., 70., "Lead", Some(Paper::Blush), Ink::Ruby);
+            let top = b.shape(Geom::Rounded, 360., 0., 200., 70., "Lead", Some(Paper::Bubblegum), Ink::Ruby);
             for i in 0..3 {
                 let x = i as f32 * 320.;
-                let head = b.shape(Geom::Rounded, x + 40., 140., 200., 70., &format!("Head {}", i + 1), Some(Paper::Sky), Ink::Cobalt);
+                let head = b.shape(Geom::Rounded, x + 40., 140., 200., 70., &format!("Head {}", i + 1), Some(Paper::Azure), Ink::Cobalt);
                 b.link(top, head, LinkStyle::Elbow, false);
                 for j in 0..2 {
                     let m = b.shape(Geom::Rounded, x + j as f32 * 150., 280., 140., 60., "Member", Some(Paper::Plain), Ink::Slate);
@@ -778,14 +804,14 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             b.shape(Geom::Arrow, 0., 200., 1100., 24., "", None, Ink::Graphite);
             for i in 0..5 {
                 let x = 60. + i as f32 * 220.;
-                b.shape(Geom::Circle, x + 60., 196., 32., 32., "", Some(Paper::Blush), Ink::Ruby);
+                b.shape(Geom::Circle, x + 60., 196., 32., 32., "", Some(Paper::Bubblegum), Ink::Ruby);
                 let y = if i % 2 == 0 { 40. } else { 260. };
                 b.note(x, y, 180., ACCENTS[i % 5].1, &format!("Milestone {}", i + 1), "Date");
             }
         }
         Template::Fishbone => {
             b.shape(Geom::Arrow, 0., 288., 900., 24., "", None, Ink::Graphite);
-            b.shape(Geom::Rect, 920., 260., 200., 80., "The problem", Some(Paper::Blush), Ink::Ruby);
+            b.shape(Geom::Rect, 920., 260., 200., 80., "The problem", Some(Paper::Bubblegum), Ink::Ruby);
             let kinds = ["People", "Process", "Tools", "Materials", "Environment", "Measurement"];
             for (i, k) in kinds.iter().enumerate() {
                 let x = 80. + (i % 3) as f32 * 280.;
@@ -828,7 +854,7 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
             }
         }
         Template::ConceptMap => {
-            let main = b.shape(Geom::Ellipse, 380., 220., 220., 120., "Main idea", Some(Paper::Blush), Ink::Ruby);
+            let main = b.shape(Geom::Ellipse, 380., 220., 220., 120., "Main idea", Some(Paper::Bubblegum), Ink::Ruby);
             let spots = [(0., 0.), (760., 0.), (0., 460.), (760., 460.)];
             for (i, (x, y)) in spots.iter().enumerate() {
                 let c = b.shape(Geom::Rounded, *x, *y, 200., 80., &format!("Concept {}", i + 1), Some(ACCENTS[i].1), Ink::Graphite);
@@ -844,8 +870,8 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
         }
         Template::Reading => {
             b.note(0., 0., 320., Paper::Plain, "Up next", "| Title | Author |\n|---|---|\n|  |  |");
-            b.note(350., 0., 240., Paper::Lilac, "Reading now", "");
-            b.note(350., 160., 240., Paper::Sage, "Finished", "- [x] ");
+            b.note(350., 0., 240., Paper::Grape, "Reading now", "");
+            b.note(350., 160., 240., Paper::Leaf, "Finished", "- [x] ");
         }
         Template::Eisenhower => b.matrix(
             0.,
@@ -862,11 +888,11 @@ pub fn build(t: Template, ids: &mut dyn FnMut() -> Id, now: u64) -> Piece {
         Template::Habits => b.table(0., 0., 760., "Habit tracker", &["Habit", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], 5, Paper::Plain),
         Template::Quarters => b.columns(0., 0., 260., 520., &[("Q1 ❄️", "Jan – Mar"), ("Q2 🌸", "Apr – Jun"), ("Q3 ☀️", "Jul – Sep"), ("Q4 🍂", "Oct – Dec")]),
         Template::ProsCons => {
-            b.note(0., 0., 640., Paper::Sand, "The decision", "");
+            b.note(0., 0., 640., Paper::Tangerine, "The decision", "");
             b.columns(0., 150., 308., 440., &[("Pros 👍", "For it"), ("Cons 👎", "Against it")]);
         }
         Template::StudyPlan => {
-            b.note(0., 0., 400., Paper::Blush, "Exam or goal", "Date:");
+            b.note(0., 0., 400., Paper::Bubblegum, "Exam or goal", "Date:");
             b.columns(0., 150., 300., 460., &[("Topics 📚", "Everything to cover"), ("This week", "What I'll study now"), ("Review 🔁", "Go over again")]);
         }
     }
@@ -978,7 +1004,7 @@ mod tests {
             }
             // A note in an area's column sits inside it, below its title.
             for s in &p.stickers {
-                for f in &p.frames {
+                for f in p.frames.iter().filter(|f| f.style != AreaStyle::Board) {
                     let r = f.rect;
                     let centre = s.rect.center();
                     if centre.x > r.x && centre.x < r.x + r.w && centre.y > r.y && centre.y < r.y + r.h {

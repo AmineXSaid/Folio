@@ -260,7 +260,7 @@ mod tests {
     fn a_sheet_reads_well_as_markdown() {
         let mut c = Category::new(1, "Trip", Accent::Slate);
         c.icon = "✈️".into();
-        c.frames.push(Frame { id: 9, rect: Rect { x: 0., y: 0., w: 500., h: 500. }, title: "Kyoto".into(), accent: Accent::Rose });
+        c.frames.push(Frame { id: 9, rect: Rect { x: 0., y: 0., w: 500., h: 500. }, title: "Kyoto".into(), accent: Accent::Rose, style: AreaStyle::Outline });
         let note = |id, title: &str, body: &str, x, y| Sticker {
             id,
             title: title.into(),

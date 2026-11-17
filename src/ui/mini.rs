@@ -66,16 +66,16 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &T
 
     let frames = c.frames.iter().map(|f| {
         let (x, y, fw, fh) = at(&f.rect);
-        div()
-            .absolute()
-            .left(px(x))
-            .top(px(y))
-            .w(px(fw))
-            .h(px(fh))
-            .rounded(px(4.))
-            .bg(t.accent(f.accent).opacity(0.10))
-            .border_1()
-            .border_color(t.accent(f.accent).opacity(0.35))
+        let d = div().absolute().left(px(x)).top(px(y)).w(px(fw)).h(px(fh));
+        match f.style {
+            AreaStyle::Filled => d.rounded(px((36. * k).clamp(2., 10.))).bg(t.area_fill(f.accent)),
+            AreaStyle::Board => d.rounded(px(2.)).bg(t.colors.surface).border_1().border_color(t.colors.border),
+            AreaStyle::Outline => d
+                .rounded(px(4.))
+                .bg(t.accent(f.accent).opacity(0.10))
+                .border_1()
+                .border_color(t.accent(f.accent).opacity(0.35)),
+        }
     });
     let ink = t.colors.text_subtle;
     let notes = c.stickers.iter().map(|s| {

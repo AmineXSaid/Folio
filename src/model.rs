@@ -141,6 +141,13 @@ pub enum Paper {
     Mint,
     Sand,
     Stone,
+    // Bold papers: the strong colours of real sticky notes.
+    Lemon,
+    Azure,
+    Leaf,
+    Tangerine,
+    Bubblegum,
+    Grape,
 }
 
 impl Paper {
@@ -159,11 +166,17 @@ impl Paper {
             Paper::Mint => "mint",
             Paper::Sand => "sand",
             Paper::Stone => "stone",
+            Paper::Lemon => "lemon",
+            Paper::Azure => "azure",
+            Paper::Leaf => "leaf",
+            Paper::Tangerine => "tangerine",
+            Paper::Bubblegum => "bubblegum",
+            Paper::Grape => "grape",
         }
     }
     /// In the order the swatches show: warm to cool, then the quiet ones;
     /// Plain stays last.
-    pub const ALL: [Paper; 12] = [
+    pub const ALL: [Paper; 18] = [
         Paper::Butter,
         Paper::Peach,
         Paper::Blush,
@@ -175,6 +188,12 @@ impl Paper {
         Paper::Sage,
         Paper::Sand,
         Paper::Stone,
+        Paper::Lemon,
+        Paper::Tangerine,
+        Paper::Bubblegum,
+        Paper::Grape,
+        Paper::Azure,
+        Paper::Leaf,
         Paper::Plain,
     ];
 }
@@ -837,6 +856,32 @@ pub struct Frame {
     pub rect: Rect,
     pub title: String,
     pub accent: Accent,
+    /// How it's drawn. Areas made before this were outlined.
+    #[serde(default)]
+    pub style: AreaStyle,
+}
+
+/// How an area looks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AreaStyle {
+    /// A faint wash with a thin edge, its title at the top left.
+    #[default]
+    Outline,
+    /// A soft solid block, well rounded, its title centred at the top.
+    Filled,
+    /// A plain white board, its title above it.
+    Board,
+}
+
+impl AreaStyle {
+    pub const ALL: [AreaStyle; 3] = [AreaStyle::Outline, AreaStyle::Filled, AreaStyle::Board];
+    pub fn name(self) -> &'static str {
+        match self {
+            AreaStyle::Outline => "Outline",
+            AreaStyle::Filled => "Filled",
+            AreaStyle::Board => "Board",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -2830,7 +2875,7 @@ mod tests {
     #[test]
     fn areas_carry_the_shapes_in_them() {
         let mut c = Category::new(1, "S", Accent::Slate);
-        c.frames.push(Frame { id: 2, rect: Rect { x: 0., y: 0., w: 400., h: 300. }, title: String::new(), accent: Accent::Slate });
+        c.frames.push(Frame { id: 2, rect: Rect { x: 0., y: 0., w: 400., h: 300. }, title: String::new(), accent: Accent::Slate, style: AreaStyle::Outline });
         c.shapes.push(Shape::new(3, Geom::Rect, v2(100., 100.)));
         c.shapes.push(Shape::new(4, Geom::Rect, v2(900., 100.)));
         let mut locked = Shape::new(5, Geom::Rect, v2(120., 120.));
@@ -3354,7 +3399,7 @@ mod tests {
     #[test]
     fn frames_carry_the_notes_inside() {
         let mut c = Category::new(1, "t", Accent::Amber);
-        c.frames.push(Frame { id: 2, rect: Rect { x: 0., y: 0., w: 400., h: 400. }, title: "A".into(), accent: Accent::Amber });
+        c.frames.push(Frame { id: 2, rect: Rect { x: 0., y: 0., w: 400., h: 400. }, title: "A".into(), accent: Accent::Amber, style: AreaStyle::Outline });
         c.stickers.push(sticker(3, 10., 10.));
         c.stickers.push(sticker(4, 500., 10.));
         assert_eq!(c.frame_members(2), vec![3]);

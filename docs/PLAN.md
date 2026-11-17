@@ -449,7 +449,7 @@ families (retrospectives, brainstorming, strategy, product, UX & research,
 meetings & teams, diagrams, personal), each with a live picture, found by
 name, family or keyword; a click drops one in the middle of the view, a
 drag where it's let go, beside what's there if it would cover it, as one
-group, picked, one undo step. `src/templates.rs` builds them as pieces
+group, picked, one undo step. They're drawn the way workshop boards are: bold sticky papers (lemon, azure, leaf, tangerine, bubblegum, grape), square idea notes, filled areas (a soft solid block, title centred) and white boards (title above); any area can switch between Outline, Filled and Board from its menu. `src/templates.rs` builds them as pieces
 (no GPUI); the new-sheet dialog lists them all by family. Next: dot voting, a timer,
 private writing, a grid of notes; area styles, present mode, a shortcuts
 panel and an optional tool rail on the left.

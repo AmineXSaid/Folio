@@ -275,12 +275,44 @@ impl Folio {
                 let z = cam.zoom;
                 let c = t.accent(f.accent);
                 let selected = self.is_selected(Selection::Frame(f.id));
-                div()
-                    .absolute()
-                    .left(px(a.x))
-                    .top(px(a.y))
-                    .w(px(f.rect.w * z))
-                    .h(px(f.rect.h * z))
+                let title = if f.title.is_empty() { "Untitled area".to_string() } else { f.title.clone() };
+                let base = div().absolute().left(px(a.x)).top(px(a.y)).w(px(f.rect.w * z)).h(px(f.rect.h * z));
+                let base = match f.style {
+                    AreaStyle::Filled => base
+                        .rounded(px(36. * z))
+                        .bg(t.area_fill(f.accent))
+                        .border_1()
+                        .border_color(if selected { c } else { gpui::transparent_black() })
+                        .child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .top(px(12. * z))
+                                .flex()
+                                .justify_center()
+                                .text_size(px(17. * z))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(t.colors.text)
+                                .child(title),
+                        ),
+                    AreaStyle::Board => base
+                        .rounded(px(6. * z))
+                        .bg(t.colors.surface)
+                        .border_1()
+                        .border_color(if selected { c } else { t.colors.border })
+                        .shadow(t.shadow_card(z))
+                        .child(
+                            div()
+                                .absolute()
+                                .left(px(2. * z))
+                                .top(px(-28. * z))
+                                .text_size(px(17. * z))
+                                .text_color(t.colors.text_body)
+                                .whitespace_nowrap()
+                                .child(title),
+                        ),
+                    AreaStyle::Outline => base
                     .rounded(px(16. * z))
                     .bg(c.opacity(if t.is_dark { 0.10 } else { 0.08 }))
                     .border_1()
@@ -299,9 +331,11 @@ impl Folio {
                                     .text_size(px(14. * z))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(t.colors.text_muted)
-                                    .child(if f.title.is_empty() { "Untitled area".to_string() } else { f.title.clone() }),
+                                    .child(title),
                             ),
-                    )
+                    ),
+                };
+                base
                     .when(selected, |d| {
                         d.child(
                             div()
@@ -2015,7 +2049,7 @@ impl Folio {
         let id = self.board.fresh_id();
         let n = self.sheet().frames.len();
         let accent = Accent::ALL[(n + 1) % Accent::ALL.len()];
-        self.board.sheet_mut().frames.insert(0, Frame { id, rect: r, title: String::new(), accent });
+        self.board.sheet_mut().frames.insert(0, Frame { id, rect: r, title: String::new(), accent, style: AreaStyle::Outline });
         self.commit_since(before, cx);
         self.select(Selection::Frame(id));
         self.dialog = Some(super::app::Dialog::RenameFrame(id));

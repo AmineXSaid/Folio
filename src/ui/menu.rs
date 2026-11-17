@@ -1004,6 +1004,41 @@ impl Folio {
                         .into_any_element(),
                 );
                 items.push(row("m-frame-colour", "icons/palette.svg", "Colour", Some("›".into()), &t).on_click(cx.listener(goto(MenuPage::Colour))).into_any_element());
+                let now = self.sheet().frames.iter().find(|f| f.id == id).map(|f| f.style).unwrap_or_default();
+                items.push(
+                    div()
+                        .flex()
+                        .gap(px(4.))
+                        .px(t.space.sm)
+                        .py(t.space.xs)
+                        .children(AreaStyle::ALL.iter().map(|&st| {
+                            let on = st == now;
+                            div()
+                                .id(("m-frame-style", st as usize))
+                                .flex_1()
+                                .h(px(26.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(t.radius.small)
+                                .border_1()
+                                .border_color(if on { t.colors.brand } else { t.colors.border })
+                                .when(on, |d| d.bg(t.colors.brand_tint).text_color(t.colors.brand_on_tint))
+                                .text_size(t.text.micro)
+                                .cursor_pointer()
+                                .hover(|d| d.bg(t.colors.hover))
+                                .child(st.name())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.menu = None;
+                                    this.change(cx, |b| {
+                                        if let Some(f) = b.sheet_mut().frames.iter_mut().find(|f| f.id == id) {
+                                            f.style = st;
+                                        }
+                                    });
+                                }))
+                        }))
+                        .into_any_element(),
+                );
                 items.push(
                     row("m-frame-tidy", "icons/wand-sparkles.svg", "Tidy the notes inside", None, &t)
                         .on_click(cx.listener(move |this, _, _, cx| {
