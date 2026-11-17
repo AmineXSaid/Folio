@@ -953,9 +953,10 @@ fn size_factor(z: TextSize) -> f32 {
 
 fn radii(style: NoteStyle) -> (f32, f32) {
     match style {
-        NoteStyle::Card | NoteStyle::Cheat => (12., 12.),
-        NoteStyle::Taped => (4., 10.),
-        NoteStyle::Index => (3., 3.),
+        // Square paper, as a sticky note is: only the edge softened.
+        NoteStyle::Card | NoteStyle::Cheat => (2., 2.),
+        NoteStyle::Taped => (2., 3.),
+        NoteStyle::Index => (2., 2.),
     }
 }
 

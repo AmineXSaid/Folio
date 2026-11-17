@@ -489,22 +489,14 @@ impl Theme {
 
     /// A sticker at rest: a soft, wide lift.
     pub fn shadow_card(&self, zoom: f32) -> Vec<BoxShadow> {
-        let a = if self.is_dark { 0.45 } else { 0.08 };
+        // Paper lifted a little off the sheet: a close, firm shadow at its
+        // foot and a soft one falling further below, as a sticky note casts.
+        let a = if self.is_dark { 0.5 } else { 0.12 };
+        let tint = |k: f32| hsla(150. / 360., 0.2, if self.is_dark { 0.02 } else { 0.1 }, a * k);
         vec![
-            BoxShadow {
-                color: hsla(150. / 360., 0.2, 0.12, a),
-                offset: point(px(0.), px(10. * zoom)),
-                blur_radius: px(28. * zoom),
-                spread_radius: px(0.),
-            inset: false,
-            },
-            BoxShadow {
-                color: hsla(150. / 360., 0.2, 0.12, a * 0.6),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(2.),
-                spread_radius: px(0.),
-            inset: false,
-            },
+            BoxShadow { color: tint(0.9), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: tint(1.), offset: point(px(0.), px(4. * zoom)), blur_radius: px(8. * zoom), spread_radius: px(-1. * zoom), inset: false },
+            BoxShadow { color: tint(0.8), offset: point(px(0.), px(12. * zoom)), blur_radius: px(20. * zoom), spread_radius: px(-6. * zoom), inset: false },
         ]
     }
 
