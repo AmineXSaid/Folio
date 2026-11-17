@@ -56,6 +56,7 @@ fn media_of(c: &Category) -> Vec<String> {
 
 /// One sheet as Markdown, with pictures at `media/NAME`.
 pub fn sheet_markdown(c: &Category) -> String {
+    let c = &c.covered();
     let mut md = String::new();
     let icon = if c.icon.is_empty() { String::new() } else { format!("{} ", c.icon) };
     md.push_str(&format!("# {icon}{}\n\n", c.name));

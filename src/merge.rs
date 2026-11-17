@@ -93,7 +93,7 @@ impl Piece for Sticker {
     fn join(base: Option<&Self>, l: &Self, r: &Self) -> Self {
         let later = r.edited > l.edited;
         // Every field, so a new one can't be left out of merging.
-        let Sticker { id, rect, paper, title, body, image, crop, caption, text_size, edited, due, reminded, locked, fixed, font, style, pin, link, popped, snoozed, repeat, group } = l;
+        let Sticker { id, rect, paper, title, body, image, crop, caption, text_size, edited, due, reminded, locked, fixed, font, style, pin, link, popped, snoozed, repeat, group, votes, hidden_by } = l;
         Sticker {
             id: *id,
             rect: field(base.map(|b| &b.rect), rect, &r.rect, later),
@@ -117,8 +117,35 @@ impl Piece for Sticker {
             snoozed: (*snoozed).max(r.snoozed),
             repeat: field(base.map(|b| &b.repeat), repeat, &r.repeat, later),
             group: field(base.map(|b| &b.group), group, &r.group, later),
+            votes: merge_votes(base.map(|b| &b.votes), votes, &r.votes),
+            hidden_by: field(base.map(|b| &b.hidden_by), hidden_by, &r.hidden_by, later),
         }
     }
+}
+
+/// Two sides' votes on a note, voter by voter: each person's dots as the
+/// side that changed them left them, so ballots cast on two computers
+/// both land.
+fn merge_votes(
+    base: Option<&std::collections::BTreeMap<String, u8>>,
+    l: &std::collections::BTreeMap<String, u8>,
+    r: &std::collections::BTreeMap<String, u8>,
+) -> std::collections::BTreeMap<String, u8> {
+    let mut out = std::collections::BTreeMap::new();
+    for k in l.keys().chain(r.keys()) {
+        let b = base.map(|b| b.get(k).copied());
+        let (a, c) = (l.get(k).copied(), r.get(k).copied());
+        let v = match b {
+            _ if a == c => a,
+            Some(b) if b == a => c,
+            Some(b) if b == c => a,
+            _ => a.max(c),
+        };
+        if let Some(v) = v.filter(|v| *v > 0) {
+            out.insert(k.clone(), v);
+        }
+    }
+    out
 }
 
 /// Text on the sheet: its words merged as a note's are; the rest as each

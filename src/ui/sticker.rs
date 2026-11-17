@@ -617,8 +617,12 @@ impl Folio {
             // A screen reader reads a note by its name, and what it holds.
             .id(("note-a11y", s.id))
             .role(gpui::Role::Note)
-            .aria_label(if s.name().is_empty() { "Untitled note".to_string() } else { s.name() })
-            .aria_description(a11y_summary(s))
+            .aria_label(match &s.hidden_by {
+                Some(by) => format!("Hidden note by {by}"),
+                None if s.name().is_empty() => "Untitled note".to_string(),
+                None => s.name(),
+            })
+            .aria_description(if s.hidden_by.is_some() { String::new() } else { a11y_summary(s) })
             .absolute()
             .left(px(at.x))
             .top(px(at.y + lift + settle))
@@ -693,6 +697,7 @@ impl Folio {
                         .child(icon("icons/check.svg", t.size.icon_sm * 0.8, t.colors.primary_fg)),
                 )
             })
+            .children(self.workshop_marks(s, z, rt, rb, t))
             .children(grip)
             .into_any_element()
     }

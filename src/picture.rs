@@ -52,6 +52,7 @@ impl Format {
 /// `[[links]]` in its notes should already be written as Markdown links.
 /// A PDF goes on `page`.
 pub fn render_on(sheet: &Category, t: &Theme, media: &Path, format: Format, page: PdfPage) -> Result<Vec<u8>, String> {
+    let sheet = &sheet.covered();
     let svg = draw(sheet, t, media, format == Format::Png);
     let opt = usvg::Options { fontdb: fonts(), resources_dir: Some(media.to_path_buf()), ..Default::default() };
     let tree = usvg::Tree::from_str(&svg, &opt).map_err(|e| e.to_string())?;

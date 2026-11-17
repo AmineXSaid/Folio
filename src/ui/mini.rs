@@ -80,7 +80,7 @@ pub fn miniature(c: &Category, w: f32, h: f32, titles: bool, media: &Path, t: &T
     let ink = t.colors.text_subtle;
     let notes = c.stickers.iter().map(|s| {
         let (x, y, nw, nh) = at(&s.rect);
-        let show_title = titles && nw > 46. && !s.title.is_empty();
+        let show_title = titles && nw > 46. && !s.title.is_empty() && s.hidden_by.is_none();
         let bars = (nh / 9.).floor().clamp(0., 3.) as usize;
         div()
             .absolute()

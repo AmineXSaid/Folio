@@ -377,6 +377,8 @@ fn head(c: &Category) -> Category {
         opened,
         edited,
         backdrop,
+        vote,
+        private,
     } = c;
     Category {
         id: *id,
@@ -396,6 +398,8 @@ fn head(c: &Category) -> Category {
         opened: *opened,
         edited: *edited,
         backdrop: backdrop.clone(),
+        vote: *vote,
+        private: *private,
     }
 }
 
@@ -410,6 +414,8 @@ fn same_head(a: &Category, b: &Category) -> bool {
         && a.icon == b.icon
         && a.edited == b.edited
         && a.backdrop == b.backdrop
+        && a.vote == b.vote
+        && a.private == b.private
 }
 
 /// Takes `h`'s name, colour and the rest, keeping `c`'s camera.
@@ -419,6 +425,8 @@ fn put_head(c: &mut Category, h: &Category) {
     c.accent = h.accent;
     c.inbox = h.inbox;
     c.pinned = h.pinned;
+    c.vote = h.vote;
+    c.private = h.private;
     c.icon = h.icon.clone();
     c.edited = h.edited;
     c.backdrop = h.backdrop.clone();

@@ -263,6 +263,13 @@ impl NoteMotion {
         !self.born.is_empty() || !self.gone.is_empty() || !self.pins.is_empty() || !self.pictures.is_empty()
     }
 
+    /// Note `id` comes in again, as if new (a revealed note turning over).
+    pub fn arrive(&mut self, id: Id) {
+        if !reduced() {
+            self.born.insert(id, Instant::now());
+        }
+    }
+
     /// How far note `id` has come in, eased, while it arrives.
     pub fn arriving(&self, id: Id, m: &Motion) -> Option<f32> {
         let at = self.born.get(&id)?;

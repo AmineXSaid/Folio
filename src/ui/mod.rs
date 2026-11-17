@@ -21,6 +21,7 @@ mod selection;
 mod settings;
 mod shapes;
 mod templates;
+mod workshop;
 mod tasks;
 mod sticker;
 mod sync;
@@ -96,6 +97,9 @@ gpui::actions!(
         // Shapes: the picker, and turning the selected ones.
         ToggleShapes,
         ToggleTemplates,
+        StartVote,
+        TogglePrivate,
+        RevealAll,
         TurnLeft,
         TurnRight,
         FlipAcross,

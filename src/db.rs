@@ -65,7 +65,10 @@ fn rows(board: &Board) -> (String, Vec<(Id, String)>, Rows, Vec<(&'static str, I
         };
         for (i, s) in c.stickers.iter().enumerate() {
             put("note", s.id, i, serde_json::to_string(s).unwrap_or_default());
-            words.push(("note", s.id, c.id, s.title.clone(), format!("{}\n{}", s.body, s.caption)));
+            // A note written privately isn't found by its words until revealed.
+            if s.hidden_by.is_none() {
+                words.push(("note", s.id, c.id, s.title.clone(), format!("{}\n{}", s.body, s.caption)));
+            }
         }
         for (i, s) in c.strokes.iter().enumerate() {
             put("stroke", s.id, i, serde_json::to_string(s).unwrap_or_default());

@@ -567,6 +567,20 @@ pub struct Folio {
     /// The top bar's Export button (window px), and its panel being open.
     pub export_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     pub export_pop: bool,
+    /// The Workshop button's card (dot voting, private writing), and where
+    /// the button is.
+    pub workshop_pop: bool,
+    pub workshop_at: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Dots each, for the next vote.
+    pub vote_per: u8,
+    /// Who's voting at this screen now, by name; empty for you.
+    pub voter: String,
+    pub voter_input: Entity<InputState>,
+    pub naming_voter: bool,
+    /// The results card put away.
+    pub results_shut: bool,
+    /// The note a dot was just put on, and when.
+    pub dot_landed: Option<(Id, Instant)>,
     /// Each label's size (world units), measured as it's drawn.
     pub label_sizes: Rc<RefCell<HashMap<Id, (f32, f32)>>>,
     /// Background pictures' own sizes, read once each.
@@ -710,8 +724,14 @@ impl Folio {
         let label_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 30).placeholder("Write…"));
         let shape_input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 12).placeholder("Words…"));
         let shape_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search shapes: wifi, decision, arrow…"));
+        let voter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Their name"));
         let template_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search templates: retro, canvas, flow…"));
         let subs = vec![
+            cx.subscribe_in(&voter_input, window, |this, _, ev, window, cx| {
+                if let InputEvent::PressEnter { .. } = ev {
+                    this.take_voter_name(window, cx);
+                }
+            }),
             cx.subscribe_in(&template_search, window, |this, _, ev, window, cx| match ev {
                 InputEvent::Change => cx.notify(),
                 // Enter drops the first match.
@@ -871,6 +891,14 @@ impl Folio {
             mark_at: Rc::default(),
             export_at: Rc::default(),
             export_pop: false,
+            workshop_pop: false,
+            workshop_at: Rc::default(),
+            vote_per: 5,
+            voter: String::new(),
+            voter_input,
+            naming_voter: false,
+            results_shut: false,
+            dot_landed: None,
             label_sizes: Rc::new(RefCell::new(HashMap::new())),
             picture_sizes: RefCell::new(HashMap::new()),
             head_name: Rc::default(),
@@ -1779,7 +1807,8 @@ impl Folio {
             ..Default::default()
         };
         note.set_style(style);
-        self.board.sheet_mut().stickers.push(note);
+        let writer = self.writer();
+        self.board.sheet_mut().add_note(note, &writer);
         self.before = Some(before);
         self.select(Selection::Sticker(id));
         self.begin_edit(id, true, window, cx);
@@ -2603,7 +2632,8 @@ impl Folio {
                 None
             };
             if let Some(s) = sticker {
-                self.board.sheet_mut().stickers.push(s);
+                let writer = self.writer();
+                self.board.sheet_mut().add_note(s, &writer);
                 at = at.add(v2(28., 28.));
                 added += 1;
             }
@@ -2637,7 +2667,8 @@ impl Folio {
                         std::fs::create_dir_all(&media).and_then(|_| std::fs::write(media.join(&file), &img.bytes));
                     if written.is_ok() {
                         store::make_view_copy(&media.join(&file));
-                        self.board.sheet_mut().stickers.push(image_sticker(id, at, file, String::new()));
+                        let writer = self.writer();
+                        self.board.sheet_mut().add_note(image_sticker(id, at, file, String::new()), &writer);
                         self.select(Selection::Sticker(id));
                         self.commit(before, cx);
                     }
@@ -2660,6 +2691,7 @@ impl Folio {
                     }
                     let mut new_id = 0;
                     let set = self.board.settings.clone();
+                    let writer = self.writer();
                     let structured = !tidy && markdown::looks_structured(&text);
                     let (title, body) = if tidy { markdown::tidy(&text) } else { (None, text) };
                     self.change(cx, |b| {
@@ -2677,7 +2709,7 @@ impl Folio {
                             ..Default::default()
                         };
                         note.set_style(style);
-                        b.sheet_mut().stickers.push(note);
+                        b.sheet_mut().add_note(note, &writer);
                     });
                     self.select(Selection::Sticker(new_id));
                     if structured {
@@ -3127,6 +3159,11 @@ impl Render for Folio {
                     this.close_palette(window, cx);
                 } else if this.export_pop {
                     this.export_pop = false;
+                } else if this.workshop_pop {
+                    this.workshop_pop = false;
+                } else if this.naming_voter {
+                    this.naming_voter = false;
+                    window.focus(&this.focus, cx);
                 } else if this.menu.is_some() {
                     this.menu = None;
                 } else if this.dialog.is_some() {
@@ -3154,6 +3191,7 @@ impl Render for Folio {
             .children(self.palette.then(|| self.render_palette_scrim(cx)))
             .children(self.render_palette_scrim_leaving(cx))
             .children(self.render_export_pop(cx))
+            .children(self.render_workshop_pop(cx))
             .children(self.menu.is_some().then(|| self.render_menu(window, cx)))
             .children(self.render_menu_leaving(cx))
             .children(self.toast.clone().map(|msg| toast(&t, msg)))

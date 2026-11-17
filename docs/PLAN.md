@@ -450,7 +450,17 @@ meetings & teams, diagrams, personal), each with a live picture, found by
 name, family or keyword; a click drops one in the middle of the view, a
 drag where it's let go, beside what's there if it would cover it, as one
 group, picked, one undo step. They're drawn the way workshop boards are: bold sticky papers (lemon, azure, leaf, tangerine, bubblegum, grape), square idea notes, filled areas (a soft solid block, title centred) and white boards (title above); any area can switch between Outline, Filled and Board from its menu. `src/templates.rs` builds them as pieces
-(no GPUI); the new-sheet dialog lists them all by family. Next: dot voting, a timer,
+(no GPUI); the new-sheet dialog lists them all by family.
+Workshop tools (topbar Workshop button, Ctrl+Shift+D, Ctrl+Shift+I, Ctrl+K;
+`src/workshop.rs` without GPUI, `src/ui/workshop.rs`): **dot voting** (dots
+each chosen 1–10; a click on a note puts a dot on it, Alt+click or
+right-click takes one back; each voter sees only their own dots; "Next
+person" hands the screen on by name; ending shows a count on every note and
+a ranked results card; ballots are kept by voter name, so votes cast on two
+computers merge through Drive) and **private writing** (new notes are
+covered with a hatch, a lock and the writer's name, except while being
+typed; they're left out of search, miniatures and exports until revealed;
+"Reveal all" or "Reveal this note"). Next: a timer,
 private writing, a grid of notes; area styles, present mode, a shortcuts
 panel and an optional tool rail on the left.
 

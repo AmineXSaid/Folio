@@ -46,9 +46,12 @@ enum Cmd {
     SavePdf,
     Shapes,
     Templates,
+    Vote,
+    Private,
+    Reveal,
 }
 
-const CMDS: [(Cmd, &str, &str, &str); 27] = [
+const CMDS: [(Cmd, &str, &str, &str); 30] = [
     (Cmd::NewNote, "New note", "Ctrl N", "icons/sticky-note.svg"),
     (Cmd::NewSheet, "New sheet", "Ctrl Shift N", "icons/plus.svg"),
     (Cmd::QuickNote, "Quick note to Inbox or any sheet", "Ctrl Alt N", "icons/inbox.svg"),
@@ -71,6 +74,9 @@ const CMDS: [(Cmd, &str, &str, &str); 27] = [
     (Cmd::Tidy, "Tidy up the sheet", "", "icons/wand-sparkles.svg"),
     (Cmd::Shapes, "Show / hide the shapes panel", "Ctrl Shift S", "icons/shapes.svg"),
     (Cmd::Templates, "Show / hide templates", "Ctrl Shift P", "icons/layout-grid.svg"),
+    (Cmd::Vote, "Dot voting: start or end", "Ctrl Shift D", "icons/vote.svg"),
+    (Cmd::Private, "Private writing on / off", "Ctrl Shift I", "icons/eye-off.svg"),
+    (Cmd::Reveal, "Reveal hidden notes", "", "icons/eye.svg"),
     (Cmd::Map, "Show / hide the map", "", "icons/map.svg"),
     (Cmd::Profile, "Change your name and avatar", "", "icons/user-round-pen.svg"),
     (Cmd::Intro, "Play the opening again", "", "icons/play.svg"),
@@ -376,7 +382,7 @@ impl Folio {
     fn rows_all(&self) -> Vec<Row> {
         let mut out: Vec<Row> = CMDS
             .iter()
-            .filter(|(c, ..)| !matches!(c, Cmd::Rename | Cmd::SavePng | Cmd::SavePdf | Cmd::Shapes | Cmd::Templates) || self.screen == Screen::Sheet)
+            .filter(|(c, ..)| !matches!(c, Cmd::Rename | Cmd::SavePng | Cmd::SavePdf | Cmd::Shapes | Cmd::Templates | Cmd::Vote | Cmd::Private | Cmd::Reveal) || self.screen == Screen::Sheet)
             .map(|&(c, label, key, path)| Row {
                 label: label.into(),
                 group: "Commands",
@@ -419,7 +425,7 @@ impl Folio {
             .categories
             .iter()
             .flat_map(|c| c.stickers.iter().map(move |s| (c, s)))
-            .filter(|(_, s)| Some(s.id) != self.link_from)
+            .filter(|(_, s)| Some(s.id) != self.link_from && s.hidden_by.is_none())
             .collect();
         if q.is_empty() {
             // Nothing typed: the latest edited first.
@@ -670,6 +676,9 @@ impl Folio {
             Target::Cmd(c) => match c {
                 Cmd::Shapes => self.toggle_shapes_panel(window, cx),
                 Cmd::Templates => self.toggle_templates_panel(window, cx),
+                Cmd::Vote => self.vote_action(cx),
+                Cmd::Private => self.toggle_private(cx),
+                Cmd::Reveal => self.reveal_all(cx),
                 Cmd::NewNote => self.new_note(window, cx),
                 Cmd::NewSheet => self.new_sheet_dialog(window, cx),
                 Cmd::QuickNote => {

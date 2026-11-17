@@ -31,6 +31,11 @@ pub struct Colors {
     /// The active row and tool: a wash of the primary.
     pub primary_tint: Hsla,
     pub selection: Hsla,
+    /// A voter's dot on a note, and the count a note ends a vote with.
+    pub vote_dot: Hsla,
+    pub vote_badge: Hsla,
+    /// The stripes over a note written privately.
+    pub hidden_hatch: Hsla,
     /// Words picked out while typing: see-through, so it shows on every
     /// paper and the words stay readable under it.
     pub text_selection: Hsla,
@@ -115,6 +120,7 @@ pub struct Sizes {
     pub shapes_panel: Pixels, // 300: the shapes panel, on the right
     pub shape_tile: Pixels, // 48: a shape to pick in it
     pub template_card: Pixels, // 84: a template's picture in the gallery
+    pub vote_dot: Pixels, // 15: a dot on a note, at 100 %
     pub card_min: Pixels,  // 270: a home card's least width
     pub welcome: Pixels,   // 540: the welcome's note
     pub welcome_h: Pixels, // 380: the room it grows down into, so its pin stays put
@@ -269,6 +275,7 @@ const SIZE: Sizes = Sizes {
     shapes_panel: px(300.),
     shape_tile: px(48.),
     template_card: px(84.),
+    vote_dot: px(15.),
     card_min: px(270.),
     welcome: px(540.),
     welcome_h: px(380.),
@@ -299,6 +306,9 @@ impl Theme {
                 accent_ink: c(0xd90f5c),
                 primary_tint: c(0xfee6ef),
                 selection: c(0xf30d6a),
+                vote_dot: c(0x6c4bd8),
+                vote_badge: c(0x5a3cc4),
+                hidden_hatch: ca(0x1f2a2414),
                 text_selection: ca(0xf30d6a47),
                 scrim: ca(0x18211f55),
                 toast: c(0x22392f),
@@ -353,6 +363,9 @@ impl Theme {
                 accent_ink: c(0xff4d8f),
                 primary_tint: c(0x3d1424),
                 selection: c(0xff3d86),
+                vote_dot: c(0xa58cff),
+                vote_badge: c(0x7d62e8),
+                hidden_hatch: ca(0xffffff14),
                 text_selection: ca(0xff3d8666),
                 scrim: ca(0x00000088),
                 toast: c(0xe6efe9),
@@ -664,7 +677,7 @@ impl Theme {
         let z = &mut self.size;
         for p in [
             &mut z.sidebar, &mut z.topbar, &mut z.control, &mut z.icon_sm, &mut z.icon, &mut z.icon_lg, &mut z.dot,
-            &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.shapes_panel, &mut z.shape_tile, &mut z.template_card, &mut z.card_min,
+            &mut z.swatch, &mut z.logo, &mut z.dialog_w, &mut z.grip, &mut z.drawer, &mut z.shapes_panel, &mut z.shape_tile, &mut z.template_card, &mut z.vote_dot, &mut z.card_min,
             &mut z.search, &mut z.search_open, &mut z.welcome, &mut z.welcome_h, &mut z.avatar,
         ] {
             m(p);

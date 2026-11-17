@@ -474,6 +474,9 @@ impl Folio {
             }))
             .on_action(cx.listener(|this, _: &ToggleShapes, window, cx| this.toggle_shapes_panel(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleTemplates, window, cx| this.toggle_templates_panel(window, cx)))
+            .on_action(cx.listener(|this, _: &StartVote, _, cx| this.vote_action(cx)))
+            .on_action(cx.listener(|this, _: &TogglePrivate, _, cx| this.toggle_private(cx)))
+            .on_action(cx.listener(|this, _: &RevealAll, _, cx| this.reveal_all(cx)))
             .on_action(cx.listener(|this, _: &TurnLeft, _, cx| this.turn_shapes(&this.selected_shapes(), -15., cx)))
             .on_action(cx.listener(|this, _: &TurnRight, _, cx| this.turn_shapes(&this.selected_shapes(), 15., cx)))
             .on_action(cx.listener(|this, _: &FlipAcross, _, cx| this.flip_shapes(&this.selected_shapes(), true, cx)))
@@ -634,6 +637,7 @@ impl Folio {
             .children(self.render_shapes_panel(cx))
             .children(self.render_templates_panel(cx))
             .child(self.render_toolbar(window, cx))
+            .children(self.render_workshop_overlays(window, cx))
             .child(self.render_zoom(cx))
             .when(self.board.settings.minimap && !empty, |d| d.child(self.render_minimap(&t, cx)))
     }
@@ -1271,6 +1275,12 @@ impl Folio {
         window.focus(&self.focus, cx);
         self.finish_edit(cx);
         let world = self.sheet().camera.to_world(self.local(ev.position));
+        if self.voting() {
+            if let Some(id) = self.note_at(world) {
+                self.vote_on(id, true, cx);
+                return;
+            }
+        }
         let kind = if let Some(id) = self.note_at(world) {
             if !self.is_selected(Selection::Sticker(id)) {
                 self.select(Selection::Sticker(id));
@@ -1395,6 +1405,14 @@ impl Folio {
         // adds to it.
         let shift = ev.modifiers.shift || ev.modifiers.secondary();
         let pan = Gesture::Pan { start: at, pan: cam.pan };
+        // While a vote is open, a click on a note puts a dot on it (Alt
+        // takes one back).
+        if !self.space && self.voting() {
+            if let Some(id) = self.note_at(world) {
+                self.vote_on(id, ev.modifiers.alt, cx);
+                return;
+            }
+        }
         // A click on the sheet's name renames it, right there.
         if !self.space && matches!(self.tool, Tool::Select | Tool::Text) && self.on_title(at) {
             self.start_naming(window, cx);

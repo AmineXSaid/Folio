@@ -147,6 +147,13 @@ impl Folio {
                 // isn't offered for several.
                 let targets = self.targets(id);
                 let many = targets.len() > 1;
+                if s.hidden_by.is_some() {
+                    items.push(
+                        row("m-note-reveal", "icons/eye.svg", "Reveal this note", None, &t)
+                            .on_click(cx.listener(move |this, _, _, cx| this.uncover_note(id, cx)))
+                            .into_any_element(),
+                    );
+                }
                 if many {
                     items.push(
                         div()

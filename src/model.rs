@@ -588,6 +588,13 @@ pub struct Sticker {
     /// The group it belongs to, picked and moved as one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<Id>,
+    /// Dots put on it in a vote: voter's name → how many.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub votes: std::collections::BTreeMap<String, u8>,
+    /// Written privately by this person: its words stay covered until
+    /// it's revealed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_by: Option<String>,
 }
 
 /// A reminder that comes back: never, every day, on weekdays, every week
@@ -1645,6 +1652,12 @@ pub struct Category {
     /// What the sheet is drawn on.
     #[serde(default)]
     pub backdrop: Backdrop,
+    /// A dot vote going on, or ended with its results showing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vote: Option<crate::workshop::VoteSession>,
+    /// New notes here are written privately.
+    #[serde(default)]
+    pub private: bool,
 }
 
 impl Category {
@@ -1667,6 +1680,8 @@ impl Category {
             opened: 0,
             edited: 0,
             backdrop: Backdrop::default(),
+            vote: None,
+            private: false,
         }
     }
 

@@ -287,6 +287,7 @@ impl Folio {
                 .tooltip(|window, cx| super::tip(format!("PNG or PDF of this sheet  {}", shortcut("Shift+E")), window, cx))
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_export(cx)))
         };
+        let workshop = on_sheet.then(|| self.workshop_button(cx));
         let (can_undo, can_redo) = (!self.undo.is_empty() && self.editing.is_none(), !self.redo.is_empty());
         let right = div()
             .id("bar-actions")
@@ -317,6 +318,7 @@ impl Folio {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx))),
                 ),
             )
+            .children(workshop)
             .when(on_sheet, |d| d.child(export_button))
             .child(if on_sheet {
                 new_button("new-note", "Note", "New note  N".into())

@@ -24,6 +24,7 @@ mod svg_anim;
 mod templates;
 mod theme;
 mod time;
+mod workshop;
 mod ui;
 
 use gpui::{px, size, App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions};
@@ -90,6 +91,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("s", CycleStyle, Some("Board")),
         KeyBinding::new("secondary-shift-s", ToggleShapes, Some("Board")),
         KeyBinding::new("secondary-shift-p", ToggleTemplates, Some("Board")),
+        KeyBinding::new("secondary-shift-d", StartVote, Some("Board")),
+        KeyBinding::new("secondary-shift-i", TogglePrivate, Some("Board")),
         KeyBinding::new("[", TurnLeft, Some("Board")),
         KeyBinding::new("]", TurnRight, Some("Board")),
         KeyBinding::new("shift-h", FlipAcross, Some("Board")),
